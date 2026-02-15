@@ -1,0 +1,15 @@
+{
+  "name": "jam",
+  "private": true,
+  "packageManager": "yarn@4.12.0",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "yarn workspaces foreach -At run build",
+    "typecheck": "yarn workspaces foreach -At run typecheck",
+    "clean": "yarn workspaces foreach -Ap run clean",
+    "dev": "yarn workspace @jam/desktop dev"
+  }
+}

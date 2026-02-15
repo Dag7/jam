@@ -1,0 +1,99 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      artifact-prefix:
+        required: false
+        type: string
+        default: ''
+      version:
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+          - os: ubuntu-latest
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Stamp version
+        if: inputs.version != ''
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('apps/desktop/package.json', 'utf8'));
+            pkg.version = '${{ inputs.version }}';
+            fs.writeFileSync('apps/desktop/package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev
+
+      - name: Build
+        run: yarn workspace @jam/desktop electron:build
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: macOS - Ad-hoc sign and create DMG
+        if: matrix.platform == 'mac'
+        run: |
+          APP_PATH=$(find apps/desktop/release -name "*.app" -maxdepth 2 | head -1)
+          if [ -n "$APP_PATH" ]; then
+            codesign --force --deep --sign - "$APP_PATH"
+
+            # Recreate DMG with proper drag-to-Applications
+            DMG_PATH=$(find apps/desktop/release -name "*.dmg" | head -1)
+            if [ -n "$DMG_PATH" ]; then
+              VOLUME_NAME="Jam"
+              npx create-dmg "$APP_PATH" apps/desktop/release/ \
+                --overwrite \
+                --dmg-title="$VOLUME_NAME" || true
+              # Remove old DMG if create-dmg produced a new one
+              NEW_DMG=$(find apps/desktop/release -name "*.dmg" -newer "$DMG_PATH" | head -1)
+              if [ -n "$NEW_DMG" ] && [ "$NEW_DMG" != "$DMG_PATH" ]; then
+                rm -f "$DMG_PATH"
+              fi
+            fi
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}${{ matrix.platform }}
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+          if-no-files-found: warn

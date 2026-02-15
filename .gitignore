@@ -1,0 +1,33 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.tsbuildinfo
+
+# Yarn
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Env
+.env
+.env.local
+
+# Electron
+out/
+
+# Audio cache
+audio-cache/

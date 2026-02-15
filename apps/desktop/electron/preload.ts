@@ -1,0 +1,210 @@
+import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+
+// Helper to create event listener with cleanup (from whatsapp-relay pattern)
+function createEventListener<T>(
+  channel: string,
+  callback: (data: T) => void,
+): () => void {
+  const listener = (_event: IpcRendererEvent, data: T) => callback(data);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
+export interface JamAPI {
+  agents: {
+    create: (
+      profile: Record<string, unknown>,
+    ) => Promise<{ success: boolean; agentId?: string; error?: string }>;
+    update: (
+      agentId: string,
+      updates: Record<string, unknown>,
+    ) => Promise<{ success: boolean; error?: string }>;
+    delete: (
+      agentId: string,
+    ) => Promise<{ success: boolean; error?: string }>;
+    list: () => Promise<
+      Array<{
+        profile: Record<string, unknown>;
+        status: string;
+        visualState: string;
+        pid?: number;
+        startedAt?: string;
+        lastActivity?: string;
+      }>
+    >;
+    get: (
+      agentId: string,
+    ) => Promise<Record<string, unknown> | null>;
+    start: (
+      agentId: string,
+    ) => Promise<{ success: boolean; error?: string }>;
+    stop: (
+      agentId: string,
+    ) => Promise<{ success: boolean; error?: string }>;
+    restart: (
+      agentId: string,
+    ) => Promise<{ success: boolean; error?: string }>;
+    stopAll: () => Promise<{ success: boolean }>;
+    onStatusChange: (
+      callback: (data: { agentId: string; status: string }) => void,
+    ) => () => void;
+    onCreated: (
+      callback: (data: { agentId: string; profile: Record<string, unknown> }) => void,
+    ) => () => void;
+    onDeleted: (
+      callback: (data: { agentId: string }) => void,
+    ) => () => void;
+    onVisualStateChange: (
+      callback: (data: { agentId: string; visualState: string }) => void,
+    ) => () => void;
+  };
+
+  terminal: {
+    write: (agentId: string, data: string) => void;
+    resize: (agentId: string, cols: number, rows: number) => void;
+    onData: (
+      callback: (data: { agentId: string; output: string }) => void,
+    ) => () => void;
+    onExit: (
+      callback: (data: { agentId: string; exitCode: number }) => void,
+    ) => () => void;
+    getScrollback: (agentId: string) => Promise<string>;
+  };
+
+  voice: {
+    sendAudioChunk: (agentId: string, chunk: ArrayBuffer) => void;
+    onTranscription: (
+      callback: (data: {
+        text: string;
+        isFinal: boolean;
+        confidence: number;
+      }) => void,
+    ) => () => void;
+    onTTSAudio: (
+      callback: (data: { agentId: string; audioPath: string }) => void,
+    ) => () => void;
+    requestTTS: (
+      agentId: string,
+      text: string,
+    ) => Promise<{ success: boolean; audioPath?: string; error?: string }>;
+  };
+
+  memory: {
+    load: (
+      agentId: string,
+    ) => Promise<{ persona: string; facts: string[]; preferences: Record<string, string>; lastUpdated: string } | null>;
+    save: (
+      agentId: string,
+      memory: Record<string, unknown>,
+    ) => Promise<{ success: boolean; error?: string }>;
+  };
+
+  config: {
+    get: () => Promise<Record<string, unknown>>;
+    set: (
+      config: Record<string, unknown>,
+    ) => Promise<{ success: boolean }>;
+  };
+
+  window: {
+    minimize: () => void;
+    close: () => void;
+    maximize: () => void;
+  };
+
+  app: {
+    onError: (
+      callback: (error: { message: string; details?: string }) => void,
+    ) => () => void;
+    getVersion: () => Promise<string>;
+  };
+
+  logs: {
+    get: () => Promise<
+      Array<{ timestamp: string; level: string; message: string; agentId?: string }>
+    >;
+    onEntry: (
+      callback: (entry: {
+        timestamp: string;
+        level: string;
+        message: string;
+        agentId?: string;
+      }) => void,
+    ) => () => void;
+  };
+}
+
+contextBridge.exposeInMainWorld('jam', {
+  agents: {
+    create: (profile) => ipcRenderer.invoke('agents:create', profile),
+    update: (agentId, updates) =>
+      ipcRenderer.invoke('agents:update', agentId, updates),
+    delete: (agentId) => ipcRenderer.invoke('agents:delete', agentId),
+    list: () => ipcRenderer.invoke('agents:list'),
+    get: (agentId) => ipcRenderer.invoke('agents:get', agentId),
+    start: (agentId) => ipcRenderer.invoke('agents:start', agentId),
+    stop: (agentId) => ipcRenderer.invoke('agents:stop', agentId),
+    restart: (agentId) => ipcRenderer.invoke('agents:restart', agentId),
+    stopAll: () => ipcRenderer.invoke('agents:stopAll'),
+    onStatusChange: (cb) =>
+      createEventListener('agents:statusChange', cb),
+    onCreated: (cb) => createEventListener('agents:created', cb),
+    onDeleted: (cb) => createEventListener('agents:deleted', cb),
+    onVisualStateChange: (cb) =>
+      createEventListener('agents:visualStateChange', cb),
+  },
+
+  terminal: {
+    write: (agentId, data) =>
+      ipcRenderer.send('terminal:write', agentId, data),
+    resize: (agentId, cols, rows) =>
+      ipcRenderer.send('terminal:resize', agentId, cols, rows),
+    onData: (cb) => createEventListener('terminal:data', cb),
+    onExit: (cb) => createEventListener('terminal:exit', cb),
+    getScrollback: (agentId) =>
+      ipcRenderer.invoke('terminal:getScrollback', agentId),
+  },
+
+  voice: {
+    sendAudioChunk: (agentId, chunk) =>
+      ipcRenderer.send('voice:audioChunk', agentId, chunk),
+    onTranscription: (cb) =>
+      createEventListener('voice:transcription', cb),
+    onTTSAudio: (cb) => createEventListener('voice:ttsAudio', cb),
+    requestTTS: (agentId, text) =>
+      ipcRenderer.invoke('voice:requestTTS', agentId, text),
+  },
+
+  memory: {
+    load: (agentId) => ipcRenderer.invoke('memory:load', agentId),
+    save: (agentId, memory) =>
+      ipcRenderer.invoke('memory:save', agentId, memory),
+  },
+
+  config: {
+    get: () => ipcRenderer.invoke('config:get'),
+    set: (config) => ipcRenderer.invoke('config:set', config),
+  },
+
+  window: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+  },
+
+  app: {
+    onError: (cb) => createEventListener('app:error', cb),
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+  },
+
+  logs: {
+    get: () => ipcRenderer.invoke('logs:get'),
+    onEntry: (cb) => createEventListener('logs:entry', cb),
+  },
+} as JamAPI);
+
+declare global {
+  interface Window {
+    jam: JamAPI;
+  }
+}
