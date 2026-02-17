@@ -88,23 +88,6 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
       let stdout = '';
       let stderr = '';
 
-      // No-output watchdog: kill if no stdout for 60s
-      const resetWatchdog = () => {
-        clearTimeout(watchdogTimer);
-        watchdogTimer = setTimeout(() => {
-          log.warn('Watchdog: no output for 60s, killing', undefined, profile.id);
-          child.kill('SIGTERM');
-        }, 60_000);
-      };
-      let watchdogTimer: ReturnType<typeof setTimeout>;
-      resetWatchdog();
-
-      // Overall timeout: 2 minutes max
-      const overallTimer = setTimeout(() => {
-        log.warn('Overall timeout (2min), killing', undefined, profile.id);
-        child.kill('SIGTERM');
-      }, 120_000);
-
       // Abort signal support
       if (options?.signal) {
         options.signal.addEventListener('abort', () => {
@@ -112,9 +95,24 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
         }, { once: true });
       }
 
+      // Parse streaming JSONL events for progress reporting
+      let lineBuf = '';
+
       child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
-        resetWatchdog();
+        const chunkStr = chunk.toString();
+        stdout += chunkStr;
+
+        // Parse line-delimited JSON for progress events
+        if (options?.onProgress) {
+          lineBuf += chunkStr;
+          const lines = lineBuf.split('\n');
+          lineBuf = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            this.parseStreamEvent(line, options.onProgress);
+          }
+        }
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
@@ -122,8 +120,10 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
       });
 
       child.on('close', (code) => {
-        clearTimeout(watchdogTimer);
-        clearTimeout(overallTimer);
+        // Parse any remaining buffered line
+        if (options?.onProgress && lineBuf.trim()) {
+          this.parseStreamEvent(lineBuf, options.onProgress);
+        }
 
         if (code !== 0) {
           const errMsg = stderr.slice(0, 500) || `Exit code ${code}`;
@@ -138,17 +138,51 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
       });
 
       child.on('error', (err) => {
-        clearTimeout(watchdogTimer);
-        clearTimeout(overallTimer);
         log.error(`Spawn error: ${String(err)}`, undefined, profile.id);
         resolve({ success: false, text: '', error: String(err) });
       });
     });
   }
 
-  /** Build CLI args for one-shot `claude -p --output-format json` */
+  /** Parse a single streaming JSONL event and emit progress if interesting */
+  private parseStreamEvent(
+    line: string,
+    onProgress: (event: { type: 'tool-use' | 'thinking' | 'text'; summary: string }) => void,
+  ): void {
+    try {
+      const event = JSON.parse(line);
+
+      // Tool use events
+      if (event.type === 'tool_use' || event.tool_name) {
+        const toolName = event.tool_name ?? event.name ?? 'a tool';
+        const input = event.input?.command ?? event.input?.file_path ?? '';
+        const summary = input
+          ? `Using ${toolName}: ${String(input).slice(0, 60)}`
+          : `Using ${toolName}`;
+        onProgress({ type: 'tool-use', summary });
+        return;
+      }
+
+      // Content block with tool_use type
+      if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+        const name = event.content_block.name ?? 'a tool';
+        onProgress({ type: 'tool-use', summary: `Using ${name}` });
+        return;
+      }
+
+      // Thinking events
+      if (event.type === 'thinking' || (event.type === 'content_block_start' && event.content_block?.type === 'thinking')) {
+        onProgress({ type: 'thinking', summary: 'Thinking...' });
+        return;
+      }
+    } catch {
+      // Not JSON or unrecognized format — ignore
+    }
+  }
+
+  /** Build CLI args for one-shot `claude -p --output-format stream-json` */
   private buildOneShotArgs(profile: AgentProfile, sessionId?: string): string[] {
-    const args: string[] = ['-p', '--output-format', 'json'];
+    const args: string[] = ['-p', '--verbose', '--output-format', 'stream-json'];
 
     if (profile.allowFullAccess) {
       args.push('--dangerously-skip-permissions');
@@ -158,7 +192,6 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
       args.push('--model', profile.model);
     }
 
-    // Build system prompt with agent identity + user-defined persona
     const systemPrompt = this.buildSystemPrompt(profile);
     if (systemPrompt) {
       args.push('--system-prompt', systemPrompt);
@@ -177,8 +210,25 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
     return `Your name is ${profile.name}. When asked who you are, respond as ${profile.name}.`;
   }
 
-  /** Parse JSON output from `claude -p --output-format json` */
+  /** Parse streaming JSONL output — find the result event */
   private parseOneShotOutput(stdout: string): ExecutionResult {
+    const lines = stdout.trim().split('\n');
+
+    // Look for the result event (last one wins)
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const obj = JSON.parse(lines[i]);
+        if (obj.type === 'result') {
+          return {
+            success: true,
+            text: obj.result ?? '',
+            sessionId: obj.session_id,
+          };
+        }
+      } catch { /* skip non-JSON lines */ }
+    }
+
+    // Fallback: try as single JSON
     try {
       const data = JSON.parse(stdout);
       return {
@@ -187,17 +237,7 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
         sessionId: data.session_id,
       };
     } catch {
-      // Try JSONL (multiple JSON objects, one per line)
-      const lines = stdout.trim().split('\n');
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          const obj = JSON.parse(lines[i]);
-          if (obj.type === 'result') {
-            return { success: true, text: obj.result ?? '', sessionId: obj.session_id };
-          }
-        } catch { /* skip non-JSON lines */ }
-      }
-      // Fallback: return raw stdout stripped of ANSI
+      // Last resort: return raw stdout stripped of ANSI
       return { success: true, text: stripAnsiSimple(stdout).trim() };
     }
   }

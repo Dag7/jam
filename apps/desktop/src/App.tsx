@@ -291,6 +291,25 @@ export default function App() {
       },
     );
 
+    // Chat: progress updates during long-running tasks
+    const unsubProgress = window.jam.chat.onAgentProgress(
+      ({ agentId, agentName, agentRuntime, agentColor, summary }) => {
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'system',
+          agentId,
+          agentName,
+          agentRuntime,
+          agentColor,
+          content: `${agentName}: ${summary}`,
+          status: 'complete',
+          source: 'voice',
+          timestamp: Date.now(),
+        };
+        useAppStore.getState().addMessage(msg);
+      },
+    );
+
     return () => {
       unsubStatusChange();
       unsubCreated();
@@ -303,6 +322,7 @@ export default function App() {
       unsubAcknowledged();
       unsubVoiceCommand();
       unsubAgentResponse();
+      unsubProgress();
       // Stop any playing audio on cleanup
       if (audioRef.current) {
         audioRef.current.pause();

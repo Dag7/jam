@@ -151,6 +151,22 @@ export class Orchestrator {
       this.speakAck(data.agentId, data.ackText);
     });
 
+    // Progress updates during long-running execution — show in chat + speak via TTS
+    this.eventBus.on('agent:progress', (data: {
+      agentId: string;
+      agentName: string;
+      agentRuntime: string;
+      agentColor: string;
+      type: string;
+      summary: string;
+    }) => {
+      // Show progress in chat UI as a system-ish agent message
+      this.sendToRenderer('chat:agentProgress', data);
+
+      // Speak a short progress phrase via TTS
+      this.speakProgress(data.agentId, data.type, data.summary);
+    });
+
     // TTS: when AgentManager detects a complete response, synthesize and send audio
     this.eventBus.on('agent:responseComplete', (data: { agentId: string; text: string }) => {
       this.handleResponseComplete(data.agentId, data.text);
@@ -239,6 +255,45 @@ export class Orchestrator {
       });
     } catch (error) {
       log.error(`TTS ack failed: ${String(error)}`, undefined, agentId);
+    }
+  }
+
+  /** Speak a short progress update for long-running tasks */
+  private async speakProgress(agentId: string, type: string, summary: string): Promise<void> {
+    if (!this.voiceService) return;
+
+    const agent = this.agentManager.get(agentId);
+    if (!agent) return;
+
+    // Build a brief spoken phrase based on progress type
+    let phrase: string;
+    if (type === 'tool-use') {
+      if (summary.toLowerCase().includes('bash')) {
+        phrase = 'Running a command.';
+      } else if (summary.toLowerCase().includes('write') || summary.toLowerCase().includes('edit')) {
+        phrase = 'Writing some code.';
+      } else if (summary.toLowerCase().includes('read') || summary.toLowerCase().includes('glob')) {
+        phrase = 'Reading files.';
+      } else {
+        phrase = 'Still working on it.';
+      }
+    } else {
+      phrase = 'Still thinking about it.';
+    }
+
+    try {
+      const voiceId = this.resolveVoiceId(agent);
+      log.debug(`TTS progress: "${phrase}"`, undefined, agentId);
+      const audioPath = await this.voiceService.synthesize(phrase, voiceId, agentId);
+
+      const audioBuffer = await readFile(audioPath);
+      const base64 = audioBuffer.toString('base64');
+      this.sendToRenderer('voice:ttsAudio', {
+        agentId,
+        audioData: `data:audio/mpeg;base64,${base64}`,
+      });
+    } catch (error) {
+      log.error(`TTS progress failed: ${String(error)}`, undefined, agentId);
     }
   }
 

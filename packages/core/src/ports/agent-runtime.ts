@@ -25,12 +25,20 @@ export interface ExecutionResult {
   error?: string;
 }
 
+/** Progress event emitted during long-running execution */
+export interface ExecutionProgress {
+  type: 'tool-use' | 'thinking' | 'text';
+  summary: string;
+}
+
 /** Options for one-shot execution */
 export interface ExecutionOptions {
   sessionId?: string;
   cwd?: string;
   env?: Record<string, string>;
   signal?: AbortSignal;
+  /** Called with progress updates during execution (tool use, thinking, etc.) */
+  onProgress?: (event: ExecutionProgress) => void;
 }
 
 export interface IAgentRuntime {

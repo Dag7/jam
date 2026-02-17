@@ -188,6 +188,16 @@ export interface JamAPI {
         agentName: string | null;
       }) => void,
     ) => () => void;
+    onAgentProgress: (
+      callback: (data: {
+        agentId: string;
+        agentName: string;
+        agentRuntime: string;
+        agentColor: string;
+        type: string;
+        summary: string;
+      }) => void,
+    ) => () => void;
   };
 }
 

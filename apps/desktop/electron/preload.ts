@@ -190,6 +190,16 @@ export interface JamAPI {
         agentName: string | null;
       }) => void,
     ) => () => void;
+    onAgentProgress: (
+      callback: (data: {
+        agentId: string;
+        agentName: string;
+        agentRuntime: string;
+        agentColor: string;
+        type: string;
+        summary: string;
+      }) => void,
+    ) => () => void;
   };
 }
 
@@ -276,6 +286,7 @@ contextBridge.exposeInMainWorld('jam', {
     onAgentAcknowledged: (cb) => createEventListener('chat:agentAcknowledged', cb),
     onAgentResponse: (cb) => createEventListener('chat:agentResponse', cb),
     onVoiceCommand: (cb) => createEventListener('chat:voiceCommand', cb),
+    onAgentProgress: (cb) => createEventListener('chat:agentProgress', cb),
   },
 } as JamAPI);
 

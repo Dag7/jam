@@ -8,6 +8,7 @@ import type {
   AgentState,
   AgentStatus,
   IEventBus,
+  ExecutionOptions,
 } from '@jam/core';
 import { createLogger } from '@jam/core';
 import { PtyManager } from './pty-manager.js';
@@ -259,9 +260,31 @@ export class AgentManager {
     // Enrich profile with SOUL.md, conversation history, and matched skills
     const enrichedProfile = await this.contextBuilder.buildContext(state.profile, text);
 
+    // Throttled progress reporting — emit voice updates during long-running tasks
+    let lastProgressTime = 0;
+    const PROGRESS_THROTTLE_MS = 15_000; // Max one progress update every 15s
+
+    const onProgress: ExecutionOptions['onProgress'] = (event) => {
+      const now = Date.now();
+      if (now - lastProgressTime < PROGRESS_THROTTLE_MS) return;
+      lastProgressTime = now;
+
+      log.debug(`Progress: [${event.type}] ${event.summary}`, undefined, agentId);
+      this.updateVisualState(agentId, 'thinking');
+      this.eventBus.emit('agent:progress', {
+        agentId,
+        agentName: state.profile.name,
+        agentRuntime: state.profile.runtime,
+        agentColor: state.profile.color,
+        type: event.type,
+        summary: event.summary,
+      });
+    };
+
     const result = await runtime.execute(enrichedProfile, text, {
       sessionId,
       cwd: state.profile.cwd,
+      onProgress,
     });
 
     if (!result.success) {

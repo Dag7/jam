@@ -77,23 +77,7 @@ export class OpenCodeRuntime implements IAgentRuntime {
 
       let stdout = '';
       let stderr = '';
-
-      // No-output watchdog: kill if no stdout for 60s
-      const resetWatchdog = () => {
-        clearTimeout(watchdogTimer);
-        watchdogTimer = setTimeout(() => {
-          log.warn('Watchdog: no output for 60s, killing', undefined, profile.id);
-          child.kill('SIGTERM');
-        }, 60_000);
-      };
-      let watchdogTimer: ReturnType<typeof setTimeout>;
-      resetWatchdog();
-
-      // Overall timeout: 2 minutes max
-      const overallTimer = setTimeout(() => {
-        log.warn('Overall timeout (2min), killing', undefined, profile.id);
-        child.kill('SIGTERM');
-      }, 120_000);
+      let lastProgressEmit = 0;
 
       // Abort signal support
       if (options?.signal) {
@@ -103,8 +87,23 @@ export class OpenCodeRuntime implements IAgentRuntime {
       }
 
       child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
-        resetWatchdog();
+        const chunkStr = chunk.toString();
+        stdout += chunkStr;
+
+        // Emit throttled progress events from raw output
+        if (options?.onProgress) {
+          const now = Date.now();
+          if (now - lastProgressEmit > 5000) {
+            lastProgressEmit = now;
+            const cleaned = stripAnsiSimple(chunkStr).trim();
+            if (cleaned.length > 0) {
+              const type = cleaned.includes('executing') || cleaned.includes('running')
+                ? 'tool-use' as const
+                : 'text' as const;
+              options.onProgress({ type, summary: cleaned.slice(0, 80) });
+            }
+          }
+        }
       });
 
       child.stderr.on('data', (chunk: Buffer) => {
@@ -112,9 +111,6 @@ export class OpenCodeRuntime implements IAgentRuntime {
       });
 
       child.on('close', (code) => {
-        clearTimeout(watchdogTimer);
-        clearTimeout(overallTimer);
-
         if (code !== 0) {
           const errMsg = stderr.slice(0, 500) || `Exit code ${code}`;
           log.error(`Execute failed (exit ${code}): ${errMsg}`, undefined, profile.id);
@@ -129,8 +125,6 @@ export class OpenCodeRuntime implements IAgentRuntime {
       });
 
       child.on('error', (err) => {
-        clearTimeout(watchdogTimer);
-        clearTimeout(overallTimer);
         log.error(`Spawn error: ${String(err)}`, undefined, profile.id);
         resolve({ success: false, text: '', error: String(err) });
       });
