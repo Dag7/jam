@@ -4,8 +4,9 @@ import { createAgentSlice, type AgentSlice } from './agentSlice';
 import { createVoiceSlice, type VoiceSlice } from './voiceSlice';
 import { createTerminalSlice, type TerminalSlice } from './terminalSlice';
 import { createSettingsSlice, type SettingsSlice } from './settingsSlice';
+import { createChatSlice, type ChatSlice } from './chatSlice';
 
-export type AppStore = AgentSlice & VoiceSlice & TerminalSlice & SettingsSlice;
+export type AppStore = AgentSlice & VoiceSlice & TerminalSlice & SettingsSlice & ChatSlice;
 
 export const useAppStore = create<AppStore>()(
   persist(
@@ -14,6 +15,7 @@ export const useAppStore = create<AppStore>()(
       ...createVoiceSlice(...args),
       ...createTerminalSlice(...args),
       ...createSettingsSlice(...args),
+      ...createChatSlice(...args),
     }),
     {
       name: 'jam-ui-store',

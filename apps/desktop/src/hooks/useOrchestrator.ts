@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import { useAppStore } from '@/store';
+import type { ChatMessage } from '@/store/chatSlice';
 
 export function useOrchestrator() {
   const activeAgentIds = useAppStore((s) => s.activeAgentIds);
@@ -37,15 +38,76 @@ export function useOrchestrator() {
     return window.jam.agents.update(agentId, updates);
   }, []);
 
-  const sendTextCommand = useCallback(
-    (text: string) => {
-      const targetId = selectedAgentId;
-      if (targetId) {
-        window.jam.terminal.write(targetId, text + '\n');
+  const sendTextCommand = useCallback(async (text: string) => {
+    const { addMessage, updateMessage, setIsProcessing } = useAppStore.getState();
+
+    // Add user message to chat
+    const userMsgId = crypto.randomUUID();
+    const userMsg: ChatMessage = {
+      id: userMsgId,
+      role: 'user',
+      agentId: null,
+      agentName: null,
+      agentRuntime: null,
+      agentColor: null,
+      content: text,
+      status: 'complete',
+      source: 'text',
+      timestamp: Date.now(),
+    };
+    addMessage(userMsg);
+
+    // Add placeholder agent response
+    const agentMsgId = crypto.randomUUID();
+    const agentMsg: ChatMessage = {
+      id: agentMsgId,
+      role: 'agent',
+      agentId: null,
+      agentName: null,
+      agentRuntime: null,
+      agentColor: null,
+      content: '',
+      status: 'sending',
+      source: 'text',
+      timestamp: Date.now(),
+    };
+    addMessage(agentMsg);
+
+    setIsProcessing(true);
+
+    try {
+      const result = await window.jam.chat.sendCommand(text);
+
+      if (result.success) {
+        updateMessage(agentMsgId, {
+          agentId: result.agentId ?? null,
+          agentName: result.agentName ?? null,
+          agentRuntime: result.agentRuntime ?? null,
+          agentColor: result.agentColor ?? null,
+          content: result.text ?? '',
+          status: 'complete',
+        });
+      } else {
+        updateMessage(agentMsgId, {
+          content: result.error ?? 'Command failed',
+          status: 'error',
+          error: result.error,
+        });
       }
-    },
-    [selectedAgentId],
-  );
+    } catch (err) {
+      updateMessage(agentMsgId, {
+        content: String(err),
+        status: 'error',
+        error: String(err),
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  }, []);
+
+  const clearChat = useCallback(() => {
+    useAppStore.getState().clearMessages();
+  }, []);
 
   const selectAgent = useCallback(
     (agentId: string) => {
@@ -63,6 +125,7 @@ export function useOrchestrator() {
     stopAgent,
     deleteAgent,
     sendTextCommand,
+    clearChat,
     selectAgent,
   };
 }

@@ -4,10 +4,12 @@ import { AppShell } from '@/components/layout/AppShell';
 import { Sidebar, type SidebarTab } from '@/components/layout/Sidebar';
 import { AgentPanelContainer } from '@/containers/AgentPanelContainer';
 import { AgentStageContainer } from '@/containers/AgentStageContainer';
+import { ChatContainer } from '@/containers/ChatContainer';
 import { CommandBarContainer } from '@/containers/CommandBarContainer';
 import { SettingsContainer } from '@/containers/SettingsContainer';
 import { LogsContainer } from '@/containers/LogsContainer';
 import type { AgentEntry } from '@/store/agentSlice';
+import type { ChatMessage } from '@/store/chatSlice';
 
 // --- TTS Audio Queue ---
 // Prevents agents from talking over each other by playing responses sequentially.
@@ -78,6 +80,7 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sidebarCollapsed = useAppStore((s) => s.settings.sidebarCollapsed);
   const setSidebarCollapsed = useAppStore((s) => s.setSidebarCollapsed);
+  const viewMode = useAppStore((s) => s.settings.viewMode);
   const [activeTab, setActiveTab] = useState<SidebarTab>('agents');
   const setAgents = useAppStore((s) => s.setAgents);
   const addAgent = useAppStore((s) => s.addAgent);
@@ -87,6 +90,7 @@ export default function App() {
   const appendTerminalData = useAppStore((s) => s.appendTerminalData);
   const setTranscript = useAppStore((s) => s.setTranscript);
   const setAgentActive = useAppStore((s) => s.setAgentActive);
+  const addMessage = useAppStore((s) => s.addMessage);
 
   // Initialize: load agents from main process and set up event listeners
   useEffect(() => {
@@ -131,6 +135,7 @@ export default function App() {
       },
     );
 
+    // Terminal data — needed for stage view
     const unsubTerminalData = window.jam.terminal.onData(
       ({ agentId, output }) => {
         appendTerminalData(agentId, output);
@@ -163,6 +168,44 @@ export default function App() {
       },
     );
 
+    // Chat: voice command user messages (from main process voice handler)
+    const unsubVoiceCommand = window.jam.chat.onVoiceCommand(
+      ({ text, agentId, agentName }) => {
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'user',
+          agentId,
+          agentName,
+          agentRuntime: null,
+          agentColor: null,
+          content: text,
+          status: 'complete',
+          source: 'voice',
+          timestamp: Date.now(),
+        };
+        useAppStore.getState().addMessage(msg);
+      },
+    );
+
+    // Chat: agent responses from voice commands (async via event, not invoke return)
+    const unsubAgentResponse = window.jam.chat.onAgentResponse(
+      ({ agentId, agentName, agentRuntime, agentColor, text }) => {
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'agent',
+          agentId,
+          agentName,
+          agentRuntime,
+          agentColor,
+          content: text,
+          status: 'complete',
+          source: 'voice',
+          timestamp: Date.now(),
+        };
+        useAppStore.getState().addMessage(msg);
+      },
+    );
+
     return () => {
       unsubStatusChange();
       unsubCreated();
@@ -172,6 +215,8 @@ export default function App() {
       unsubTranscription();
       unsubVoiceState();
       unsubTTSAudio();
+      unsubVoiceCommand();
+      unsubAgentResponse();
       // Stop any playing audio on cleanup
       if (audioRef.current) {
         audioRef.current.pause();
@@ -187,6 +232,7 @@ export default function App() {
     appendTerminalData,
     setTranscript,
     setAgentActive,
+    addMessage,
   ]);
 
   const renderPanel = () => {
@@ -212,7 +258,7 @@ export default function App() {
       </Sidebar>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <AgentStageContainer />
+        {viewMode === 'chat' ? <ChatContainer /> : <AgentStageContainer />}
         <CommandBarContainer />
       </div>
     </AppShell>

@@ -141,6 +141,34 @@ export interface JamAPI {
       }) => void,
     ) => () => void;
   };
+
+  chat: {
+    sendCommand: (text: string) => Promise<{
+      success: boolean;
+      text?: string;
+      error?: string;
+      agentId?: string;
+      agentName?: string;
+      agentRuntime?: string;
+      agentColor?: string;
+    }>;
+    onAgentResponse: (
+      callback: (data: {
+        agentId: string;
+        agentName: string;
+        agentRuntime: string;
+        agentColor: string;
+        text: string;
+      }) => void,
+    ) => () => void;
+    onVoiceCommand: (
+      callback: (data: {
+        text: string;
+        agentId: string;
+        agentName: string | null;
+      }) => void,
+    ) => () => void;
+  };
 }
 
 contextBridge.exposeInMainWorld('jam', {
@@ -216,6 +244,12 @@ contextBridge.exposeInMainWorld('jam', {
   logs: {
     get: () => ipcRenderer.invoke('logs:get'),
     onEntry: (cb) => createEventListener('logs:entry', cb),
+  },
+
+  chat: {
+    sendCommand: (text) => ipcRenderer.invoke('chat:sendCommand', text),
+    onAgentResponse: (cb) => createEventListener('chat:agentResponse', cb),
+    onVoiceCommand: (cb) => createEventListener('chat:voiceCommand', cb),
   },
 } as JamAPI);
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useVoice } from '@/hooks/useVoice';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
+import { useAppStore } from '@/store';
 import { MicButton } from '@/components/voice/MicButton';
 import { Waveform } from '@/components/voice/Waveform';
 import { TranscriptOverlay } from '@/components/voice/TranscriptOverlay';
@@ -18,12 +19,15 @@ export const CommandBarContainer: React.FC = () => {
     stopCapture,
     toggleListening,
   } = useVoice();
-  const { sendTextCommand } = useOrchestrator();
+  const { sendTextCommand, clearChat } = useOrchestrator();
+  const isProcessing = useAppStore((s) => s.isProcessing);
+  const viewMode = useAppStore((s) => s.settings.viewMode);
+  const setViewMode = useAppStore((s) => s.setViewMode);
   const [textInput, setTextInput] = useState('');
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (textInput.trim()) {
+    if (textInput.trim() && !isProcessing) {
       sendTextCommand(textInput.trim());
       setTextInput('');
     }
@@ -32,13 +36,15 @@ export const CommandBarContainer: React.FC = () => {
   const isPTT = voiceMode === 'push-to-talk';
   const isVoiceActive = isRecording || isListening;
 
-  const placeholder = isRecording
-    ? 'Recording...'
-    : isListening
-      ? 'Listening for voice...'
-      : isPTT
-        ? 'Type a command or hold mic to talk...'
-        : 'Type a command or click mic to listen...';
+  const placeholder = isProcessing
+    ? 'Waiting for response...'
+    : isRecording
+      ? 'Recording...'
+      : isListening
+        ? 'Listening for voice...'
+        : isPTT
+          ? 'Type a command or hold mic to talk...'
+          : 'Type a command or click mic to listen...';
 
   return (
     <div className="border-t border-zinc-800 bg-zinc-900/80 backdrop-blur-sm px-4 py-3 shrink-0">
@@ -66,10 +72,49 @@ export const CommandBarContainer: React.FC = () => {
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
             placeholder={placeholder}
-            disabled={isRecording}
+            disabled={isRecording || isProcessing}
             className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
           />
         </form>
+
+        {/* Clear chat */}
+        <button
+          onClick={clearChat}
+          className="px-3 py-2 rounded-lg text-xs font-medium transition-colors bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
+          title="Clear conversation"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18" />
+            <path d="M8 6V4h8v2" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+          </svg>
+        </button>
+
+        {/* View mode toggle */}
+        <button
+          onClick={() => setViewMode(viewMode === 'chat' ? 'stage' : 'chat')}
+          className={`
+            px-3 py-2 rounded-lg text-xs font-medium transition-colors
+            ${viewMode === 'stage'
+              ? 'bg-purple-900/30 text-purple-300 hover:bg-purple-900/50'
+              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
+            }
+          `}
+          title={viewMode === 'chat' ? 'Switch to agent stage view' : 'Switch to chat view'}
+        >
+          {viewMode === 'chat' ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+              <rect x="14" y="14" width="7" height="7" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          )}
+        </button>
 
         {/* Voice mode toggle */}
         <button

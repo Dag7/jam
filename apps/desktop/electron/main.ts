@@ -276,7 +276,25 @@ function registerIpcHandlers(): void {
           lastVoiceTargetId = targetId;
           const agent = orchestrator.agentManager.get(targetId);
           log.info(`Voice → "${agent?.profile.name ?? targetId}": "${parsed.command}"`);
-          orchestrator.agentManager.voiceCommand(targetId, parsed.command).catch((err) => {
+
+          // Notify renderer of the voice user message for the chat UI
+          mainWindow?.webContents.send('chat:voiceCommand', {
+            text: parsed.command,
+            agentId: targetId,
+            agentName: agent?.profile.name ?? null,
+          });
+
+          orchestrator.agentManager.voiceCommand(targetId, parsed.command).then((result) => {
+            if (result.success && result.text) {
+              mainWindow?.webContents.send('chat:agentResponse', {
+                agentId: targetId,
+                agentName: agent?.profile.name ?? 'Agent',
+                agentRuntime: agent?.profile.runtime ?? '',
+                agentColor: agent?.profile.color ?? '#6b7280',
+                text: result.text,
+              });
+            }
+          }).catch((err) => {
             log.error(`Voice command execution failed: ${String(err)}`);
           });
         } else {
@@ -313,6 +331,73 @@ function registerIpcHandlers(): void {
       }
     },
   );
+
+  // Chat — text commands routed through execute() pipeline (same as voice)
+  let lastTextTargetId: string | null = null;
+
+  ipcMain.handle('chat:sendCommand', async (_, text: string) => {
+    const parsed = orchestrator.commandParser.parse(text);
+
+    if (parsed.isMetaCommand) {
+      return { success: false, error: 'Meta commands not yet supported via text' };
+    }
+
+    // Name-based routing (same logic as voice)
+    let targetId: string | undefined;
+
+    if (parsed.targetAgentName) {
+      targetId = orchestrator.commandParser.resolveAgentId(parsed.targetAgentName);
+      if (!targetId) {
+        return { success: false, error: `Agent "${parsed.targetAgentName}" not found` };
+      }
+    }
+
+    // Fallback: last text target → last voice target → only running agent
+    if (!targetId && lastTextTargetId) {
+      const agent = orchestrator.agentManager.get(lastTextTargetId);
+      if (agent && agent.status === 'running') {
+        targetId = lastTextTargetId;
+      }
+    }
+    if (!targetId && lastVoiceTargetId) {
+      const agent = orchestrator.agentManager.get(lastVoiceTargetId);
+      if (agent && agent.status === 'running') {
+        targetId = lastVoiceTargetId;
+      }
+    }
+    if (!targetId) {
+      const running = orchestrator.agentManager.list().filter((a) => a.status === 'running');
+      if (running.length === 1) {
+        targetId = running[0].profile.id;
+      } else if (running.length === 0) {
+        return { success: false, error: 'No agents running' };
+      } else {
+        return {
+          success: false,
+          error: `Multiple agents running — say the agent's name (${running.map((a) => a.profile.name).join(', ')})`,
+        };
+      }
+    }
+
+    lastTextTargetId = targetId;
+
+    const agent = orchestrator.agentManager.get(targetId);
+    if (!agent) return { success: false, error: 'Agent not found' };
+
+    log.info(`Chat → "${agent.profile.name}": "${parsed.command.slice(0, 60)}"`, undefined, targetId);
+
+    const result = await orchestrator.agentManager.voiceCommand(targetId, parsed.command);
+
+    return {
+      success: result.success,
+      text: result.text,
+      error: result.error,
+      agentId: targetId,
+      agentName: agent.profile.name,
+      agentRuntime: agent.profile.runtime,
+      agentColor: agent.profile.color,
+    };
+  });
 
   // Memory
   ipcMain.handle('memory:load', (_, agentId) =>

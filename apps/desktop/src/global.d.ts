@@ -139,6 +139,34 @@ export interface JamAPI {
       }) => void,
     ) => () => void;
   };
+
+  chat: {
+    sendCommand: (text: string) => Promise<{
+      success: boolean;
+      text?: string;
+      error?: string;
+      agentId?: string;
+      agentName?: string;
+      agentRuntime?: string;
+      agentColor?: string;
+    }>;
+    onAgentResponse: (
+      callback: (data: {
+        agentId: string;
+        agentName: string;
+        agentRuntime: string;
+        agentColor: string;
+        text: string;
+      }) => void,
+    ) => () => void;
+    onVoiceCommand: (
+      callback: (data: {
+        text: string;
+        agentId: string;
+        agentName: string | null;
+      }) => void,
+    ) => () => void;
+  };
 }
 
 declare global {

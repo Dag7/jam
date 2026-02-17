@@ -11,6 +11,7 @@ import {
 } from '@jam/agent-runtime';
 import {
   VoiceService,
+  CommandParser,
   WhisperSTTProvider,
   ElevenLabsSTTProvider,
   ElevenLabsTTSProvider,
@@ -32,6 +33,7 @@ export class Orchestrator {
   readonly memoryStore: FileMemoryStore;
   readonly appStore: AppStore;
   readonly config: JamConfig;
+  readonly commandParser: CommandParser;
   voiceService: VoiceService | null = null;
 
   private mainWindow: BrowserWindow | null = null;
@@ -42,6 +44,7 @@ export class Orchestrator {
     this.ptyManager = new PtyManager();
     this.runtimeRegistry = new RuntimeRegistry();
     this.appStore = new AppStore();
+    this.commandParser = new CommandParser();
 
     // Register runtimes
     this.runtimeRegistry.register(new ClaudeCodeRuntime());
@@ -151,13 +154,18 @@ export class Orchestrator {
   }
 
   syncAgentNames(): void {
-    if (!this.voiceService) return;
-
     const agents = this.agentManager.list().map((a) => ({
       id: a.profile.id,
       name: a.profile.name,
     }));
-    this.voiceService.updateAgentNames(agents);
+
+    // Always update the standalone command parser (for text-based routing)
+    this.commandParser.updateAgentNames(agents);
+
+    // Update voice service parser if available
+    if (this.voiceService) {
+      this.voiceService.updateAgentNames(agents);
+    }
   }
 
   /** Synthesize TTS audio from a completed agent response and send to renderer */
