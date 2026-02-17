@@ -18,7 +18,7 @@ export const CommandBarContainer: React.FC = () => {
     stopCapture,
     toggleListening,
   } = useVoice();
-  const { sendTextCommand, selectedAgentId } = useOrchestrator();
+  const { sendTextCommand } = useOrchestrator();
   const [textInput, setTextInput] = useState('');
 
   const handleTextSubmit = (e: React.FormEvent) => {
@@ -32,15 +32,13 @@ export const CommandBarContainer: React.FC = () => {
   const isPTT = voiceMode === 'push-to-talk';
   const isVoiceActive = isRecording || isListening;
 
-  const placeholder = !selectedAgentId
-    ? 'Select an agent to start...'
-    : isRecording
-      ? 'Recording...'
-      : isListening
-        ? 'Listening for voice...'
-        : isPTT
-          ? 'Type a command or hold mic to talk...'
-          : 'Type a command or click mic to listen...';
+  const placeholder = isRecording
+    ? 'Recording...'
+    : isListening
+      ? 'Listening for voice...'
+      : isPTT
+        ? 'Type a command or hold mic to talk...'
+        : 'Type a command or click mic to listen...';
 
   return (
     <div className="border-t border-zinc-800 bg-zinc-900/80 backdrop-blur-sm px-4 py-3 shrink-0">
@@ -55,7 +53,6 @@ export const CommandBarContainer: React.FC = () => {
           isRecording={isRecording}
           isListening={isListening}
           isProcessing={voiceState === 'processing'}
-          disabled={!selectedAgentId}
           onPressStart={startCapture}
           onPressEnd={stopCapture}
           onToggleListening={toggleListening}
@@ -69,7 +66,7 @@ export const CommandBarContainer: React.FC = () => {
             value={textInput}
             onChange={(e) => setTextInput(e.target.value)}
             placeholder={placeholder}
-            disabled={!selectedAgentId || isRecording}
+            disabled={isRecording}
             className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
           />
         </form>
@@ -80,7 +77,7 @@ export const CommandBarContainer: React.FC = () => {
             if (isListening) toggleListening();
             setVoiceMode(isPTT ? 'always-listening' : 'push-to-talk');
           }}
-          disabled={!selectedAgentId || isRecording}
+          disabled={isRecording}
           className={`
             px-3 py-2 rounded-lg text-xs font-medium transition-colors
             ${isPTT

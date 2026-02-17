@@ -32,6 +32,8 @@ export interface AgentProfile {
   avatarUrl?: string;
   voice: AgentVoiceConfig;
   autoStart?: boolean;
+  /** Grant the agent full tool access (web search, file ops, etc.) without confirmation prompts */
+  allowFullAccess?: boolean;
   cwd?: string;
   env?: Record<string, string>;
 }

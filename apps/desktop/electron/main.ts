@@ -212,17 +212,19 @@ function registerIpcHandlers(): void {
     orchestrator.ptyManager.getScrollback(agentId),
   );
 
-  // Voice
+  // Voice — routing is purely name-based (not driven by UI selection)
+  let lastVoiceTargetId: string | null = null;
+
   ipcMain.on(
     'voice:audioChunk',
-    async (_, agentId: string, chunk: ArrayBuffer) => {
+    async (_, _agentId: string, chunk: ArrayBuffer) => {
       if (!orchestrator.voiceService) {
         log.warn('Voice audio received but voice service not initialized');
         return;
       }
 
       try {
-        log.debug(`Voice audio chunk received (${chunk.byteLength} bytes) for agent ${agentId}`);
+        log.debug(`Voice audio chunk received (${chunk.byteLength} bytes)`);
         const result = await orchestrator.voiceService.transcribe(
           Buffer.from(chunk),
         );
@@ -231,7 +233,6 @@ function registerIpcHandlers(): void {
 
         // Strip ambient noise — STT often transcribes background sounds as
         // parenthetical descriptions like "(door closes)", "(birds chirping)" etc.
-        // Remove them from anywhere in the text, then check if anything remains.
         const cleaned = result.text.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
         if (cleaned.length < 3) {
           log.debug(`Filtered noise transcription: "${result.text}"`);
@@ -245,21 +246,41 @@ function registerIpcHandlers(): void {
           return;
         }
 
-        // Route to agent
-        const targetId = parsed.targetAgentName
-          ? orchestrator.voiceService.resolveAgentId(parsed.targetAgentName)
-          : agentId;
+        // Route purely by name — no UI selection fallback
+        let targetId: string | undefined;
+
+        if (parsed.targetAgentName) {
+          targetId = orchestrator.voiceService.resolveAgentId(parsed.targetAgentName);
+          if (!targetId) {
+            log.warn(`Agent name "${parsed.targetAgentName}" not found`);
+          }
+        }
+
+        // Fallback: last agent that was voice-commanded, then first running agent
+        if (!targetId && lastVoiceTargetId) {
+          targetId = lastVoiceTargetId;
+          log.debug(`Routing to last voice target: ${targetId}`);
+        }
+        if (!targetId) {
+          const running = orchestrator.agentManager.list().filter((a) => a.status === 'running');
+          if (running.length === 1) {
+            targetId = running[0].profile.id;
+            log.debug(`Routing to only running agent: ${targetId}`);
+          } else if (running.length > 1) {
+            log.warn(`No agent name detected and ${running.length} agents running — say the agent's name`);
+            return;
+          }
+        }
 
         if (targetId && parsed.command) {
-          log.info(`Sending voice command to agent ${targetId}: "${parsed.command}"`);
-          // One-shot child process: runs `claude -p --output-format json "text"`,
-          // waits for exit, emits agent:responseComplete with clean text for TTS.
-          // Following OpenClaw pattern — no PTY prompt detection needed.
+          lastVoiceTargetId = targetId;
+          const agent = orchestrator.agentManager.get(targetId);
+          log.info(`Voice → "${agent?.profile.name ?? targetId}": "${parsed.command}"`);
           orchestrator.agentManager.voiceCommand(targetId, parsed.command).catch((err) => {
             log.error(`Voice command execution failed: ${String(err)}`);
           });
         } else {
-          log.warn(`Voice command not routed: targetId=${targetId}, command="${parsed.command}"`);
+          log.warn(`Voice command not routed: no target agent found`);
         }
       } catch (error) {
         log.error(`Voice transcription error: ${String(error)}`);

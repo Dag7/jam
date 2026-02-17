@@ -9,6 +9,71 @@ import { SettingsContainer } from '@/containers/SettingsContainer';
 import { LogsContainer } from '@/containers/LogsContainer';
 import type { AgentEntry } from '@/store/agentSlice';
 
+// --- TTS Audio Queue ---
+// Prevents agents from talking over each other by playing responses sequentially.
+const ttsQueue: string[] = [];
+let ttsPlaying = false;
+
+function enqueueTTSAudio(audioData: string) {
+  ttsQueue.push(audioData);
+  if (!ttsPlaying) playNextTTS();
+}
+
+function playNextTTS() {
+  if (ttsQueue.length === 0) {
+    ttsPlaying = false;
+    useAppStore.getState().setVoiceState('idle');
+    return;
+  }
+
+  ttsPlaying = true;
+  const audioData = ttsQueue.shift()!;
+
+  try {
+    const match = audioData.match(/^data:([^;]+);base64,(.+)$/);
+    let audioSrc: string;
+    let blobUrl: string | null = null;
+
+    if (match) {
+      const mimeType = match[1];
+      const base64Data = match[2];
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: mimeType });
+      blobUrl = URL.createObjectURL(blob);
+      audioSrc = blobUrl;
+    } else {
+      audioSrc = audioData;
+    }
+
+    const audio = new Audio(audioSrc);
+    useAppStore.getState().setVoiceState('speaking');
+
+    audio.play().catch((err) => {
+      console.error('[TTS] Failed to play audio:', err);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      playNextTTS();
+    });
+
+    audio.onended = () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      playNextTTS();
+    };
+
+    audio.onerror = (err) => {
+      console.error('[TTS] Audio error:', err);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      playNextTTS();
+    };
+  } catch (err) {
+    console.error('[TTS] Audio setup error:', err);
+    playNextTTS();
+  }
+}
+
 export default function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const sidebarCollapsed = useAppStore((s) => s.settings.sidebarCollapsed);
@@ -90,62 +155,11 @@ export default function App() {
       },
     );
 
-    // TTS audio playback — play agent responses through the speaker
-    // Convert base64 data URL to Blob URL to avoid CSP media-src restrictions
+    // TTS audio playback — queue responses so agents don't talk over each other
     const unsubTTSAudio = window.jam.voice.onTTSAudio(
       ({ audioData }) => {
-        console.log('[TTS] Audio received, length:', audioData?.length ?? 0);
         if (!audioData) return;
-
-        try {
-          // Convert data URL to Blob URL (allowed by CSP blob: directive)
-          const match = audioData.match(/^data:([^;]+);base64,(.+)$/);
-          let audioSrc: string;
-          let blobUrl: string | null = null;
-
-          if (match) {
-            const mimeType = match[1];
-            const base64Data = match[2];
-            const binaryString = atob(base64Data);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-            }
-            const blob = new Blob([bytes], { type: mimeType });
-            blobUrl = URL.createObjectURL(blob);
-            audioSrc = blobUrl;
-            console.log('[TTS] Converted to blob URL, size:', bytes.length);
-          } else {
-            audioSrc = audioData;
-          }
-
-          const audio = new Audio(audioSrc);
-          audioRef.current = audio;
-          useAppStore.getState().setVoiceState('speaking');
-
-          audio.play().catch((err) => {
-            console.error('[TTS] Failed to play audio:', err);
-            if (blobUrl) URL.revokeObjectURL(blobUrl);
-            useAppStore.getState().setVoiceState('idle');
-          });
-
-          audio.onended = () => {
-            console.log('[TTS] Audio playback finished');
-            if (blobUrl) URL.revokeObjectURL(blobUrl);
-            audioRef.current = null;
-            useAppStore.getState().setVoiceState('idle');
-          };
-
-          audio.onerror = (err) => {
-            console.error('[TTS] Audio error:', err);
-            if (blobUrl) URL.revokeObjectURL(blobUrl);
-            audioRef.current = null;
-            useAppStore.getState().setVoiceState('idle');
-          };
-        } catch (err) {
-          console.error('[TTS] Audio setup error:', err);
-          useAppStore.getState().setVoiceState('idle');
-        }
+        enqueueTTSAudio(audioData);
       },
     );
 

@@ -19,12 +19,17 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {
     const args: string[] = [];
 
+    if (profile.allowFullAccess) {
+      args.push('--dangerously-skip-permissions');
+    }
+
     if (profile.model) {
       args.push('--model', profile.model);
     }
 
-    if (profile.systemPrompt) {
-      args.push('--system-prompt', profile.systemPrompt);
+    const systemPrompt = this.buildSystemPrompt(profile);
+    if (systemPrompt) {
+      args.push('--system-prompt', systemPrompt);
     }
 
     return {
@@ -145,12 +150,18 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
   private buildOneShotArgs(profile: AgentProfile, sessionId?: string): string[] {
     const args: string[] = ['-p', '--output-format', 'json'];
 
+    if (profile.allowFullAccess) {
+      args.push('--dangerously-skip-permissions');
+    }
+
     if (profile.model) {
       args.push('--model', profile.model);
     }
 
-    if (profile.systemPrompt) {
-      args.push('--system-prompt', profile.systemPrompt);
+    // Build system prompt with agent identity + user-defined persona
+    const systemPrompt = this.buildSystemPrompt(profile);
+    if (systemPrompt) {
+      args.push('--system-prompt', systemPrompt);
     }
 
     if (sessionId) {
@@ -158,6 +169,15 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
     }
 
     return args;
+  }
+
+  /** Compose a system prompt that includes agent identity */
+  private buildSystemPrompt(profile: AgentProfile): string {
+    const identity = `Your name is ${profile.name}. When asked who you are, respond as ${profile.name}.`;
+    if (profile.systemPrompt) {
+      return `${identity}\n\n${profile.systemPrompt}`;
+    }
+    return identity;
   }
 
   /** Parse JSON output from `claude -p --output-format json` */

@@ -68,8 +68,12 @@ export class OpenCodeRuntime implements IAgentRuntime {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      // Pipe text via stdin
-      child.stdin.write(text);
+      // Pipe text via stdin — prepend identity context
+      const identity = `[You are ${profile.name}. When asked who you are, respond as ${profile.name}.]`;
+      const systemContext = profile.systemPrompt
+        ? `${identity}\n[${profile.systemPrompt}]\n\n${text}`
+        : `${identity}\n\n${text}`;
+      child.stdin.write(systemContext);
       child.stdin.end();
 
       let stdout = '';

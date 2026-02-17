@@ -9,7 +9,6 @@ export function useVoice() {
   const voiceState = useAppStore((s) => s.voiceState);
   const transcript = useAppStore((s) => s.currentTranscript);
   const voiceMode = useAppStore((s) => s.settings.voiceMode);
-  const selectedAgentId = useAppStore((s) => s.selectedAgentId);
   const setVoiceState = useAppStore((s) => s.setVoiceState);
   const setVoiceMode = useAppStore((s) => s.setVoiceMode);
 
@@ -61,12 +60,10 @@ export function useVoice() {
     mediaRecorder.onstop = async () => {
       if (chunksRef.current.length === 0) return;
 
-      const agentId = useAppStore.getState().selectedAgentId;
-      if (!agentId) return;
-
+      // Routing is name-based in main process — no need for selectedAgentId
       const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
       const arrayBuffer = await blob.arrayBuffer();
-      window.jam.voice.sendAudioChunk(agentId, arrayBuffer);
+      window.jam.voice.sendAudioChunk('_voice', arrayBuffer);
       setVoiceState('processing');
     };
 
@@ -137,7 +134,6 @@ export function useVoice() {
 
   // --- Push-to-Talk ---
   const startCapture = useCallback(async () => {
-    if (!selectedAgentId) return;
 
     try {
       await acquireMicStream();
@@ -150,7 +146,7 @@ export function useVoice() {
     } catch (error) {
       console.error('Failed to start audio capture:', error);
     }
-  }, [selectedAgentId, acquireMicStream, beginRecording, getAudioLevel]);
+  }, [acquireMicStream, beginRecording, getAudioLevel]);
 
   const stopCapture = useCallback(() => {
     if (vadIntervalRef.current !== null) {
@@ -166,7 +162,6 @@ export function useVoice() {
 
   // --- Always-Listening (VAD) ---
   const startListening = useCallback(async () => {
-    if (!selectedAgentId) return;
 
     try {
       await acquireMicStream();
@@ -201,7 +196,7 @@ export function useVoice() {
     } catch (error) {
       console.error('Failed to start always-listening mode:', error);
     }
-  }, [selectedAgentId, acquireMicStream, setVoiceState, getAudioLevel, beginRecording, endRecording]);
+  }, [acquireMicStream, setVoiceState, getAudioLevel, beginRecording, endRecording]);
 
   const stopListening = useCallback(() => {
     setIsListening(false);
@@ -225,12 +220,7 @@ export function useVoice() {
     };
   }, [releaseMicStream]);
 
-  // Stop listening when agent deselected
-  useEffect(() => {
-    if (!selectedAgentId && isListening) {
-      stopListening();
-    }
-  }, [selectedAgentId, isListening, stopListening]);
+  // Voice no longer depends on agent selection — routing is name-based
 
   return {
     voiceState,

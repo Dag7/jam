@@ -25,6 +25,7 @@ export interface AgentEntry {
       speed?: number;
     };
     autoStart?: boolean;
+    allowFullAccess?: boolean;
     cwd?: string;
   };
   status: string;

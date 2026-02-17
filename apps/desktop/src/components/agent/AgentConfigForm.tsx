@@ -73,6 +73,7 @@ export interface AgentFormValues {
   voice: { ttsVoiceId: string };
   cwd?: string;
   autoStart?: boolean;
+  allowFullAccess?: boolean;
 }
 
 interface AgentConfigFormProps {
@@ -97,6 +98,7 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
   const [ttsProvider, setTtsProvider] = useState<TTSProvider>('openai');
   const [cwd, setCwd] = useState(initialValues?.cwd ?? '');
   const [autoStart, setAutoStart] = useState(initialValues?.autoStart ?? false);
+  const [allowFullAccess, setAllowFullAccess] = useState(initialValues?.allowFullAccess ?? false);
 
   // Load TTS provider from global config and ensure voice is compatible
   useEffect(() => {
@@ -140,6 +142,7 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
       voice: { ttsVoiceId: voiceId },
       cwd: cwd || undefined,
       autoStart,
+      allowFullAccess,
     });
   };
 
@@ -257,17 +260,32 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          id="autoStart"
-          checked={autoStart}
-          onChange={(e) => setAutoStart(e.target.checked)}
-          className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-zinc-900"
-        />
-        <label htmlFor="autoStart" className="text-xs text-zinc-400">
-          Auto-start on app launch
-        </label>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="autoStart"
+            checked={autoStart}
+            onChange={(e) => setAutoStart(e.target.checked)}
+            className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-zinc-900"
+          />
+          <label htmlFor="autoStart" className="text-xs text-zinc-400">
+            Auto-start on app launch
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="allowFullAccess"
+            checked={allowFullAccess}
+            onChange={(e) => setAllowFullAccess(e.target.checked)}
+            className="rounded border-zinc-600 bg-zinc-800 text-amber-500 focus:ring-amber-500 focus:ring-offset-zinc-900"
+          />
+          <label htmlFor="allowFullAccess" className="text-xs text-zinc-400">
+            Full access <span className="text-zinc-600">(web search, file ops, no confirmation prompts)</span>
+          </label>
+        </div>
       </div>
 
       <div className="flex gap-2 pt-2">
