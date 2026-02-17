@@ -1,6 +1,7 @@
 import type { AgentId } from '@jam/core';
 import { createLogger } from '@jam/core';
 import type * as pty from 'node-pty';
+import { buildCleanEnv } from './utils.js';
 
 const log = createLogger('PtyManager');
 
@@ -28,6 +29,26 @@ export interface PtyExitHandler {
 
 const SCROLLBACK_MAX = 10_000;
 const FLUSH_INTERVAL_MS = 16;
+
+// DSR (Device Status Report) pattern — CLI agents like Claude Code send ESC[6n
+// to query cursor position. If unanswered, the agent hangs waiting for a reply.
+// We intercept and auto-respond with a fake cursor position.
+// eslint-disable-next-line no-control-regex
+const DSR_PATTERN = /\x1b\[\??6n/g;
+
+function stripDsrRequests(input: string): { cleaned: string; dsrCount: number } {
+  let dsrCount = 0;
+  const cleaned = input.replace(DSR_PATTERN, () => {
+    dsrCount++;
+    return '';
+  });
+  return { cleaned, dsrCount };
+}
+
+/** Build a CPR (Cursor Position Report) response: ESC[row;colR */
+function buildCursorPositionResponse(row = 1, col = 1): string {
+  return `\x1b[${row};${col}R`;
+}
 
 export class PtyManager {
   private instances = new Map<string, PtyInstance>();
@@ -70,12 +91,10 @@ export class PtyManager {
       const shellCmd = [command, ...args].map(shellEscape).join(' ');
       log.info(`Spawning via shell: ${shell} -lc ${shellCmd}`, undefined, agentId);
 
-      // Build a clean env — filter out undefined values that can break posix_spawnp
-      const env: Record<string, string> = {};
-      for (const [k, v] of Object.entries(process.env)) {
-        if (v !== undefined) env[k] = v;
-      }
-      Object.assign(env, options.env, {
+      // Build a clean env — filter out vars that break posix_spawnp
+      // or cause nested-session detection (CLAUDECODE, CLAUDE_PARENT_CLI)
+      const env = buildCleanEnv({
+        ...options.env,
         TERM: 'xterm-256color',
         COLORTERM: 'truecolor',
       });
@@ -98,9 +117,22 @@ export class PtyManager {
       let outputBuffer = '';
       let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
+      const cursorResponse = buildCursorPositionResponse();
+
       ptyProcess.onData((data: string) => {
+        // DSR interception: CLI agents (Claude Code) send ESC[6n cursor queries.
+        // Strip them from output and auto-respond so the agent doesn't hang.
+        const { cleaned, dsrCount } = stripDsrRequests(data);
+        if (dsrCount > 0) {
+          for (let i = 0; i < dsrCount; i++) {
+            ptyProcess.write(cursorResponse);
+          }
+        }
+
+        const outputData = cleaned;
+
         // Accumulate scrollback
-        const lines = data.split('\n');
+        const lines = outputData.split('\n');
         instance.scrollback.push(...lines);
         if (instance.scrollback.length > SCROLLBACK_MAX) {
           instance.scrollback.splice(
@@ -110,7 +142,7 @@ export class PtyManager {
         }
 
         // Batch and flush
-        outputBuffer += data;
+        outputBuffer += outputData;
         if (!flushTimer) {
           flushTimer = setTimeout(() => {
             this.outputHandler?.(agentId, outputBuffer);

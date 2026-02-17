@@ -10,6 +10,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { createLogger, addLogTransport, type LogEntry } from '@jam/core';
 import { Orchestrator } from './orchestrator';
+import { saveConfig } from './config';
 
 const log = createLogger('Main');
 
@@ -227,7 +228,17 @@ function registerIpcHandlers(): void {
         );
 
         log.info(`Transcribed: "${result.text}" (confidence: ${result.confidence})`);
-        const parsed = orchestrator.voiceService.parseCommand(result.text);
+
+        // Strip ambient noise — STT often transcribes background sounds as
+        // parenthetical descriptions like "(door closes)", "(birds chirping)" etc.
+        // Remove them from anywhere in the text, then check if anything remains.
+        const cleaned = result.text.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+        if (cleaned.length < 3) {
+          log.debug(`Filtered noise transcription: "${result.text}"`);
+          return;
+        }
+
+        const parsed = orchestrator.voiceService.parseCommand(cleaned);
 
         if (parsed.isMetaCommand) {
           log.info(`Voice meta command: ${parsed.command}`);
@@ -241,9 +252,12 @@ function registerIpcHandlers(): void {
 
         if (targetId && parsed.command) {
           log.info(`Sending voice command to agent ${targetId}: "${parsed.command}"`);
-          // trackResponse: AgentManager will watch PTY output and emit
-          // agent:responseComplete when done — orchestrator handles TTS from there
-          orchestrator.agentManager.sendInput(targetId, parsed.command, { trackResponse: true });
+          // One-shot child process: runs `claude -p --output-format json "text"`,
+          // waits for exit, emits agent:responseComplete with clean text for TTS.
+          // Following OpenClaw pattern — no PTY prompt detection needed.
+          orchestrator.agentManager.voiceCommand(targetId, parsed.command).catch((err) => {
+            log.error(`Voice command execution failed: ${String(err)}`);
+          });
         } else {
           log.warn(`Voice command not routed: targetId=${targetId}, command="${parsed.command}"`);
         }
@@ -296,6 +310,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('config:get', () => orchestrator.config);
   ipcMain.handle('config:set', (_, config) => {
     Object.assign(orchestrator.config, config);
+    saveConfig(orchestrator.config);
     // Re-initialize voice if provider changed
     orchestrator.initVoice();
     return { success: true };
@@ -333,6 +348,8 @@ function registerIpcHandlers(): void {
 }
 
 // --- App lifecycle ---
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 app.whenReady().then(() => {
   orchestrator = new Orchestrator();
 

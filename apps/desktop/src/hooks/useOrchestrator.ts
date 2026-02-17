@@ -33,6 +33,10 @@ export function useOrchestrator() {
     return window.jam.agents.delete(agentId);
   }, []);
 
+  const updateAgent = useCallback(async (agentId: string, updates: Record<string, unknown>) => {
+    return window.jam.agents.update(agentId, updates);
+  }, []);
+
   const sendTextCommand = useCallback(
     (text: string) => {
       const targetId = selectedAgentId;
@@ -54,6 +58,7 @@ export function useOrchestrator() {
     activeAgentIds,
     selectedAgentId,
     createAgent,
+    updateAgent,
     startAgent,
     stopAgent,
     deleteAgent,

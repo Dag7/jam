@@ -43,41 +43,95 @@ const TTS_VOICES: Record<TTSProvider, Array<{ id: string; label: string }>> = {
   ],
 };
 
+const MODELS_BY_RUNTIME: Record<string, Array<{ id: string; label: string; group: string }>> = {
+  'claude-code': [
+    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6', group: 'Claude 4' },
+    { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', group: 'Claude 4' },
+    { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', group: 'Claude 4' },
+    { id: 'opus', label: 'Opus (latest)', group: 'Aliases' },
+    { id: 'sonnet', label: 'Sonnet (latest)', group: 'Aliases' },
+    { id: 'haiku', label: 'Haiku (latest)', group: 'Aliases' },
+  ],
+  opencode: [
+    { id: 'claude-opus-4-6', label: 'Claude Opus 4.6', group: 'Anthropic' },
+    { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', group: 'Anthropic' },
+    { id: 'gpt-4o', label: 'GPT-4o', group: 'OpenAI' },
+    { id: 'gpt-4o-mini', label: 'GPT-4o Mini', group: 'OpenAI' },
+    { id: 'o3', label: 'o3', group: 'OpenAI' },
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', group: 'Google' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', group: 'Google' },
+  ],
+};
+
+export interface AgentFormValues {
+  id?: string;
+  name: string;
+  runtime: string;
+  model?: string;
+  systemPrompt?: string;
+  color: string;
+  voice: { ttsVoiceId: string };
+  cwd?: string;
+  autoStart?: boolean;
+}
+
 interface AgentConfigFormProps {
   onSubmit: (profile: Record<string, unknown>) => void;
   onCancel: () => void;
+  initialValues?: AgentFormValues;
 }
 
 export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
   onSubmit,
   onCancel,
+  initialValues,
 }) => {
-  const [name, setName] = useState('');
-  const [runtime, setRuntime] = useState('claude-code');
-  const [model, setModel] = useState('');
-  const [systemPrompt, setSystemPrompt] = useState('');
-  const [color, setColor] = useState(AGENT_COLORS[0]);
-  const [ttsVoiceId, setTtsVoiceId] = useState('');
-  const [ttsProvider, setTtsProvider] = useState<TTSProvider>('openai');
-  const [cwd, setCwd] = useState('');
+  const isEditing = !!initialValues?.id;
 
-  // Load default voice from global config
+  const [name, setName] = useState(initialValues?.name ?? '');
+  const [runtime, setRuntime] = useState(initialValues?.runtime ?? 'claude-code');
+  const [model, setModel] = useState(initialValues?.model ?? '');
+  const [systemPrompt, setSystemPrompt] = useState(initialValues?.systemPrompt ?? '');
+  const [color, setColor] = useState(initialValues?.color ?? AGENT_COLORS[0]);
+  const [ttsVoiceId, setTtsVoiceId] = useState(initialValues?.voice?.ttsVoiceId ?? '');
+  const [ttsProvider, setTtsProvider] = useState<TTSProvider>('openai');
+  const [cwd, setCwd] = useState(initialValues?.cwd ?? '');
+  const [autoStart, setAutoStart] = useState(initialValues?.autoStart ?? false);
+
+  // Load TTS provider from global config and ensure voice is compatible
   useEffect(() => {
     window.jam.config.get().then((c) => {
       const provider = (c.ttsProvider as TTSProvider) || 'openai';
-      const defaultVoice = (c.ttsVoice as string) || TTS_VOICES[provider][0]?.id || '';
       setTtsProvider(provider);
-      setTtsVoiceId(defaultVoice);
+
+      const providerVoices = TTS_VOICES[provider] || [];
+      const storedVoice = initialValues?.voice?.ttsVoiceId;
+      const isCompatible = storedVoice && providerVoices.some((v) => v.id === storedVoice);
+
+      if (isCompatible) {
+        setTtsVoiceId(storedVoice);
+      } else {
+        // Stored voice is missing or incompatible with current provider — use default
+        const defaultVoice = (c.ttsVoice as string) || providerVoices[0]?.id || '';
+        setTtsVoiceId(defaultVoice);
+      }
     });
-  }, []);
+  }, [initialValues?.voice?.ttsVoiceId]);
 
   const voices = TTS_VOICES[ttsProvider] || [];
+  const models = MODELS_BY_RUNTIME[runtime] || [];
+
+  // Group models by their group label
+  const modelGroups = models.reduce<Record<string, typeof models>>((acc, m) => {
+    (acc[m.group] ??= []).push(m);
+    return acc;
+  }, {});
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Use the first voice for the active provider as ultimate fallback
     const voiceId = ttsVoiceId || voices[0]?.id || 'alloy';
     onSubmit({
+      ...(isEditing ? { id: initialValues!.id } : {}),
       name,
       runtime,
       model: model || undefined,
@@ -85,12 +139,15 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
       color,
       voice: { ttsVoiceId: voiceId },
       cwd: cwd || undefined,
+      autoStart,
     });
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 p-4">
-      <h3 className="text-sm font-semibold text-zinc-200">New Agent</h3>
+      <h3 className="text-sm font-semibold text-zinc-200">
+        {isEditing ? `Configure ${initialValues!.name}` : 'New Agent'}
+      </h3>
 
       <div>
         <label className="block text-xs text-zinc-400 mb-1">Name</label>
@@ -108,7 +165,10 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
         <label className="block text-xs text-zinc-400 mb-1">Runtime</label>
         <select
           value={runtime}
-          onChange={(e) => setRuntime(e.target.value)}
+          onChange={(e) => {
+            setRuntime(e.target.value);
+            setModel('');
+          }}
           className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
         >
           {RUNTIMES.map((r) => (
@@ -120,14 +180,23 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
       </div>
 
       <div>
-        <label className="block text-xs text-zinc-400 mb-1">Model (optional)</label>
-        <input
-          type="text"
+        <label className="block text-xs text-zinc-400 mb-1">Model</label>
+        <select
           value={model}
           onChange={(e) => setModel(e.target.value)}
-          placeholder="e.g., claude-opus-4-6"
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-        />
+          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
+        >
+          <option value="">Default</option>
+          {Object.entries(modelGroups).map(([group, groupModels]) => (
+            <optgroup key={group} label={group}>
+              {groupModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
       </div>
 
       <div>
@@ -188,13 +257,26 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
         </div>
       </div>
 
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="autoStart"
+          checked={autoStart}
+          onChange={(e) => setAutoStart(e.target.checked)}
+          className="rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-blue-500 focus:ring-offset-zinc-900"
+        />
+        <label htmlFor="autoStart" className="text-xs text-zinc-400">
+          Auto-start on app launch
+        </label>
+      </div>
+
       <div className="flex gap-2 pt-2">
         <button
           type="submit"
           disabled={!name.trim()}
           className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded-lg transition-colors"
         >
-          Create Agent
+          {isEditing ? 'Save Changes' : 'Create Agent'}
         </button>
         <button
           type="button"

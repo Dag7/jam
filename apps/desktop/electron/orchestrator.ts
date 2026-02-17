@@ -175,31 +175,88 @@ export class Orchestrator {
       return;
     }
 
+    // Strip markdown formatting before TTS — prevents reading "hashtag hashtag" etc.
+    text = this.stripMarkdownForTTS(text);
+
     // Truncate for TTS (avoid reading huge code blocks aloud)
-    if (text.length > 1000) text = text.slice(0, 1000) + '...';
+    if (text.length > 1500) text = text.slice(0, 1500) + '...';
 
     log.debug(`TTS text: "${text.slice(0, 100)}..."`, undefined, agentId);
 
     try {
-      // Use agent's voice, falling back to global default from config
-      const voiceId = (agent.profile.voice.ttsVoiceId && agent.profile.voice.ttsVoiceId !== 'default')
-        ? agent.profile.voice.ttsVoiceId
-        : this.config.ttsVoice;
+      // Resolve voice ID — ensure it's compatible with the active TTS provider.
+      // OpenAI voices are short names (alloy, nova, etc.), ElevenLabs are long hex IDs.
+      const OPENAI_VOICES = new Set(['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer']);
+      const isOpenAI = this.config.ttsProvider === 'openai';
+      const agentVoice = agent.profile.voice.ttsVoiceId;
+      let voiceId: string;
+
+      if (agentVoice && agentVoice !== 'default') {
+        // Check if the stored voice is compatible with the current provider
+        const voiceIsOpenAI = OPENAI_VOICES.has(agentVoice);
+        if (isOpenAI && !voiceIsOpenAI) {
+          // Agent has ElevenLabs voice but TTS is now OpenAI — use global default
+          voiceId = OPENAI_VOICES.has(this.config.ttsVoice) ? this.config.ttsVoice : 'alloy';
+          log.warn(`Agent voice "${agentVoice}" incompatible with OpenAI TTS, using "${voiceId}"`, undefined, agentId);
+        } else if (!isOpenAI && voiceIsOpenAI) {
+          // Agent has OpenAI voice but TTS is now ElevenLabs — use global default
+          voiceId = this.config.ttsVoice;
+          log.warn(`Agent voice "${agentVoice}" incompatible with ElevenLabs TTS, using "${voiceId}"`, undefined, agentId);
+        } else {
+          voiceId = agentVoice;
+        }
+      } else {
+        voiceId = this.config.ttsVoice;
+      }
 
       log.info(`Synthesizing TTS (${text.length} chars, voice=${voiceId})`, undefined, agentId);
       const audioPath = await this.voiceService.synthesize(text, voiceId, agentId);
 
+      // Guard: ensure mainWindow is alive before sending
+      if (!this.mainWindow || this.mainWindow.isDestroyed()) {
+        log.error('Cannot send TTS audio: main window unavailable', undefined, agentId);
+        return;
+      }
+
       // Read audio file and send as base64 data URL to renderer
       const audioBuffer = await readFile(audioPath);
       const base64 = audioBuffer.toString('base64');
-      this.mainWindow?.webContents.send('voice:ttsAudio', {
+      const dataUrl = `data:audio/mpeg;base64,${base64}`;
+      log.info(`Sending TTS audio to renderer (${Math.round(audioBuffer.length / 1024)}KB)`, undefined, agentId);
+      this.mainWindow.webContents.send('voice:ttsAudio', {
         agentId,
-        audioData: `data:audio/mpeg;base64,${base64}`,
+        audioData: dataUrl,
       });
-      log.info('TTS audio sent to renderer', undefined, agentId);
     } catch (error) {
       log.error(`TTS synthesis failed: ${String(error)}`, undefined, agentId);
     }
+  }
+
+  /** Strip markdown formatting so TTS reads natural text, not syntax */
+  private stripMarkdownForTTS(text: string): string {
+    return text
+      // Remove code blocks (```...```) — don't read code aloud
+      .replace(/```[\s\S]*?```/g, ' (code block omitted) ')
+      // Remove inline code
+      .replace(/`([^`]+)`/g, '$1')
+      // Remove headers (# ## ### etc.)
+      .replace(/^#{1,6}\s+/gm, '')
+      // Remove bold/italic markers
+      .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
+      .replace(/_{1,3}([^_]+)_{1,3}/g, '$1')
+      // Remove links — keep text, drop URL
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      // Remove images
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+      // Remove horizontal rules
+      .replace(/^[-*_]{3,}\s*$/gm, '')
+      // Remove bullet markers
+      .replace(/^\s*[-*+]\s+/gm, '')
+      // Remove numbered list markers
+      .replace(/^\s*\d+\.\s+/gm, '')
+      // Collapse multiple newlines
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   async startAutoStartAgents(): Promise<void> {

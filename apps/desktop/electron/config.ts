@@ -1,6 +1,9 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { app } from 'electron';
+import { createLogger } from '@jam/core';
+
+const log = createLogger('Config');
 
 export type STTProviderType = 'openai' | 'elevenlabs';
 export type TTSProviderType = 'openai' | 'elevenlabs';
@@ -35,15 +38,19 @@ export function loadConfig(): JamConfig {
   if (existsSync(userConfigPath)) {
     try {
       fileConfig = JSON.parse(readFileSync(userConfigPath, 'utf-8'));
+      log.info(`Loaded user config from ${userConfigPath}`);
     } catch {
-      console.warn('[Config] Failed to parse user config, using defaults');
+      log.warn('Failed to parse user config, using defaults');
     }
   } else if (existsSync(bundledConfigPath)) {
     try {
       fileConfig = JSON.parse(readFileSync(bundledConfigPath, 'utf-8'));
+      log.info(`Loaded bundled config from ${bundledConfigPath}`);
     } catch {
-      console.warn('[Config] Failed to parse bundled config, using defaults');
+      log.warn('Failed to parse bundled config, using defaults');
     }
+  } else {
+    log.info('No config file found, using defaults');
   }
 
   // Environment variable overrides
@@ -58,5 +65,17 @@ export function loadConfig(): JamConfig {
     envOverrides.defaultModel = process.env.JAM_DEFAULT_MODEL;
   }
 
-  return { ...DEFAULT_CONFIG, ...fileConfig, ...envOverrides };
+  const merged = { ...DEFAULT_CONFIG, ...fileConfig, ...envOverrides };
+  log.info(`Config resolved: stt=${merged.sttProvider}, tts=${merged.ttsProvider}, runtime=${merged.defaultRuntime}, theme=${merged.theme}`);
+  return merged;
+}
+
+export function saveConfig(config: JamConfig): void {
+  const userConfigPath = join(app.getPath('userData'), 'jam.config.json');
+  try {
+    writeFileSync(userConfigPath, JSON.stringify(config, null, 2), 'utf-8');
+    log.info(`Config saved to ${userConfigPath}`);
+  } catch (error) {
+    log.error(`Failed to save config: ${String(error)}`);
+  }
 }

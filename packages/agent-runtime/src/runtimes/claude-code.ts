@@ -1,10 +1,17 @@
+import { spawn } from 'node:child_process';
 import type {
   IAgentRuntime,
   SpawnConfig,
   AgentOutput,
   InputContext,
   AgentProfile,
+  ExecutionResult,
+  ExecutionOptions,
 } from '@jam/core';
+import { createLogger } from '@jam/core';
+import { stripAnsiSimple, buildCleanEnv } from '../utils.js';
+
+const log = createLogger('ClaudeCodeRuntime');
 
 export class ClaudeCodeRuntime implements IAgentRuntime {
   readonly runtimeId = 'claude-code';
@@ -30,13 +37,7 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
   }
 
   parseOutput(raw: string): AgentOutput {
-    // Claude Code uses ANSI escape codes and structured output
-    // Strip ANSI for content extraction
-    const cleaned = raw.replace(
-      // eslint-disable-next-line no-control-regex
-      /\x1b\[[0-9;]*[a-zA-Z]/g,
-      '',
-    );
+    const cleaned = stripAnsiSimple(raw);
 
     if (cleaned.includes('Tool use:') || cleaned.includes('Running:')) {
       return { type: 'tool-use', content: cleaned.trim(), raw };
@@ -59,21 +60,128 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
     return input;
   }
 
-  detectResponseComplete(buffer: string): boolean {
-    // Strip ANSI escape codes for clean analysis
-    const cleaned = buffer.replace(
-      // eslint-disable-next-line no-control-regex
-      /\x1b\[[0-9;]*[a-zA-Z]/g,
-      '',
-    );
+  async execute(profile: AgentProfile, text: string, options?: ExecutionOptions): Promise<ExecutionResult> {
+    const args = this.buildOneShotArgs(profile, options?.sessionId);
+    const env = buildCleanEnv({
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      ...options?.env,
+    });
 
-    // Look at the last few non-empty lines for prompt patterns.
-    // Claude Code shows ">" or "❯" when ready for input.
-    const lines = cleaned.split('\n');
-    const lastNonEmpty = lines.map((l) => l.trimEnd()).filter((l) => l.length > 0).pop() ?? '';
+    log.info(`Executing: claude ${args.join(' ')} <<< "${text.slice(0, 60)}"`, undefined, profile.id);
 
-    // Match standalone prompt characters or lines ending with prompt chars
-    return /^[>❯]\s*$/.test(lastNonEmpty)
-      || /[>❯$%#]\s*$/.test(lastNonEmpty);
+    return new Promise((resolve) => {
+      const child = spawn('claude', args, {
+        cwd: options?.cwd ?? profile.cwd ?? process.env.HOME ?? '/',
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      // Pipe voice command text via stdin — avoids shell escaping issues
+      child.stdin.write(text);
+      child.stdin.end();
+
+      let stdout = '';
+      let stderr = '';
+
+      // No-output watchdog: kill if no stdout for 60s
+      const resetWatchdog = () => {
+        clearTimeout(watchdogTimer);
+        watchdogTimer = setTimeout(() => {
+          log.warn('Watchdog: no output for 60s, killing', undefined, profile.id);
+          child.kill('SIGTERM');
+        }, 60_000);
+      };
+      let watchdogTimer: ReturnType<typeof setTimeout>;
+      resetWatchdog();
+
+      // Overall timeout: 2 minutes max
+      const overallTimer = setTimeout(() => {
+        log.warn('Overall timeout (2min), killing', undefined, profile.id);
+        child.kill('SIGTERM');
+      }, 120_000);
+
+      // Abort signal support
+      if (options?.signal) {
+        options.signal.addEventListener('abort', () => {
+          child.kill('SIGTERM');
+        }, { once: true });
+      }
+
+      child.stdout.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+        resetWatchdog();
+      });
+
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+
+      child.on('close', (code) => {
+        clearTimeout(watchdogTimer);
+        clearTimeout(overallTimer);
+
+        if (code !== 0) {
+          const errMsg = stderr.slice(0, 500) || `Exit code ${code}`;
+          log.error(`Execute failed (exit ${code}): ${errMsg}`, undefined, profile.id);
+          resolve({ success: false, text: '', error: errMsg });
+          return;
+        }
+
+        const result = this.parseOneShotOutput(stdout);
+        log.info(`Execute complete: ${result.text.length} chars`, undefined, profile.id);
+        resolve(result);
+      });
+
+      child.on('error', (err) => {
+        clearTimeout(watchdogTimer);
+        clearTimeout(overallTimer);
+        log.error(`Spawn error: ${String(err)}`, undefined, profile.id);
+        resolve({ success: false, text: '', error: String(err) });
+      });
+    });
+  }
+
+  /** Build CLI args for one-shot `claude -p --output-format json` */
+  private buildOneShotArgs(profile: AgentProfile, sessionId?: string): string[] {
+    const args: string[] = ['-p', '--output-format', 'json'];
+
+    if (profile.model) {
+      args.push('--model', profile.model);
+    }
+
+    if (profile.systemPrompt) {
+      args.push('--system-prompt', profile.systemPrompt);
+    }
+
+    if (sessionId) {
+      args.push('--resume', sessionId);
+    }
+
+    return args;
+  }
+
+  /** Parse JSON output from `claude -p --output-format json` */
+  private parseOneShotOutput(stdout: string): ExecutionResult {
+    try {
+      const data = JSON.parse(stdout);
+      return {
+        success: true,
+        text: data.result ?? data.text ?? data.content ?? stdout,
+        sessionId: data.session_id,
+      };
+    } catch {
+      // Try JSONL (multiple JSON objects, one per line)
+      const lines = stdout.trim().split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const obj = JSON.parse(lines[i]);
+          if (obj.type === 'result') {
+            return { success: true, text: obj.result ?? '', sessionId: obj.session_id };
+          }
+        } catch { /* skip non-JSON lines */ }
+      }
+      // Fallback: return raw stdout stripped of ANSI
+      return { success: true, text: stripAnsiSimple(stdout).trim() };
+    }
   }
 }

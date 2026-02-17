@@ -5,24 +5,12 @@ import type {
   AgentState,
   AgentStatus,
   IEventBus,
-  Events,
 } from '@jam/core';
 import { createLogger } from '@jam/core';
 import { PtyManager } from './pty-manager.js';
 import { RuntimeRegistry } from './runtime-registry.js';
 
 const log = createLogger('AgentManager');
-
-/** Max time to wait for a response before giving up on tracking */
-const RESPONSE_TIMEOUT_MS = 60_000;
-/** Max buffer size to prevent memory issues */
-const RESPONSE_MAX_BUFFER = 50_000;
-
-interface ResponseTracking {
-  buffer: string;
-  inputText: string;
-  timeoutTimer: ReturnType<typeof setTimeout>;
-}
 
 export interface AgentStore {
   getProfiles(): AgentProfile[];
@@ -33,8 +21,8 @@ export interface AgentStore {
 export class AgentManager {
   private agents = new Map<AgentId, AgentState>();
   private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
-  /** Tracks in-flight responses for agents that need TTS read-back */
-  private responseTracking = new Map<AgentId, ResponseTracking>();
+  /** Session IDs per agent for voice command conversation continuity */
+  private voiceSessions = new Map<AgentId, string>();
 
   constructor(
     private ptyManager: PtyManager,
@@ -57,8 +45,6 @@ export class AgentManager {
     this.ptyManager.onOutput((agentId, data) => {
       this.updateLastActivity(agentId);
       this.eventBus.emit('agent:output', { agentId, data });
-      // Feed into response tracking if active for this agent
-      this.handleResponseOutput(agentId, data);
     });
 
     this.ptyManager.onExit((agentId, exitCode) => {
@@ -190,7 +176,7 @@ export class AgentManager {
     return { success: true };
   }
 
-  sendInput(agentId: AgentId, text: string, options?: { trackResponse?: boolean }): void {
+  sendInput(agentId: AgentId, text: string): void {
     const state = this.agents.get(agentId);
     if (!state || state.status !== 'running') {
       log.warn(`sendInput ignored: agent ${agentId} status=${state?.status ?? 'not found'}`);
@@ -203,14 +189,63 @@ export class AgentManager {
     const formatted = runtime.formatInput(text);
     log.info(`Sending input to "${state.profile.name}": "${formatted.slice(0, 100)}${formatted.length > 100 ? '...' : ''}"`, undefined, agentId);
 
-    // Start response tracking before writing (so we don't miss early output)
-    if (options?.trackResponse) {
-      this.startResponseTracking(agentId, formatted);
-    }
-
-    this.ptyManager.write(agentId, formatted + '\n');
+    this.ptyManager.write(agentId, formatted + '\r');
     this.updateVisualState(agentId, 'listening');
     this.updateLastActivity(agentId);
+  }
+
+  /** Run a voice command via the runtime's execute() method (one-shot child process).
+   *  Returns clean text — deterministic completion via process exit.
+   *  Echoes the conversation into the terminal view and maintains session continuity. */
+  async voiceCommand(agentId: AgentId, text: string): Promise<{ success: boolean; text?: string; error?: string }> {
+    const state = this.agents.get(agentId);
+    if (!state) return { success: false, error: 'Agent not found' };
+
+    const runtime = this.runtimeRegistry.get(state.profile.runtime);
+    if (!runtime) return { success: false, error: `Runtime not found: ${state.profile.runtime}` };
+
+    const sessionId = this.voiceSessions.get(agentId);
+    log.info(`Voice command${sessionId ? ' (resume)' : ''}: "${text.slice(0, 60)}"`, undefined, agentId);
+
+    this.updateVisualState(agentId, 'thinking');
+
+    const result = await runtime.execute(state.profile, text, {
+      sessionId,
+      cwd: state.profile.cwd,
+    });
+
+    if (!result.success) {
+      this.eventBus.emit('agent:output', {
+        agentId,
+        data: `\r\n\x1b[31m⚠ Error: ${(result.error ?? 'Unknown error').slice(0, 200)}\x1b[0m\r\n`,
+      });
+      this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
+      return { success: false, error: result.error };
+    }
+
+    // Store session ID for conversation continuity
+    if (result.sessionId) {
+      this.voiceSessions.set(agentId, result.sessionId);
+      log.debug(`Voice session stored: ${result.sessionId}`, undefined, agentId);
+    }
+
+    // Echo the conversation into the terminal view
+    if (result.text.length > 0) {
+      const name = state.profile.name || 'Agent';
+      this.eventBus.emit('agent:output', {
+        agentId,
+        data: `\x1b[33m🤖 ${name}:\x1b[0m ${result.text}\r\n\r\n`,
+      });
+    }
+
+    this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
+
+    // Emit response for TTS
+    if (result.text.length > 0) {
+      this.eventBus.emit('agent:responseComplete', { agentId, text: result.text });
+    }
+
+    return { success: true, text: result.text };
   }
 
   get(agentId: AgentId): AgentState | undefined {
@@ -270,102 +305,6 @@ export class AgentManager {
 
     state.visualState = visualState;
     this.eventBus.emit('agent:visualStateChanged', { agentId, visualState });
-  }
-
-  // --- Response Tracking ---
-  // When a voice command is sent, we track the agent's output until the runtime
-  // detects the response is complete (e.g. prompt appears). No timers or debounce —
-  // just checking on every PTY output chunk.
-
-  private startResponseTracking(agentId: AgentId, inputText: string): void {
-    // Clean up any existing tracking
-    this.stopResponseTracking(agentId);
-
-    const timeoutTimer = setTimeout(() => {
-      log.warn('Response tracking timed out, emitting what we have', undefined, agentId);
-      this.emitResponseComplete(agentId);
-    }, RESPONSE_TIMEOUT_MS);
-
-    this.responseTracking.set(agentId, { buffer: '', inputText, timeoutTimer });
-    log.debug('Response tracking started', undefined, agentId);
-  }
-
-  private stopResponseTracking(agentId: AgentId): void {
-    const tracking = this.responseTracking.get(agentId);
-    if (tracking) {
-      clearTimeout(tracking.timeoutTimer);
-      this.responseTracking.delete(agentId);
-    }
-  }
-
-  private handleResponseOutput(agentId: AgentId, data: string): void {
-    const tracking = this.responseTracking.get(agentId);
-    if (!tracking) return;
-
-    tracking.buffer += data;
-
-    // Cap buffer to prevent memory issues
-    if (tracking.buffer.length > RESPONSE_MAX_BUFFER) {
-      tracking.buffer = tracking.buffer.slice(-RESPONSE_MAX_BUFFER);
-    }
-
-    // Ask the runtime if the response is complete
-    const state = this.agents.get(agentId);
-    if (!state) return;
-
-    const runtime = this.runtimeRegistry.get(state.profile.runtime);
-    if (!runtime) return;
-
-    // Parse and check: only consider complete if we have meaningful content
-    const parsed = runtime.parseOutput(tracking.buffer);
-    const cleanText = parsed.content.trim();
-
-    if (cleanText.length > 10 && runtime.detectResponseComplete(tracking.buffer)) {
-      log.debug(`Response complete detected (${cleanText.length} chars)`, undefined, agentId);
-      this.emitResponseComplete(agentId);
-    }
-  }
-
-  private emitResponseComplete(agentId: AgentId): void {
-    const tracking = this.responseTracking.get(agentId);
-    if (!tracking) return;
-
-    const text = this.extractResponseText(tracking);
-    this.stopResponseTracking(agentId);
-
-    if (text.length > 0) {
-      this.eventBus.emit('agent:responseComplete', { agentId, text });
-      log.info(`Response complete: ${text.length} chars`, undefined, agentId);
-    } else {
-      log.debug('Response tracking ended with no meaningful content', undefined, agentId);
-    }
-  }
-
-  /** Extract the agent's actual response from the raw terminal buffer.
-   *  Strips: ANSI codes, echoed input, status lines (Thinking...), and prompt. */
-  private extractResponseText(tracking: ResponseTracking): string {
-    // Strip ANSI escape codes
-    // eslint-disable-next-line no-control-regex
-    const cleaned = tracking.buffer.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-
-    const lines = cleaned.split('\n').map((l) => l.trimEnd());
-
-    // Filter out noise: echoed input, status indicators, prompt lines, blanks
-    const inputLower = tracking.inputText.toLowerCase().trim();
-    const filtered = lines.filter((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return false;
-      // Remove echoed input (PTY echo)
-      if (trimmed.toLowerCase() === inputLower) return false;
-      // Remove common status indicators
-      if (/^(⏳\s*)?thinking\.{0,3}$/i.test(trimmed)) return false;
-      if (/^⠋|⠙|⠹|⠸|⠼|⠴|⠦|⠧|⠇|⠏/.test(trimmed)) return false; // spinner chars
-      // Remove prompt lines
-      if (/^[>❯$%#]\s*$/.test(trimmed)) return false;
-      return true;
-    });
-
-    return filtered.join('\n').trim();
   }
 
   private updateLastActivity(agentId: AgentId): void {

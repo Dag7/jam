@@ -2,28 +2,58 @@ import React, { useState } from 'react';
 import { useAppStore } from '@/store';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
 import { AgentCard } from '@/components/agent/AgentCard';
-import { AgentConfigForm } from '@/components/agent/AgentConfigForm';
+import { AgentConfigForm, type AgentFormValues } from '@/components/agent/AgentConfigForm';
 import type { AgentVisualState } from '@/store/agentSlice';
+
+type FormMode = { type: 'closed' } | { type: 'create' } | { type: 'edit'; agentId: string };
 
 export const AgentPanelContainer: React.FC = () => {
   const agents = useAppStore((s) => Object.values(s.agents));
-  const { selectedAgentId, selectAgent, startAgent, stopAgent, deleteAgent, createAgent } =
+  const { selectedAgentId, selectAgent, startAgent, stopAgent, deleteAgent, createAgent, updateAgent } =
     useOrchestrator();
-  const [showForm, setShowForm] = useState(false);
+  const [formMode, setFormMode] = useState<FormMode>({ type: 'closed' });
 
   const handleCreate = async (profile: Record<string, unknown>) => {
     const result = await createAgent(profile);
     if (result.success) {
-      setShowForm(false);
+      setFormMode({ type: 'closed' });
     }
   };
 
+  const handleUpdate = async (profile: Record<string, unknown>) => {
+    const { id, ...updates } = profile;
+    if (!id) return;
+    const result = await updateAgent(id as string, updates);
+    if (result.success) {
+      setFormMode({ type: 'closed' });
+    }
+  };
+
+  const editingAgent = formMode.type === 'edit'
+    ? agents.find((a) => a.profile.id === formMode.agentId)
+    : null;
+
+  const editInitialValues: AgentFormValues | undefined = editingAgent
+    ? {
+        id: editingAgent.profile.id,
+        name: editingAgent.profile.name,
+        runtime: editingAgent.profile.runtime,
+        model: editingAgent.profile.model,
+        systemPrompt: editingAgent.profile.systemPrompt,
+        color: editingAgent.profile.color,
+        voice: editingAgent.profile.voice,
+        cwd: editingAgent.profile.cwd,
+        autoStart: editingAgent.profile.autoStart,
+      }
+    : undefined;
+
   return (
     <div className="flex flex-col h-full p-2">
-      {showForm ? (
+      {formMode.type !== 'closed' ? (
         <AgentConfigForm
-          onSubmit={handleCreate}
-          onCancel={() => setShowForm(false)}
+          onSubmit={formMode.type === 'edit' ? handleUpdate : handleCreate}
+          onCancel={() => setFormMode({ type: 'closed' })}
+          initialValues={editInitialValues}
         />
       ) : (
         <>
@@ -41,6 +71,7 @@ export const AgentPanelContainer: React.FC = () => {
                 onStart={() => startAgent(agent.profile.id)}
                 onStop={() => stopAgent(agent.profile.id)}
                 onDelete={() => deleteAgent(agent.profile.id)}
+                onConfigure={() => setFormMode({ type: 'edit', agentId: agent.profile.id })}
               />
             ))}
           </div>
@@ -53,7 +84,7 @@ export const AgentPanelContainer: React.FC = () => {
 
           <div className="mt-auto p-2">
             <button
-              onClick={() => setShowForm(true)}
+              onClick={() => setFormMode({ type: 'create' })}
               className="w-full px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors flex items-center justify-center gap-2"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5">
