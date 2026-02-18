@@ -33,6 +33,13 @@ export interface JamAPI {
       agentId: string,
     ) => Promise<{ success: boolean; error?: string }>;
     stopAll: () => Promise<{ success: boolean }>;
+    getTaskStatus: (agentId: string) => Promise<{
+      taskId: string;
+      command: string;
+      startedAt: number;
+      steps: Array<{ timestamp: number; type: string; summary: string }>;
+      status: 'running' | 'completed' | 'failed';
+    } | null>;
     onStatusChange: (
       callback: (data: { agentId: string; status: string }) => void,
     ) => () => void;

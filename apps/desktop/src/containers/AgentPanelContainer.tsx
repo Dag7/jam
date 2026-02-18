@@ -45,6 +45,7 @@ export const AgentPanelContainer: React.FC = () => {
         cwd: editingAgent.profile.cwd,
         autoStart: editingAgent.profile.autoStart,
         allowFullAccess: editingAgent.profile.allowFullAccess,
+        allowInterrupts: editingAgent.profile.allowInterrupts,
       }
     : undefined;
 

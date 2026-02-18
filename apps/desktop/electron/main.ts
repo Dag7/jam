@@ -219,6 +219,40 @@ function registerIpcHandlers(): void {
   const voiceCommandsInFlight = new Set<string>(); // per-agent guard
   let ttsSpeaking = false;
 
+  /** Send a system message to the chat UI + speak it via TTS */
+  function sendStatusMessage(targetId: string, message: string): void {
+    const agent = orchestrator.agentManager.get(targetId);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('chat:agentAcknowledged', {
+        agentId: targetId,
+        agentName: agent?.profile.name ?? 'Agent',
+        agentRuntime: agent?.profile.runtime ?? '',
+        agentColor: agent?.profile.color ?? '#6b7280',
+        ackText: message,
+      });
+    }
+    // Speak the status via TTS
+    if (orchestrator.voiceService && agent) {
+      orchestrator.voiceService.synthesize(
+        message,
+        agent.profile.voice.ttsVoiceId || 'alloy',
+        targetId,
+      ).then(async (audioPath) => {
+        const { readFile } = await import('node:fs/promises');
+        const audioBuffer = await readFile(audioPath);
+        const base64 = audioBuffer.toString('base64');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('voice:ttsAudio', {
+            agentId: targetId,
+            audioData: `data:audio/mpeg;base64,${base64}`,
+          });
+        }
+      }).catch((err) => {
+        log.error(`TTS status failed: ${String(err)}`);
+      });
+    }
+  }
+
   // TTS playback state is driven by the renderer (which actually plays audio).
   // The renderer calls voice:ttsState(true) when audio starts, false when it
   // finishes or is interrupted by the user speaking.
@@ -290,45 +324,83 @@ function registerIpcHandlers(): void {
           }
         }
 
-        if (targetId && parsed.command) {
-          // Per-agent guard: skip if this agent already has a command in flight
-          if (voiceCommandsInFlight.has(targetId)) {
-            log.debug(`Voice audio ignored: command already in flight for ${targetId}`);
+        if (!targetId || !parsed.command) {
+          log.warn(`Voice command not routed: no target agent found`);
+          return;
+        }
+
+        const agent = orchestrator.agentManager.get(targetId);
+        lastVoiceTargetId = targetId;
+
+        // --- Command classification: status / interrupt / task ---
+
+        // Status query — read from task tracker, never disturb the agent
+        if (parsed.commandType === 'status-query') {
+          log.info(`Voice status query → "${agent?.profile.name ?? targetId}"`);
+          const summary = orchestrator.agentManager.getTaskStatusSummary(targetId);
+          sendStatusMessage(targetId, summary);
+          return;
+        }
+
+        // Interrupt — abort current task
+        if (parsed.commandType === 'interrupt') {
+          const aborted = orchestrator.agentManager.abortTask(targetId);
+          const name = agent?.profile.name ?? 'Agent';
+          const message = aborted
+            ? `Stopped ${name}'s current task.`
+            : `${name} isn't working on anything right now.`;
+          log.info(`Voice interrupt → "${name}": ${message}`);
+          sendStatusMessage(targetId, message);
+          voiceCommandsInFlight.delete(targetId);
+          return;
+        }
+
+        // Task command — check if agent is busy
+        if (voiceCommandsInFlight.has(targetId)) {
+          // Agent is busy — check allowInterrupts
+          if (agent?.profile.allowInterrupts) {
+            log.info(`Interrupting "${agent.profile.name}" with new task: "${parsed.command}"`);
+            orchestrator.agentManager.abortTask(targetId);
+            voiceCommandsInFlight.delete(targetId);
+            // Fall through to dispatch the new command below
+          } else {
+            const name = agent?.profile.name ?? 'Agent';
+            const task = orchestrator.agentManager.getTaskStatus(targetId);
+            const taskDesc = task?.command
+              ? ` on "${task.command.slice(0, 40)}${task.command.length > 40 ? '...' : ''}"`
+              : '';
+            sendStatusMessage(targetId, `${name} is busy working${taskDesc}. Ask for a status update if you want to know more.`);
             return;
           }
+        }
 
-          voiceCommandsInFlight.add(targetId);
-          lastVoiceTargetId = targetId;
-          const agent = orchestrator.agentManager.get(targetId);
-          log.info(`Voice → "${agent?.profile.name ?? targetId}": "${parsed.command}"`);
+        voiceCommandsInFlight.add(targetId);
+        log.info(`Voice → "${agent?.profile.name ?? targetId}": "${parsed.command}"`);
 
-          // Notify renderer of the voice user message for the chat UI
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('chat:voiceCommand', {
-              text: parsed.command,
+        // Notify renderer of the voice user message for the chat UI
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('chat:voiceCommand', {
+            text: parsed.command,
+            agentId: targetId,
+            agentName: agent?.profile.name ?? null,
+          });
+        }
+
+        orchestrator.agentManager.voiceCommand(targetId, parsed.command).then((cmdResult) => {
+          if (cmdResult.success && cmdResult.text && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('chat:agentResponse', {
               agentId: targetId,
-              agentName: agent?.profile.name ?? null,
+              agentName: agent?.profile.name ?? 'Agent',
+              agentRuntime: agent?.profile.runtime ?? '',
+              agentColor: agent?.profile.color ?? '#6b7280',
+              text: cmdResult.text,
             });
           }
-
-          orchestrator.agentManager.voiceCommand(targetId, parsed.command).then((result) => {
-            if (result.success && result.text && mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('chat:agentResponse', {
-                agentId: targetId,
-                agentName: agent?.profile.name ?? 'Agent',
-                agentRuntime: agent?.profile.runtime ?? '',
-                agentColor: agent?.profile.color ?? '#6b7280',
-                text: result.text,
-              });
-            }
-          }).catch((err) => {
-            log.error(`Voice command execution failed: ${String(err)}`);
-          }).finally(() => {
-            voiceCommandsInFlight.delete(targetId);
-          });
-        } else {
-          log.warn(`Voice command not routed: no target agent found`);
-        }
+        }).catch((err) => {
+          log.error(`Voice command execution failed: ${String(err)}`);
+        }).finally(() => {
+          voiceCommandsInFlight.delete(targetId);
+        });
       } catch (error) {
         log.error(`Voice transcription error: ${String(error)}`);
       }
@@ -365,6 +437,36 @@ function registerIpcHandlers(): void {
   let lastTextTargetId: string | null = null;
 
   ipcMain.handle('chat:sendCommand', async (_, text: string) => {
+    // Handle /status command
+    const statusMatch = text.match(/^\/status\s*(.*)/i);
+    if (statusMatch) {
+      const agentName = statusMatch[1].trim().toLowerCase();
+      let targetId: string | undefined;
+      if (agentName) {
+        targetId = orchestrator.commandParser.resolveAgentId(agentName);
+      }
+      if (!targetId) {
+        // Try last targets or only running agent
+        targetId = lastTextTargetId ?? lastVoiceTargetId ?? undefined;
+        if (!targetId) {
+          const running = orchestrator.agentManager.list().filter((a) => a.status === 'running');
+          if (running.length === 1) targetId = running[0].profile.id;
+        }
+      }
+      if (!targetId) return { success: false, error: 'No agent specified. Use /status <agent-name>' };
+
+      const summary = orchestrator.agentManager.getTaskStatusSummary(targetId);
+      const agent = orchestrator.agentManager.get(targetId);
+      return {
+        success: true,
+        text: summary,
+        agentId: targetId,
+        agentName: agent?.profile.name ?? 'Agent',
+        agentRuntime: agent?.profile.runtime ?? '',
+        agentColor: agent?.profile.color ?? '#6b7280',
+      };
+    }
+
     const parsed = orchestrator.commandParser.parse(text);
 
     if (parsed.isMetaCommand) {
@@ -409,9 +511,53 @@ function registerIpcHandlers(): void {
     }
 
     lastTextTargetId = targetId;
-
     const agent = orchestrator.agentManager.get(targetId);
     if (!agent) return { success: false, error: 'Agent not found' };
+
+    // Classify command — handle status/interrupt via text too
+    if (parsed.commandType === 'status-query') {
+      const summary = orchestrator.agentManager.getTaskStatusSummary(targetId);
+      return {
+        success: true,
+        text: summary,
+        agentId: targetId,
+        agentName: agent.profile.name,
+        agentRuntime: agent.profile.runtime,
+        agentColor: agent.profile.color,
+      };
+    }
+
+    if (parsed.commandType === 'interrupt') {
+      const aborted = orchestrator.agentManager.abortTask(targetId);
+      voiceCommandsInFlight.delete(targetId);
+      return {
+        success: true,
+        text: aborted ? `Stopped ${agent.profile.name}'s current task.` : `${agent.profile.name} isn't working on anything right now.`,
+        agentId: targetId,
+        agentName: agent.profile.name,
+        agentRuntime: agent.profile.runtime,
+        agentColor: agent.profile.color,
+      };
+    }
+
+    // Task — check if busy
+    if (orchestrator.agentManager.isTaskRunning(targetId)) {
+      if (agent.profile.allowInterrupts) {
+        orchestrator.agentManager.abortTask(targetId);
+        voiceCommandsInFlight.delete(targetId);
+      } else {
+        const task = orchestrator.agentManager.getTaskStatus(targetId);
+        const taskDesc = task?.command ? ` on "${task.command.slice(0, 40)}"` : '';
+        return {
+          success: false,
+          error: `${agent.profile.name} is busy working${taskDesc}. Ask for a status update or use /status.`,
+          agentId: targetId,
+          agentName: agent.profile.name,
+          agentRuntime: agent.profile.runtime,
+          agentColor: agent.profile.color,
+        };
+      }
+    }
 
     log.info(`Chat → "${agent.profile.name}": "${parsed.command.slice(0, 60)}"`, undefined, targetId);
 
@@ -426,6 +572,11 @@ function registerIpcHandlers(): void {
       agentRuntime: agent.profile.runtime,
       agentColor: agent.profile.color,
     };
+  });
+
+  // Task status — query agent's current task from in-memory tracker
+  ipcMain.handle('agents:getTaskStatus', (_, agentId: string) => {
+    return orchestrator.agentManager.getTaskStatus(agentId);
   });
 
   // Chat history — paginated conversation loading from JSONL files
@@ -485,6 +636,7 @@ function registerIpcHandlers(): void {
 
   // Logs
   ipcMain.handle('logs:get', () => logBuffer);
+
 }
 
 // --- App lifecycle ---

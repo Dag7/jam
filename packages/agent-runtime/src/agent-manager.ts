@@ -14,6 +14,8 @@ import { createLogger } from '@jam/core';
 import { PtyManager } from './pty-manager.js';
 import { RuntimeRegistry } from './runtime-registry.js';
 import { AgentContextBuilder } from './agent-context-builder.js';
+import { TaskTracker } from './task-tracker.js';
+import type { TaskInfo } from './task-tracker.js';
 
 const log = createLogger('AgentManager');
 
@@ -42,6 +44,9 @@ export class AgentManager {
   /** Session IDs per agent for voice command conversation continuity */
   private voiceSessions = new Map<AgentId, string>();
   private contextBuilder = new AgentContextBuilder();
+  private taskTracker = new TaskTracker();
+  /** AbortControllers per agent — allows interrupting running tasks */
+  private abortControllers = new Map<AgentId, AbortController>();
 
   constructor(
     private ptyManager: PtyManager,
@@ -148,7 +153,7 @@ export class AgentManager {
 
     const result = await this.ptyManager.spawn(agentId, spawnConfig.command, spawnConfig.args, {
       cwd: state.profile.cwd,
-      env: { ...spawnConfig.env, ...state.profile.env },
+      env: { ...spawnConfig.env, ...state.profile.env, JAM_AGENT_ID: agentId },
     });
 
     if (result.success) {
@@ -260,11 +265,19 @@ export class AgentManager {
     // Enrich profile with SOUL.md, conversation history, and matched skills
     const enrichedProfile = await this.contextBuilder.buildContext(state.profile, text);
 
+    // Track task + set up abort controller
+    this.taskTracker.startTask(agentId, text);
+    const abortController = new AbortController();
+    this.abortControllers.set(agentId, abortController);
+
     // Throttled progress reporting — emit voice updates during long-running tasks
     let lastProgressTime = 0;
     const PROGRESS_THROTTLE_MS = 15_000; // Max one progress update every 15s
 
     const onProgress: ExecutionOptions['onProgress'] = (event) => {
+      // Always track steps (unthrottled)
+      this.taskTracker.addStep(agentId, { type: event.type, summary: event.summary });
+
       const now = Date.now();
       if (now - lastProgressTime < PROGRESS_THROTTLE_MS) return;
       lastProgressTime = now;
@@ -281,13 +294,26 @@ export class AgentManager {
       });
     };
 
-    const result = await runtime.execute(enrichedProfile, text, {
-      sessionId,
-      cwd: state.profile.cwd,
-      onProgress,
-    });
+    let result;
+    try {
+      result = await runtime.execute(enrichedProfile, text, {
+        sessionId,
+        cwd: state.profile.cwd,
+        env: { JAM_AGENT_ID: agentId },
+        onProgress,
+        signal: abortController.signal,
+      });
+    } catch (err) {
+      this.taskTracker.completeTask(agentId, 'failed');
+      this.abortControllers.delete(agentId);
+      this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
+      return { success: false, error: String(err) };
+    }
+
+    this.abortControllers.delete(agentId);
 
     if (!result.success) {
+      this.taskTracker.completeTask(agentId, 'failed');
       this.eventBus.emit('agent:output', {
         agentId,
         data: `\r\n\x1b[31m⚠ Error: ${(result.error ?? 'Unknown error').slice(0, 200)}\x1b[0m\r\n`,
@@ -295,6 +321,8 @@ export class AgentManager {
       this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
       return { success: false, error: result.error };
     }
+
+    this.taskTracker.completeTask(agentId, 'completed');
 
     // Store session ID for conversation continuity
     if (result.sessionId) {
@@ -332,6 +360,36 @@ export class AgentManager {
     }
 
     return { success: true, text: result.text };
+  }
+
+  /** Get the current task status for an agent (from in-memory tracker) */
+  getTaskStatus(agentId: AgentId): TaskInfo | null {
+    return this.taskTracker.getStatus(agentId);
+  }
+
+  /** Get a human-readable status summary suitable for TTS */
+  getTaskStatusSummary(agentId: AgentId): string {
+    const state = this.agents.get(agentId);
+    const name = state?.profile.name ?? 'Agent';
+    return this.taskTracker.formatStatusSummary(agentId, name);
+  }
+
+  /** Abort a running task for an agent. Returns true if a task was aborted. */
+  abortTask(agentId: AgentId): boolean {
+    const controller = this.abortControllers.get(agentId);
+    if (controller) {
+      log.info(`Aborting task for agent ${agentId}`);
+      controller.abort();
+      this.abortControllers.delete(agentId);
+      this.taskTracker.completeTask(agentId, 'failed');
+      return true;
+    }
+    return false;
+  }
+
+  /** Check if an agent currently has a task in flight */
+  isTaskRunning(agentId: AgentId): boolean {
+    return this.abortControllers.has(agentId);
   }
 
   /** Load conversation history across all (or one) agent(s), merged and sorted chronologically.

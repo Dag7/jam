@@ -1,20 +1,45 @@
 import type { AgentId } from '@jam/core';
 
+export type CommandType = 'task' | 'status-query' | 'interrupt' | 'meta';
+
 export interface ParsedCommand {
   targetAgentName: string | null;
   command: string;
   isMetaCommand: boolean;
+  commandType: CommandType;
 }
 
 const META_COMMANDS = [
   'create',
   'delete',
-  'stop',
-  'start',
   'restart',
   'list',
   'configure',
-  'status',
+];
+
+const STATUS_PATTERNS = [
+  /\bstatus\b/i,
+  /\bupdate\b/i,
+  /\bprogress\b/i,
+  /\bwhat are you doing\b/i,
+  /\bwhat's happening\b/i,
+  /\bwhats happening\b/i,
+  /\bwhere are you\b/i,
+  /\bhow's it going\b/i,
+  /\bhows it going\b/i,
+  /\bwhat are you working on\b/i,
+  /\bare you done\b/i,
+  /\bare you busy\b/i,
+  /\bhow far along\b/i,
+];
+
+const INTERRUPT_PATTERNS = [
+  /\bstop\b/i,
+  /\bcancel\b/i,
+  /\babort\b/i,
+  /\bnever\s?mind\b/i,
+  /\bquit\b/i,
+  /\bforget it\b/i,
 ];
 
 export class CommandParser {
@@ -38,33 +63,64 @@ export class CommandParser {
           targetAgentName: null,
           command: trimmed,
           isMetaCommand: true,
+          commandType: 'meta',
         };
       }
     }
 
-    // Try to find an agent name in the transcript using multiple strategies.
+    // Extract target agent name first
+    const targetAgentName = this.extractAgentName(trimmed, lower);
+    const command = targetAgentName
+      ? this.stripAgentPrefix(trimmed, targetAgentName)
+      : trimmed;
 
+    // Classify the command (after stripping agent name prefix)
+    const commandType = this.classifyCommand(command);
+
+    return {
+      targetAgentName,
+      command,
+      isMetaCommand: false,
+      commandType,
+    };
+  }
+
+  resolveAgentId(name: string): AgentId | undefined {
+    return this.agentNames.get(name.toLowerCase());
+  }
+
+  private classifyCommand(command: string): CommandType {
+    // Check if the command is primarily a status query
+    for (const pattern of STATUS_PATTERNS) {
+      if (pattern.test(command)) return 'status-query';
+    }
+
+    // Check if it's an interrupt command (short commands only — "stop working" is interrupt, "stop the server" is a task)
+    const words = command.trim().split(/\s+/);
+    if (words.length <= 3) {
+      for (const pattern of INTERRUPT_PATTERNS) {
+        if (pattern.test(command)) return 'interrupt';
+      }
+    }
+
+    return 'task';
+  }
+
+  private extractAgentName(trimmed: string, lower: string): string | null {
     // Strategy 1: "hey/hi/ok/yo [,] <name>" prefix — with optional comma/punctuation
-    // Handles: "Hey Sue, ...", "Hey, Sue, ...", "Hi Sue ...", etc.
     const greetingMatch = trimmed.match(
       /^(?:hey|hi|ok|yo|hello)[,.]?\s+(\w+)[,.]?\s*(.*)/i,
     );
     if (greetingMatch) {
       const possibleName = greetingMatch[1].toLowerCase();
-      if (this.agentNames.has(possibleName)) {
-        const command = greetingMatch[2].trim() || trimmed;
-        return { targetAgentName: possibleName, command, isMetaCommand: false };
-      }
+      if (this.agentNames.has(possibleName)) return possibleName;
     }
 
     // Strategy 2: "<name>, ..." or "<name> ..." as the first word
     const firstWordMatch = trimmed.match(/^(\w+)[,.]?\s+(.*)/i);
     if (firstWordMatch) {
       const possibleName = firstWordMatch[1].toLowerCase();
-      if (this.agentNames.has(possibleName)) {
-        const command = firstWordMatch[2].trim() || trimmed;
-        return { targetAgentName: possibleName, command, isMetaCommand: false };
-      }
+      if (this.agentNames.has(possibleName)) return possibleName;
     }
 
     // Strategy 3: "ask/tell <name> ..." or "ask <name> to ..."
@@ -73,28 +129,35 @@ export class CommandParser {
     );
     if (askTellMatch) {
       const possibleName = askTellMatch[1].toLowerCase();
-      if (this.agentNames.has(possibleName)) {
-        return { targetAgentName: possibleName, command: askTellMatch[2].trim(), isMetaCommand: false };
-      }
+      if (this.agentNames.has(possibleName)) return possibleName;
     }
 
     // Strategy 4: Scan anywhere for a known agent name as a whole word
     for (const [name] of this.agentNames) {
       const nameRegex = new RegExp(`\\b${name}\\b`, 'i');
-      if (nameRegex.test(lower)) {
-        return { targetAgentName: name, command: trimmed, isMetaCommand: false };
-      }
+      if (nameRegex.test(lower)) return name;
     }
 
-    // No agent addressed — send to default/active agent
-    return {
-      targetAgentName: null,
-      command: trimmed,
-      isMetaCommand: false,
-    };
+    return null;
   }
 
-  resolveAgentId(name: string): AgentId | undefined {
-    return this.agentNames.get(name.toLowerCase());
+  private stripAgentPrefix(trimmed: string, _agentName: string): string {
+    // Try to strip greeting + name prefix
+    const greetingMatch = trimmed.match(
+      /^(?:hey|hi|ok|yo|hello)[,.]?\s+\w+[,.]?\s*(.*)/i,
+    );
+    if (greetingMatch && greetingMatch[1].trim()) return greetingMatch[1].trim();
+
+    // Try to strip name as first word
+    const firstWordMatch = trimmed.match(/^\w+[,.]?\s+(.*)/i);
+    if (firstWordMatch && firstWordMatch[1].trim()) return firstWordMatch[1].trim();
+
+    // Try ask/tell pattern
+    const askTellMatch = trimmed.match(
+      /^(?:ask|tell)\s+\w+[,.]?\s+(?:to\s+)?(.*)/i,
+    );
+    if (askTellMatch && askTellMatch[1].trim()) return askTellMatch[1].trim();
+
+    return trimmed;
   }
 }

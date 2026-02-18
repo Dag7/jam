@@ -77,6 +77,7 @@ export class Orchestrator {
     // Create memory store
     const agentsDir = join(app.getPath('userData'), 'agents');
     this.memoryStore = new FileMemoryStore(agentsDir);
+
   }
 
   /** Safely send IPC to renderer — guards against destroyed window during HMR */

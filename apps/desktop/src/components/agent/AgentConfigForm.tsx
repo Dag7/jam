@@ -74,6 +74,7 @@ export interface AgentFormValues {
   cwd?: string;
   autoStart?: boolean;
   allowFullAccess?: boolean;
+  allowInterrupts?: boolean;
 }
 
 interface AgentConfigFormProps {
@@ -99,6 +100,7 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
   const [cwd, setCwd] = useState(initialValues?.cwd ?? '');
   const [autoStart, setAutoStart] = useState(initialValues?.autoStart ?? false);
   const [allowFullAccess, setAllowFullAccess] = useState(initialValues?.allowFullAccess ?? false);
+  const [allowInterrupts, setAllowInterrupts] = useState(initialValues?.allowInterrupts ?? false);
 
   // Load TTS provider from global config and ensure voice is compatible
   useEffect(() => {
@@ -143,6 +145,7 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
       cwd: cwd || undefined,
       autoStart,
       allowFullAccess,
+      allowInterrupts,
     });
   };
 
@@ -287,6 +290,19 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
           />
           <label htmlFor="allowFullAccess" className="text-xs text-zinc-400">
             Full access <span className="text-zinc-600">(web search, file ops, no confirmation prompts)</span>
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="allowInterrupts"
+            checked={allowInterrupts}
+            onChange={(e) => setAllowInterrupts(e.target.checked)}
+            className="rounded border-zinc-600 bg-zinc-800 text-cyan-500 focus:ring-cyan-500 focus:ring-offset-zinc-900"
+          />
+          <label htmlFor="allowInterrupts" className="text-xs text-zinc-400">
+            Allow interrupts <span className="text-zinc-600">(new commands abort the current task)</span>
           </label>
         </div>
       </div>

@@ -54,7 +54,6 @@ export class PtyManager {
   private instances = new Map<string, PtyInstance>();
   private outputHandler: PtyOutputHandler | null = null;
   private exitHandler: PtyExitHandler | null = null;
-
   onOutput(handler: PtyOutputHandler): void {
     this.outputHandler = handler;
   }
@@ -88,7 +87,8 @@ export class PtyManager {
       // interfere with direct posix_spawnp of external binaries, and
       // (3) login shells source the user's profile for the full environment.
       const shell = process.env.SHELL || '/bin/zsh';
-      const shellCmd = [command, ...args].map(shellEscape).join(' ');
+      const agentCmd = [command, ...args].map(shellEscape).join(' ');
+      const shellCmd = agentCmd;
       log.info(`Spawning via shell: ${shell} -lc ${shellCmd}`, undefined, agentId);
 
       // Build a clean env — filter out vars that break posix_spawnp

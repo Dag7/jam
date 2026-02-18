@@ -45,6 +45,13 @@ export interface JamAPI {
       agentId: string,
     ) => Promise<{ success: boolean; error?: string }>;
     stopAll: () => Promise<{ success: boolean }>;
+    getTaskStatus: (agentId: string) => Promise<{
+      taskId: string;
+      command: string;
+      startedAt: number;
+      steps: Array<{ timestamp: number; type: string; summary: string }>;
+      status: 'running' | 'completed' | 'failed';
+    } | null>;
     onStatusChange: (
       callback: (data: { agentId: string; status: string }) => void,
     ) => () => void;
@@ -215,6 +222,7 @@ contextBridge.exposeInMainWorld('jam', {
     stop: (agentId) => ipcRenderer.invoke('agents:stop', agentId),
     restart: (agentId) => ipcRenderer.invoke('agents:restart', agentId),
     stopAll: () => ipcRenderer.invoke('agents:stopAll'),
+    getTaskStatus: (agentId) => ipcRenderer.invoke('agents:getTaskStatus', agentId),
     onStatusChange: (cb) =>
       createEventListener('agents:statusChange', cb),
     onCreated: (cb) => createEventListener('agents:created', cb),

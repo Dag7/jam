@@ -34,6 +34,8 @@ export interface AgentProfile {
   autoStart?: boolean;
   /** Grant the agent full tool access (web search, file ops, etc.) without confirmation prompts */
   allowFullAccess?: boolean;
+  /** Allow new commands to interrupt the agent's current running task */
+  allowInterrupts?: boolean;
   cwd?: string;
   env?: Record<string, string>;
 }
