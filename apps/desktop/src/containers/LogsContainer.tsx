@@ -44,6 +44,15 @@ export const LogsContainer: React.FC = () => {
     }
   };
 
+  const levelDot = (level: string) => {
+    switch (level) {
+      case 'error': return 'bg-red-400';
+      case 'warn': return 'bg-yellow-400';
+      case 'debug': return 'bg-zinc-600';
+      default: return 'bg-zinc-400';
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Filter bar */}
@@ -64,32 +73,42 @@ export const LogsContainer: React.FC = () => {
           </button>
         ))}
         <div className="flex-1" />
-        <span className="text-xs text-zinc-600">{filtered.length} entries</span>
+        <span className="text-xs text-zinc-600">{filtered.length}</span>
       </div>
 
       {/* Log entries */}
-      <div className="flex-1 overflow-y-auto p-2 font-mono text-xs space-y-0.5">
+      <div className="flex-1 overflow-y-auto p-1.5 font-mono text-[11px] space-y-px">
         {filtered.length === 0 ? (
           <div className="text-zinc-600 text-center py-8">No logs yet</div>
         ) : (
           filtered.map((entry, i) => (
-            <div key={i} className="flex gap-2 py-0.5 hover:bg-zinc-800/30 rounded px-1">
-              <span className="text-zinc-600 shrink-0">
-                {new Date(entry.timestamp).toLocaleTimeString()}
-              </span>
-              <span className={`shrink-0 w-10 ${levelColor(entry.level)}`}>
-                {entry.level}
-              </span>
-              <span className="text-purple-400 shrink-0">[{entry.scope}]</span>
-              {entry.agentId && (
-                <span className="text-blue-400 shrink-0">[{entry.agentId.slice(0, 8)}]</span>
-              )}
-              <span className="text-zinc-300 break-all">
+            <div
+              key={i}
+              className="py-1 px-1.5 hover:bg-zinc-800/40 rounded group"
+            >
+              {/* Header: dot + time + scope + agentId */}
+              <div className="flex items-center gap-1.5 text-[10px]">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${levelDot(entry.level)}`} />
+                <span className="text-zinc-600">
+                  {new Date(entry.timestamp).toLocaleTimeString()}
+                </span>
+                <span className={`${levelColor(entry.level)}`}>
+                  {entry.level}
+                </span>
+                <span className="text-purple-400/70">{entry.scope}</span>
+                {entry.agentId && (
+                  <span className="text-blue-400/50">{entry.agentId.slice(0, 8)}</span>
+                )}
+              </div>
+              {/* Message: full width, proper word wrap */}
+              <div className="text-zinc-300 mt-0.5 pl-3 break-words whitespace-pre-wrap leading-relaxed">
                 {entry.message}
                 {entry.data !== undefined && (
-                  <span className="text-zinc-500 ml-1">{JSON.stringify(entry.data)}</span>
+                  <span className="text-zinc-500 block mt-0.5 text-[10px]">
+                    {JSON.stringify(entry.data, null, 2)}
+                  </span>
                 )}
-              </span>
+              </div>
             </div>
           ))
         )}

@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useAppStore } from '@/store';
 
 const VAD_THRESHOLD = 0.015; // RMS threshold for voice activity
-const SILENCE_TIMEOUT_MS = 1500; // Stop recording after 1.5s of silence
+const SILENCE_TIMEOUT_MS = 2500; // Stop recording after 2.5s of silence
 const VAD_CHECK_INTERVAL_MS = 50; // Check audio level every 50ms
 
 export function useVoice() {
