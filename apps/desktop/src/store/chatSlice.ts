@@ -68,7 +68,7 @@ export const createChatSlice: StateCreator<
     })),
 
   clearMessages: () =>
-    set((state) => ({ ...state, messages: [], hasMoreHistory: true, historyLoaded: false })),
+    set((state) => ({ ...state, messages: [], hasMoreHistory: false, historyLoaded: true })),
 
   setIsProcessing: (isProcessing) =>
     set((state) => ({ ...state, isProcessing })),

@@ -65,16 +65,18 @@ export class TaskTracker {
     const secs = elapsed % 60;
     const timeStr = mins > 0 ? `${mins} minute${mins > 1 ? 's' : ''}` : `${secs} seconds`;
 
-    const lastStep = task.steps[task.steps.length - 1];
-    const lastAction = lastStep
-      ? lastStep.summary.length > 80
-        ? lastStep.summary.slice(0, 80) + '...'
-        : lastStep.summary
-      : 'just getting started';
-
     const commandPreview = task.command.length > 60
       ? task.command.slice(0, 60) + '...'
       : task.command;
+
+    const lastStep = task.steps[task.steps.length - 1];
+    if (!lastStep) {
+      return `${agentName} has been working for ${timeStr} on "${commandPreview}". Still initializing.`;
+    }
+
+    const lastAction = lastStep.summary.length > 80
+      ? lastStep.summary.slice(0, 80) + '...'
+      : lastStep.summary;
 
     return `${agentName} has been working for ${timeStr} on "${commandPreview}". Last action: ${lastAction}.`;
   }

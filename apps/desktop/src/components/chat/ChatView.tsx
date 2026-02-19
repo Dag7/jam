@@ -28,6 +28,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
       el.scrollHeight - el.scrollTop - el.clientHeight < 100;
   }, []);
 
+  // Reset refs when messages are cleared (prevents stale scroll state)
+  useEffect(() => {
+    if (messages.length === 0) {
+      prevMessageCountRef.current = 0;
+      prevScrollHeightRef.current = 0;
+      isAtBottomRef.current = true;
+    }
+  }, [messages.length]);
+
   // Auto-scroll to bottom on new messages (only if already at bottom)
   useEffect(() => {
     const el = scrollRef.current;

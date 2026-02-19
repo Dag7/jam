@@ -658,6 +658,31 @@ function registerIpcHandlers(): void {
     }
   });
 
+  // Compact mode — save/restore window bounds
+  let savedBounds: Electron.Rectangle | null = null;
+
+  ipcMain.handle('window:setCompact', (_, compact: boolean) => {
+    if (!mainWindow) return;
+
+    if (compact) {
+      savedBounds = mainWindow.getBounds();
+      const { x, y, width } = savedBounds;
+      // Keep same top-left position, shrink to a strip
+      const compactHeight = 90;
+      const compactWidth = Math.min(width, 700);
+      mainWindow.setMinimumSize(300, compactHeight);
+      mainWindow.setBounds({ x, y, width: compactWidth, height: compactHeight }, true);
+      mainWindow.setAlwaysOnTop(true, 'floating');
+    } else {
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setMinimumSize(640, 480);
+      if (savedBounds) {
+        mainWindow.setBounds(savedBounds, true);
+        savedBounds = null;
+      }
+    }
+  });
+
   // App
   ipcMain.handle('app:getVersion', () => app.getVersion());
 

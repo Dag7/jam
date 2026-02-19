@@ -78,6 +78,7 @@ export class OpenCodeRuntime implements IAgentRuntime {
       let stdout = '';
       let stderr = '';
       let lastProgressEmit = 0;
+      let firstChunkSent = false;
 
       // Abort signal support
       if (options?.signal) {
@@ -92,6 +93,13 @@ export class OpenCodeRuntime implements IAgentRuntime {
 
         // Emit throttled progress events from raw output
         if (options?.onProgress) {
+          // Emit immediately on first output so status isn't stuck on "initializing"
+          if (!firstChunkSent) {
+            firstChunkSent = true;
+            lastProgressEmit = Date.now();
+            options.onProgress({ type: 'thinking', summary: 'Processing request...' });
+          }
+
           const now = Date.now();
           if (now - lastProgressEmit > 5000) {
             lastProgressEmit = now;

@@ -121,6 +121,7 @@ export interface JamAPI {
     minimize: () => void;
     close: () => void;
     maximize: () => void;
+    setCompact: (compact: boolean) => void;
   };
 
   app: {

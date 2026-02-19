@@ -175,6 +175,18 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
         onProgress({ type: 'thinking', summary: 'Thinking...' });
         return;
       }
+
+      // Message start — agent has begun processing the request
+      if (event.type === 'message_start') {
+        onProgress({ type: 'thinking', summary: 'Processing request...' });
+        return;
+      }
+
+      // Text content block — agent is composing a text response
+      if (event.type === 'content_block_start' && event.content_block?.type === 'text') {
+        onProgress({ type: 'text', summary: 'Composing response...' });
+        return;
+      }
     } catch {
       // Not JSON or unrecognized format — ignore
     }

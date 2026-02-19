@@ -90,9 +90,12 @@ export const CommandBarContainer: React.FC = () => {
           </svg>
         </button>
 
-        {/* View mode toggle */}
+        {/* View mode toggle: chat → stage → compact → chat */}
         <button
-          onClick={() => setViewMode(viewMode === 'chat' ? 'stage' : 'chat')}
+          onClick={() => {
+            const next = viewMode === 'chat' ? 'stage' : viewMode === 'stage' ? 'compact' : 'chat';
+            setViewMode(next);
+          }}
           className={`
             px-3 py-2 rounded-lg text-xs font-medium transition-colors
             ${viewMode === 'stage'
@@ -100,16 +103,30 @@ export const CommandBarContainer: React.FC = () => {
               : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700'
             }
           `}
-          title={viewMode === 'chat' ? 'Switch to agent stage view' : 'Switch to chat view'}
+          title={
+            viewMode === 'chat' ? 'Switch to stage view'
+              : viewMode === 'stage' ? 'Switch to compact view'
+              : 'Switch to chat view'
+          }
         >
           {viewMode === 'chat' ? (
+            /* Grid icon — switch to stage */
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="7" height="7" />
               <rect x="14" y="3" width="7" height="7" />
               <rect x="3" y="14" width="7" height="7" />
               <rect x="14" y="14" width="7" height="7" />
             </svg>
+          ) : viewMode === 'stage' ? (
+            /* Minimize icon — switch to compact */
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4 14 10 14 10 20" />
+              <polyline points="20 10 14 10 14 4" />
+              <line x1="14" y1="10" x2="21" y2="3" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
           ) : (
+            /* Chat icon — switch to chat */
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>

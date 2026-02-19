@@ -128,6 +128,7 @@ export interface JamAPI {
     minimize: () => void;
     close: () => void;
     maximize: () => void;
+    setCompact: (compact: boolean) => void;
   };
 
   app: {
@@ -279,6 +280,7 @@ contextBridge.exposeInMainWorld('jam', {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     close: () => ipcRenderer.invoke('window:close'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
+    setCompact: (compact: boolean) => ipcRenderer.invoke('window:setCompact', compact),
   },
 
   app: {

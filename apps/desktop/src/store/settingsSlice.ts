@@ -2,7 +2,7 @@ import type { StateCreator } from 'zustand';
 import type { AppStore } from './index';
 
 export type VoiceMode = 'push-to-talk' | 'always-listening';
-export type ViewMode = 'chat' | 'stage';
+export type ViewMode = 'chat' | 'stage' | 'compact';
 
 export interface SettingsSlice {
   settings: {

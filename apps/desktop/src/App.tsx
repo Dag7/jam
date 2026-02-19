@@ -8,6 +8,7 @@ import { ChatContainer } from '@/containers/ChatContainer';
 import { CommandBarContainer } from '@/containers/CommandBarContainer';
 import { SettingsContainer } from '@/containers/SettingsContainer';
 import { LogsContainer } from '@/containers/LogsContainer';
+import { CompactViewContainer } from '@/containers/CompactViewContainer';
 import type { AgentEntry } from '@/store/agentSlice';
 import type { ChatMessage } from '@/store/chatSlice';
 
@@ -341,6 +342,11 @@ export default function App() {
     addMessage,
   ]);
 
+  // Resize the Electron window when entering/leaving compact mode
+  useEffect(() => {
+    window.jam.window.setCompact(viewMode === 'compact');
+  }, [viewMode]);
+
   const renderPanel = () => {
     switch (activeTab) {
       case 'agents':
@@ -351,6 +357,14 @@ export default function App() {
         return <LogsContainer />;
     }
   };
+
+  if (viewMode === 'compact') {
+    return (
+      <AppShell>
+        <CompactViewContainer />
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
