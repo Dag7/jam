@@ -71,13 +71,15 @@ export class AgentManager {
       this.eventBus.emit('agent:output', { agentId, data });
     });
 
-    this.ptyManager.onExit((agentId, exitCode) => {
+    this.ptyManager.onExit((agentId, exitCode, lastOutput) => {
       const state = this.agents.get(agentId);
       const name = state?.profile.name ?? agentId;
       if (exitCode === 0) {
         log.info(`Agent "${name}" exited normally`, undefined, agentId);
       } else {
-        log.warn(`Agent "${name}" exited with code ${exitCode}`, undefined, agentId);
+        // Log last PTY output to diagnose crash reason
+        const cleaned = lastOutput.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
+        log.error(`Agent "${name}" crashed (exit ${exitCode}). Last output:\n${cleaned || '(no output captured)'}`, undefined, agentId);
       }
       this.updateStatus(agentId, exitCode === 0 ? 'stopped' : 'error');
       this.updateVisualState(agentId, 'offline');

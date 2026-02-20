@@ -143,6 +143,7 @@ export interface JamAPI {
     completeOnboarding: () => Promise<{ success: boolean }>;
     resetOnboarding: () => Promise<{ success: boolean }>;
     openTerminal: (command: string) => Promise<{ success: boolean; error?: string }>;
+    testRuntime: (runtimeId: string) => Promise<{ success: boolean; output: string }>;
   };
 
   app: {

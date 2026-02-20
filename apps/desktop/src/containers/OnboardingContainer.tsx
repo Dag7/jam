@@ -130,9 +130,12 @@ const WelcomeStep: React.FC<{ onNext: () => void }> = ({ onNext }) => (
 const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ onNext, onPrev }) => {
   const [runtimes, setRuntimes] = useState<RuntimeInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [testResult, setTestResult] = useState<{ runtimeId: string; success: boolean; output: string } | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
 
   const refresh = () => {
     setLoading(true);
+    setTestResult(null);
     window.jam.setup.detectRuntimes().then((r) => {
       setRuntimes(r);
       setLoading(false);
@@ -148,6 +151,18 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
   const handleOpenTerminal = (r: RuntimeInfo) => {
     const cmd = r.id === 'claude-code' ? 'claude' : 'opencode';
     window.jam.setup.openTerminal(cmd);
+  };
+
+  const handleTest = async (r: RuntimeInfo) => {
+    setTesting(r.id);
+    setTestResult(null);
+    try {
+      const result = await window.jam.setup.testRuntime(r.id);
+      setTestResult({ runtimeId: r.id, ...result });
+    } catch (err) {
+      setTestResult({ runtimeId: r.id, success: false, output: String(err) });
+    }
+    setTesting(null);
   };
 
   return (
@@ -191,14 +206,23 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
                 )}
               </div>
 
-              {/* Auth action for installed but not authenticated */}
-              {r.available && !r.authenticated && (
+              {/* Actions for installed runtimes */}
+              {r.available && (
                 <div className="mt-2 flex items-center gap-2">
+                  {!r.authenticated && (
+                    <button
+                      onClick={() => handleOpenTerminal(r)}
+                      className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-colors"
+                    >
+                      Open Terminal to Authenticate
+                    </button>
+                  )}
                   <button
-                    onClick={() => handleOpenTerminal(r)}
-                    className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-md transition-colors"
+                    onClick={() => handleTest(r)}
+                    disabled={testing === r.id}
+                    className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 border border-zinc-700 rounded-md transition-colors"
                   >
-                    Open Terminal to Authenticate
+                    {testing === r.id ? 'Testing...' : 'Test Connection'}
                   </button>
                   <button
                     onClick={refresh}
@@ -206,6 +230,20 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
                   >
                     Re-check
                   </button>
+                </div>
+              )}
+
+              {/* Test result */}
+              {testResult && testResult.runtimeId === r.id && (
+                <div className={`mt-2 p-2 rounded text-xs font-mono ${
+                  testResult.success ? 'bg-green-500/10 text-green-300' : 'bg-red-500/10 text-red-300'
+                }`}>
+                  <div className="font-sans font-medium mb-1">
+                    {testResult.success ? 'Connection successful' : 'Connection failed'}
+                  </div>
+                  <pre className="whitespace-pre-wrap break-all text-[10px] opacity-80 max-h-24 overflow-y-auto">
+                    {testResult.output}
+                  </pre>
                 </div>
               )}
 

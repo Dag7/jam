@@ -24,7 +24,7 @@ export interface PtyOutputHandler {
 }
 
 export interface PtyExitHandler {
-  (agentId: AgentId, exitCode: number): void;
+  (agentId: AgentId, exitCode: number, lastOutput: string): void;
 }
 
 const SCROLLBACK_MAX = 10_000;
@@ -163,8 +163,10 @@ export class PtyManager {
           flushTimer = null;
         }
 
+        // Capture last output before deleting instance (for crash diagnostics)
+        const lastOutput = instance.scrollback.slice(-30).join('\n');
         this.instances.delete(agentId);
-        this.exitHandler?.(agentId, exitCode);
+        this.exitHandler?.(agentId, exitCode, lastOutput);
       });
 
       this.instances.set(agentId, instance);

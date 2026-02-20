@@ -214,9 +214,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle('agents:get', (_, agentId) =>
     orchestrator.agentManager.get(agentId) ?? null,
   );
-  ipcMain.handle('agents:start', (_, agentId) =>
-    orchestrator.agentManager.start(agentId),
-  );
+  ipcMain.handle('agents:start', (_, agentId) => {
+    // Pre-accept the --dangerously-skip-permissions prompt for Claude Code agents
+    const agent = orchestrator.agentManager.get(agentId);
+    if (agent?.profile.runtime === 'claude-code' && agent.profile.allowFullAccess) {
+      ensureClaudePermissionAccepted();
+    }
+    return orchestrator.agentManager.start(agentId);
+  });
   ipcMain.handle('agents:stop', (_, agentId) =>
     orchestrator.agentManager.stop(agentId),
   );
@@ -752,8 +757,17 @@ function registerIpcHandlers(): void {
 
       if (available) {
         if (id === 'claude-code') {
-          // Claude Code stores OAuth credentials after login
-          authenticated = fs.existsSync(`${homedir}/.claude/settings.json`);
+          // Claude Code stores OAuth tokens in the system keychain after login.
+          // settings.json is for user prefs (we may create it ourselves), so check
+          // for files that only exist after a real interactive session:
+          // - projects/ dir: created on first use
+          // - statsCache: created after first session
+          // - .credentials.json: some installations store tokens here
+          const claudeDir = `${homedir}/.claude`;
+          authenticated = fs.existsSync(`${claudeDir}/statsCache`) ||
+            fs.existsSync(`${claudeDir}/stats-cache.json`) ||
+            (fs.existsSync(`${claudeDir}/projects`) &&
+              fs.readdirSync(`${claudeDir}/projects`).length > 0);
           authHint = 'Run "claude" in your terminal to authenticate via browser';
         } else if (id === 'opencode') {
           authenticated = fs.existsSync(`${homedir}/.opencode/config.json`);
@@ -770,6 +784,24 @@ function registerIpcHandlers(): void {
       runtimes.push({ id, name, available, authenticated, version, authHint });
     }
     return runtimes;
+  });
+
+  // Quick diagnostic: spawn the CLI and capture first output to check if it works
+  ipcMain.handle('setup:testRuntime', async (_, runtimeId: string) => {
+    const cmd = runtimeId === 'claude-code' ? 'claude' : 'opencode';
+    try {
+      // Run a quick print command that requires auth — captures stderr too
+      const output = execSync(
+        `${cmd} -p "say hello" --max-turns 1 --output-format json 2>&1 | head -50`,
+        { encoding: 'utf-8', timeout: 15000 },
+      ).trim();
+      return { success: true, output: output.slice(0, 500) };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // execSync error includes stderr — that's what we want
+      const stderr = (err as { stderr?: Buffer })?.stderr?.toString() ?? '';
+      return { success: false, output: stderr.slice(0, 500) || message.slice(0, 500) };
+    }
   });
 
   // Open a terminal window to run a command (for CLI auth flows)
@@ -861,11 +893,16 @@ app.whenReady().then(() => {
   // Initialize voice if API keys are present
   orchestrator.initVoice();
 
-  // Ensure Claude Code permission prompt is pre-accepted before starting agents
-  ensureClaudePermissionAccepted();
-
   // Start health checks
   orchestrator.agentManager.startHealthCheck();
+
+  // Pre-accept Claude Code permission prompt for any agents that need it
+  const hasClaudeAgent = orchestrator.agentManager.list().some(
+    a => a.profile.runtime === 'claude-code' && a.profile.allowFullAccess && a.profile.autoStart,
+  );
+  if (hasClaudeAgent) {
+    ensureClaudePermissionAccepted();
+  }
 
   // Auto-start configured agents
   orchestrator.startAutoStartAgents();

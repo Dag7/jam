@@ -150,6 +150,7 @@ export interface JamAPI {
     completeOnboarding: () => Promise<{ success: boolean }>;
     resetOnboarding: () => Promise<{ success: boolean }>;
     openTerminal: (command: string) => Promise<{ success: boolean; error?: string }>;
+    testRuntime: (runtimeId: string) => Promise<{ success: boolean; output: string }>;
   };
 
   app: {
@@ -311,6 +312,7 @@ contextBridge.exposeInMainWorld('jam', {
     completeOnboarding: () => ipcRenderer.invoke('setup:completeOnboarding'),
     resetOnboarding: () => ipcRenderer.invoke('setup:resetOnboarding'),
     openTerminal: (command: string) => ipcRenderer.invoke('setup:openTerminal', command),
+    testRuntime: (runtimeId: string) => ipcRenderer.invoke('setup:testRuntime', runtimeId),
   },
 
   app: {
