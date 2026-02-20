@@ -17,7 +17,7 @@ yarn dev
 
 The setup script handles everything: Node version, Yarn 4 via Corepack, dependencies, and verification. Just clone and run.
 
-> **Requires**: Node.js >= 20 (the script will install it via nvm/fnm if needed)
+> **Requires**: Node.js >= 22 (the script will install it via nvm/fnm if needed)
 
 ## Download
 

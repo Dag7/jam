@@ -7,7 +7,7 @@
     "apps/*"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "scripts": {
     "postinstall": "node scripts/fix-native-modules.js",

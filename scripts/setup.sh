@@ -19,35 +19,35 @@ warn()  { echo -e "${YELLOW}!${NC} $1"; }
 fail()  { echo -e "${RED}✗${NC} $1"; exit 1; }
 step()  { echo -e "\n${CYAN}→${NC} $1"; }
 
-REQUIRED_NODE_MAJOR=20
+REQUIRED_NODE=22
 
 # --- Node version check ---
 step "Checking Node.js version..."
 
 if ! command -v node &>/dev/null; then
-  fail "Node.js is not installed. Install Node >= $REQUIRED_NODE_MAJOR via nvm, fnm, or https://nodejs.org"
+  fail "Node.js is not installed. Install Node >= $REQUIRED_NODE via nvm, fnm, or https://nodejs.org"
 fi
 
 NODE_MAJOR=$(node -e "console.log(process.versions.node.split('.')[0])")
-if [ "$NODE_MAJOR" -lt "$REQUIRED_NODE_MAJOR" ]; then
-  warn "Node $NODE_MAJOR detected, but >= $REQUIRED_NODE_MAJOR is required."
+if [ "$NODE_MAJOR" -lt "$REQUIRED_NODE" ]; then
+  warn "Node $NODE_MAJOR detected, but >= $REQUIRED_NODE is required (Vite 7 needs Node 22.12+)."
 
   # Try to auto-switch with nvm
   if command -v nvm &>/dev/null || [ -s "$HOME/.nvm/nvm.sh" ]; then
     [ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"
     step "Switching Node via nvm..."
-    nvm install "$REQUIRED_NODE_MAJOR" || fail "nvm install failed"
-    nvm use "$REQUIRED_NODE_MAJOR"
+    nvm install "$REQUIRED_NODE" || fail "nvm install failed"
+    nvm use "$REQUIRED_NODE"
     info "Now using Node $(node -v)"
   elif command -v fnm &>/dev/null; then
     step "Switching Node via fnm..."
-    fnm install "$REQUIRED_NODE_MAJOR" || fail "fnm install failed"
-    fnm use "$REQUIRED_NODE_MAJOR"
+    fnm install "$REQUIRED_NODE" || fail "fnm install failed"
+    fnm use "$REQUIRED_NODE"
     info "Now using Node $(node -v)"
   else
-    fail "Please install Node >= $REQUIRED_NODE_MAJOR and try again.
+    fail "Please install Node >= $REQUIRED_NODE and try again.
          Install nvm:  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-         Then:         nvm install $REQUIRED_NODE_MAJOR && ./scripts/setup.sh"
+         Then:         nvm install $REQUIRED_NODE && ./scripts/setup.sh"
   fi
 else
   info "Node $(node -v)"
