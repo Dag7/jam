@@ -25,7 +25,7 @@ export const createSettingsSlice: StateCreator<
   SettingsSlice
 > = (set) => ({
   settings: {
-    voiceMode: 'push-to-talk',
+    voiceMode: 'always-listening',
     sidebarCollapsed: false,
     currentView: 'stage',
     viewMode: 'chat',

@@ -8,6 +8,7 @@ interface RuntimeInfo {
   name: string;
   available: boolean;
   authenticated: boolean;
+  version: string;
   authHint: string;
 }
 
@@ -178,6 +179,7 @@ const RuntimesStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ on
                   <div className="text-sm font-medium text-zinc-200">{r.name}</div>
                   <div className="text-xs text-zinc-500">
                     {r.id === 'claude-code' ? 'claude CLI' : 'opencode CLI'}
+                    {r.version && ` v${r.version}`}
                   </div>
                 </div>
                 {r.available && r.authenticated ? (

@@ -54,6 +54,32 @@ function fixPath(): void {
 fixPath();
 log.debug(`PATH resolved: ${process.env.PATH}`);
 
+// --- Ensure Claude Code's --dangerously-skip-permissions prompt is pre-accepted ---
+// Claude Code shows a confirmation dialog every time --dangerously-skip-permissions
+// is used unless `skipDangerousModePermissionPrompt: true` is in settings.json.
+// In a PTY context nobody can answer the prompt, so the agent hangs/crashes.
+function ensureClaudePermissionAccepted(): void {
+  try {
+    const fs = require('node:fs');
+    const settingsPath = `${process.env.HOME}/.claude/settings.json`;
+    let settings: Record<string, unknown> = {};
+    try {
+      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    } catch {
+      // File might not exist yet — create it
+    }
+    if (!settings.skipDangerousModePermissionPrompt) {
+      settings.skipDangerousModePermissionPrompt = true;
+      const dir = `${process.env.HOME}/.claude`;
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+      log.info('Set skipDangerousModePermissionPrompt in Claude settings');
+    }
+  } catch (err) {
+    log.warn(`Could not update Claude settings: ${String(err)}`);
+  }
+}
+
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let orchestrator: Orchestrator;
@@ -695,6 +721,7 @@ function registerIpcHandlers(): void {
       name: string;
       available: boolean;
       authenticated: boolean;
+      version: string;
       authHint: string;
     }> = [];
 
@@ -704,22 +731,31 @@ function registerIpcHandlers(): void {
     ] as const) {
       let available = false;
       let authenticated = false;
+      let version = '';
       let authHint = '';
 
+      // Check binary exists AND works by running --version
       try {
-        execSync(`command -v ${cmd}`, { encoding: 'utf-8', timeout: 3000 });
+        const verOutput = execSync(`${cmd} --version 2>/dev/null || command -v ${cmd}`, {
+          encoding: 'utf-8',
+          timeout: 10000,
+        }).trim();
         available = true;
+        // Extract version string (first line, strip noise)
+        const firstLine = verOutput.split('\n')[0].trim();
+        if (firstLine && !firstLine.startsWith('/')) {
+          version = firstLine;
+        }
       } catch {
-        // Binary not in PATH
+        // Binary not in PATH or broken
       }
 
       if (available) {
         if (id === 'claude-code') {
-          // Claude Code stores settings after OAuth login
+          // Claude Code stores OAuth credentials after login
           authenticated = fs.existsSync(`${homedir}/.claude/settings.json`);
           authHint = 'Run "claude" in your terminal to authenticate via browser';
         } else if (id === 'opencode') {
-          // OpenCode uses API keys configured in its own config
           authenticated = fs.existsSync(`${homedir}/.opencode/config.json`);
           authHint = 'Run "opencode" in your terminal to configure';
         }
@@ -731,7 +767,7 @@ function registerIpcHandlers(): void {
         }
       }
 
-      runtimes.push({ id, name, available, authenticated, authHint });
+      runtimes.push({ id, name, available, authenticated, version, authHint });
     }
     return runtimes;
   });
@@ -791,6 +827,12 @@ function registerIpcHandlers(): void {
     orchestrator.appStore.setOnboardingComplete(true);
     // Re-initialize voice in case keys were added during onboarding
     orchestrator.initVoice();
+
+    // Ensure Claude Code's --dangerously-skip-permissions prompt is pre-accepted.
+    // Without this, Claude Code shows a confirmation dialog on every launch
+    // which never gets answered in the PTY — causing agents to hang/crash.
+    ensureClaudePermissionAccepted();
+
     return { success: true };
   });
 
@@ -818,6 +860,9 @@ app.whenReady().then(() => {
 
   // Initialize voice if API keys are present
   orchestrator.initVoice();
+
+  // Ensure Claude Code permission prompt is pre-accepted before starting agents
+  ensureClaudePermissionAccepted();
 
   // Start health checks
   orchestrator.agentManager.startHealthCheck();

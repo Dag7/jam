@@ -130,6 +130,7 @@ export interface JamAPI {
       name: string;
       available: boolean;
       authenticated: boolean;
+      version: string;
       authHint: string;
     }>>;
     getOnboardingStatus: () => Promise<boolean>;
