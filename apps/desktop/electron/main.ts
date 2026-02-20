@@ -72,56 +72,47 @@ function fixNvmNodeOrder(): void {
     if (!fs.existsSync(nvmDir)) return;
   } catch { return; }
 
-  // Find the current nvm node version in PATH
-  const currentPath = process.env.PATH || '';
-  const parts = currentPath.split(':');
-  const nvmBinPattern = /\.nvm\/versions\/node\/v(\d+)\.(\d+)\.(\d+)\/bin$/;
-  let currentNvmVersion: [number, number, number] | null = null;
-
-  for (const p of parts) {
-    const m = p.match(nvmBinPattern);
-    if (m) {
-      currentNvmVersion = [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
-      break;
-    }
+  // Check what `node --version` actually resolves to in current PATH.
+  // This catches ALL cases: nvm default too old, homebrew node too old, etc.
+  let currentMajor: number;
+  try {
+    const ver = execSync('node --version', { encoding: 'utf-8', timeout: 5000 }).trim();
+    currentMajor = parseInt(ver.replace(/^v/, '').split('.')[0], 10) || 0;
+    if (currentMajor >= 20) return; // Already good
+  } catch {
+    // node not found at all — try to provide one from nvm
+    currentMajor = 0;
   }
 
-  // If no nvm node in PATH or already >= 20, nothing to do
-  if (!currentNvmVersion) return;
-  if (currentNvmVersion[0] >= 20) return;
-
-  // Scan ~/.nvm/versions/node/ for all installed versions
+  // Node is missing or too old. Scan nvm for the newest version >= 20.
   let dirs: string[];
   try {
     dirs = fs.readdirSync(nvmDir).filter((d: string) => d.startsWith('v'));
   } catch { return; }
 
-  // Find the newest installed version
   let best: { dir: string; version: [number, number, number] } | null = null;
   for (const d of dirs) {
     const ver = parseNodeVersion(`/${d}/`);
     if (!ver) continue;
-    if (ver[0] < 20) continue; // Only consider versions >= 20
+    if (ver[0] < 20) continue;
     if (!best || compareVersions(ver, best.version) > 0) {
       best = { dir: d, version: ver };
     }
   }
 
   if (!best) {
-    log.warn(`nvm default is Node ${currentNvmVersion.join('.')}, but no Node >= 20 found in ${nvmDir}`);
+    log.warn(`Node v${currentMajor} found, but no Node >= 20 installed in ${nvmDir}`);
     return;
   }
 
-  // Prepend the newest Node's bin dir to PATH
+  // Prepend the best nvm Node to the FRONT of PATH (before homebrew, before everything)
   const bestBin = `${nvmDir}/${best.dir}/bin`;
   try {
     if (!fs.existsSync(bestBin)) return;
   } catch { return; }
 
-  // Remove any existing nvm entries and prepend the best one
-  const filtered = parts.filter((p) => !nvmBinPattern.test(p));
-  process.env.PATH = [bestBin, ...filtered].join(':');
-  log.info(`nvm PATH fixed: upgraded from Node ${currentNvmVersion.join('.')} → ${best.version.join('.')} (${bestBin})`);
+  process.env.PATH = `${bestBin}:${process.env.PATH}`;
+  log.info(`Node PATH fixed: prepended v${best.version.join('.')} (was v${currentMajor || 'none'}) → ${bestBin}`);
 }
 
 function compareVersions(a: [number, number, number], b: [number, number, number]): number {
