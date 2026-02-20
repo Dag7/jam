@@ -101,6 +101,11 @@ Each agent gets a directory at `~/.jam/agents/<name>/`:
 
 ## Development
 
+### Requirements
+
+- Node.js >= 22 (Vite 7 requires 22.12+)
+- Yarn 4 (managed automatically via Corepack)
+
 ### Commands
 
 | Command | Description |
