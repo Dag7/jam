@@ -127,7 +127,9 @@ function createWindow(): void {
 
 // --- Tray ---
 function createTray(): void {
-  const icon = nativeImage.createEmpty();
+  const trayIconPath = path.join(__dirname, '../assets/tray-icon.png');
+  const icon = nativeImage.createFromPath(trayIconPath);
+  icon.setTemplateImage(true);
   tray = new Tray(icon);
 
   const contextMenu = Menu.buildFromTemplate([

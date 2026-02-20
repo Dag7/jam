@@ -124,8 +124,12 @@ const ComboSelect: React.FC<{
   );
 };
 
-export const SettingsContainer: React.FC<{ onClose: () => void }> = ({
+export const SettingsContainer: React.FC<{
+  onClose: () => void;
+  onRerunSetup?: () => void;
+}> = ({
   onClose,
+  onRerunSetup,
 }) => {
   const [config, setConfig] = useState<Config>({
     sttProvider: 'openai',
@@ -475,6 +479,23 @@ export const SettingsContainer: React.FC<{ onClose: () => void }> = ({
             </div>
           </div>
         </section>
+        {/* Re-run Setup */}
+        {onRerunSetup && (
+          <section>
+            <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+              Setup
+            </h3>
+            <button
+              onClick={async () => {
+                await window.jam.setup.resetOnboarding();
+                onRerunSetup();
+              }}
+              className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors"
+            >
+              Re-run Setup Wizard
+            </button>
+          </section>
+        )}
       </div>
 
       {/* Footer */}

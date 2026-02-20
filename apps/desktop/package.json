@@ -60,14 +60,15 @@
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "assets/**/*"
     ],
     "asarUnpack": [
       "node_modules/node-pty/**"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "icon": "assets/icon.png",
+      "icon": "assets/icon.icns",
       "target": [
         "dmg",
         "zip"

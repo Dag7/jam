@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import jamLogo from '@/assets/jam-logo.png';
 
 type OnboardingStep = 'welcome' | 'runtimes' | 'voice' | 'agent' | 'done';
 
@@ -105,7 +106,7 @@ export const OnboardingContainer: React.FC<{ onComplete: () => void }> = ({ onCo
 // --- Step: Welcome ---
 const WelcomeStep: React.FC<{ onNext: () => void }> = ({ onNext }) => (
   <div className="text-center space-y-6">
-    <div className="text-5xl">Jam</div>
+    <img src={jamLogo} alt="Jam" className="w-24 h-24 mx-auto" />
     <div>
       <h1 className="text-2xl font-bold text-zinc-100">Welcome to Jam</h1>
       <p className="text-sm text-zinc-400 mt-2 max-w-sm mx-auto">

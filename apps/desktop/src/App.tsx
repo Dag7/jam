@@ -375,7 +375,12 @@ export default function App() {
       case 'agents':
         return <AgentPanelContainer />;
       case 'settings':
-        return <SettingsContainer onClose={() => setActiveTab('agents')} />;
+        return (
+          <SettingsContainer
+            onClose={() => setActiveTab('agents')}
+            onRerunSetup={() => setShowOnboarding(true)}
+          />
+        );
       case 'logs':
         return <LogsContainer />;
     }
