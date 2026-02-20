@@ -81,15 +81,15 @@ export class PtyManager {
       // Dynamic import to avoid issues in renderer/test contexts
       const nodePty = await import('node-pty');
 
-      // Spawn through the user's login shell. This is essential in Electron
-      // because: (1) the shell handles PATH resolution, shebang execution,
-      // and dyld environment correctly, (2) Electron's hardened runtime can
-      // interfere with direct posix_spawnp of external binaries, and
-      // (3) login shells source the user's profile for the full environment.
+      // Spawn through the user's shell (non-login). We use -c instead of -lc
+      // because: (1) the Electron main process already resolves the full PATH
+      // via fixPath() at startup, (2) login shells re-source profiles which can
+      // override PATH (e.g. nvm resets to an older Node version), and (3) we
+      // pass the complete env explicitly so login profile sourcing is unnecessary.
       const shell = process.env.SHELL || '/bin/zsh';
       const agentCmd = [command, ...args].map(shellEscape).join(' ');
       const shellCmd = agentCmd;
-      log.info(`Spawning via shell: ${shell} -lc ${shellCmd}`, undefined, agentId);
+      log.info(`Spawning via shell: ${shell} -c ${shellCmd}`, undefined, agentId);
 
       // Build a clean env — filter out vars that break posix_spawnp
       // or cause nested-session detection (CLAUDECODE, CLAUDE_PARENT_CLI)
@@ -99,7 +99,7 @@ export class PtyManager {
         COLORTERM: 'truecolor',
       });
 
-      const ptyProcess = nodePty.spawn(shell, ['-lc', shellCmd], {
+      const ptyProcess = nodePty.spawn(shell, ['-c', shellCmd], {
         name: 'xterm-256color',
         cols: options.cols ?? 120,
         rows: options.rows ?? 30,

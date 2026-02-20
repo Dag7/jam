@@ -721,19 +721,20 @@ function registerIpcHandlers(): void {
     const homedir = process.env.HOME || '';
     const fs = require('node:fs');
 
-    // Check the Node.js version available in a login shell (PTY context).
+    // Check the Node.js version that agents will actually use.
+    // PTY spawns use -c (not login shell), so they inherit the Electron
+    // process's PATH (resolved by fixPath at startup). Check that PATH's node.
     // Claude Code v2+ requires Node.js 20.12+.
     let nodeVersion = '';
     let nodeMajor = 0;
     try {
-      const shell = process.env.SHELL || '/bin/zsh';
-      nodeVersion = execSync(`${shell} -lc 'node --version'`, {
+      nodeVersion = execSync('node --version', {
         encoding: 'utf-8',
         timeout: 5000,
       }).trim().replace(/^v/, '');
       nodeMajor = parseInt(nodeVersion.split('.')[0], 10) || 0;
     } catch {
-      // node not in login shell PATH
+      // node not in PATH
     }
 
     const runtimes: Array<{
