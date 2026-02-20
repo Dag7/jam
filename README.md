@@ -94,13 +94,18 @@ Each agent gets a directory at `~/.jam/agents/<name>/`:
 ### Getting Started
 
 ```bash
-# Clone and install
-git clone https://github.com/doorzdev/jam.git
+git clone https://github.com/Dag7/jam.git
 cd jam
-corepack enable
-yarn install
+./scripts/setup.sh    # handles Node, Yarn 4, and dependencies
+yarn dev              # start dev mode
+```
 
-# Start dev mode
+Or manually:
+
+```bash
+nvm install 20        # or any Node >= 20
+corepack enable       # activates Yarn 4 from packageManager field
+yarn install
 yarn dev
 ```
 
