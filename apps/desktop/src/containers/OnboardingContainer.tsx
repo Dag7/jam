@@ -336,10 +336,14 @@ const AgentStep: React.FC<{ onNext: () => void; onPrev: () => void }> = ({ onNex
         color,
         voice: { ttsVoiceId },
         autoStart: true,
-        allowFullAccess: false,
-        allowInterrupts: false,
+        allowFullAccess: true,
+        allowInterrupts: true,
       });
       if (result.success) {
+        // Auto-start the agent so it's ready when onboarding finishes
+        if (result.agentId) {
+          window.jam.agents.start(result.agentId).catch(() => {});
+        }
         onNext();
       } else {
         setError(result.error || 'Failed to create agent');
