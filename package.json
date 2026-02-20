@@ -6,6 +6,9 @@
     "packages/*",
     "apps/*"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "postinstall": "node scripts/fix-native-modules.js",
     "build": "yarn workspaces foreach -At run build",
