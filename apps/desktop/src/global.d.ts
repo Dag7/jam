@@ -124,6 +124,12 @@ export interface JamAPI {
     setCompact: (compact: boolean) => void;
   };
 
+  setup: {
+    detectRuntimes: () => Promise<Array<{ id: string; name: string; available: boolean }>>;
+    getOnboardingStatus: () => Promise<boolean>;
+    completeOnboarding: () => Promise<{ success: boolean }>;
+  };
+
   app: {
     onError: (
       callback: (error: { message: string; details?: string }) => void,

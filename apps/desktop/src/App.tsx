@@ -9,6 +9,7 @@ import { CommandBarContainer } from '@/containers/CommandBarContainer';
 import { SettingsContainer } from '@/containers/SettingsContainer';
 import { LogsContainer } from '@/containers/LogsContainer';
 import { CompactViewContainer } from '@/containers/CompactViewContainer';
+import { OnboardingContainer } from '@/containers/OnboardingContainer';
 import type { AgentEntry } from '@/store/agentSlice';
 import type { ChatMessage } from '@/store/chatSlice';
 
@@ -120,6 +121,17 @@ export default function App() {
   const setSidebarCollapsed = useAppStore((s) => s.setSidebarCollapsed);
   const viewMode = useAppStore((s) => s.settings.viewMode);
   const [activeTab, setActiveTab] = useState<SidebarTab>('agents');
+
+  // Onboarding gate
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  useEffect(() => {
+    window.jam.setup.getOnboardingStatus().then((complete) => {
+      setShowOnboarding(!complete);
+      setOnboardingChecked(true);
+    });
+  }, []);
   const setAgents = useAppStore((s) => s.setAgents);
   const addAgent = useAppStore((s) => s.addAgent);
   const removeAgent = useAppStore((s) => s.removeAgent);
@@ -346,6 +358,16 @@ export default function App() {
   useEffect(() => {
     window.jam.window.setCompact(viewMode === 'compact');
   }, [viewMode]);
+
+  // Show nothing until onboarding check completes
+  if (!onboardingChecked) {
+    return <div className="h-screen bg-zinc-950" />;
+  }
+
+  // Show onboarding wizard for first-time users
+  if (showOnboarding) {
+    return <OnboardingContainer onComplete={() => setShowOnboarding(false)} />;
+  }
 
   const renderPanel = () => {
     switch (activeTab) {

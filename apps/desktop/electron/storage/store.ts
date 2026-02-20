@@ -11,6 +11,7 @@ interface StoreSchema {
     activeAgentId?: string;
     sidebarCollapsed?: boolean;
   };
+  onboardingComplete: boolean;
 }
 
 export class AppStore implements AgentStore {
@@ -23,6 +24,7 @@ export class AppStore implements AgentStore {
         agentProfiles: {},
         apiKeys: {},
         uiState: {},
+        onboardingComplete: false,
       },
     });
   }
@@ -78,5 +80,14 @@ export class AppStore implements AgentStore {
   setUIState(state: Partial<StoreSchema['uiState']>): void {
     const current = this.store.get('uiState', {});
     this.store.set('uiState', { ...current, ...state });
+  }
+
+  // --- Onboarding ---
+  isOnboardingComplete(): boolean {
+    return this.store.get('onboardingComplete', false);
+  }
+
+  setOnboardingComplete(complete: boolean): void {
+    this.store.set('onboardingComplete', complete);
   }
 }

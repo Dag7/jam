@@ -131,6 +131,12 @@ export interface JamAPI {
     setCompact: (compact: boolean) => void;
   };
 
+  setup: {
+    detectRuntimes: () => Promise<Array<{ id: string; name: string; available: boolean }>>;
+    getOnboardingStatus: () => Promise<boolean>;
+    completeOnboarding: () => Promise<{ success: boolean }>;
+  };
+
   app: {
     onError: (
       callback: (error: { message: string; details?: string }) => void,
@@ -281,6 +287,12 @@ contextBridge.exposeInMainWorld('jam', {
     close: () => ipcRenderer.invoke('window:close'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
     setCompact: (compact: boolean) => ipcRenderer.invoke('window:setCompact', compact),
+  },
+
+  setup: {
+    detectRuntimes: () => ipcRenderer.invoke('setup:detectRuntimes'),
+    getOnboardingStatus: () => ipcRenderer.invoke('setup:getOnboardingStatus'),
+    completeOnboarding: () => ipcRenderer.invoke('setup:completeOnboarding'),
   },
 
   app: {

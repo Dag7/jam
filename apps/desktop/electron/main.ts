@@ -683,6 +683,42 @@ function registerIpcHandlers(): void {
     }
   });
 
+  // Setup / Onboarding
+  ipcMain.handle('setup:detectRuntimes', () => {
+    const runtimes: Array<{ id: string; name: string; available: boolean }> = [];
+    for (const [id, name, cmd] of [
+      ['claude-code', 'Claude Code', 'claude'],
+      ['opencode', 'OpenCode', 'opencode'],
+    ] as const) {
+      let available = false;
+      try {
+        execSync(`command -v ${cmd}`, { encoding: 'utf-8', timeout: 3000 });
+        available = true;
+      } catch {
+        // Binary not in PATH
+      }
+      runtimes.push({ id, name, available });
+    }
+    return runtimes;
+  });
+
+  ipcMain.handle('setup:getOnboardingStatus', () => {
+    const complete = orchestrator.appStore.isOnboardingComplete();
+    // Auto-complete if user already has agents (existing user upgrading)
+    if (!complete && orchestrator.appStore.getProfiles().length > 0) {
+      orchestrator.appStore.setOnboardingComplete(true);
+      return true;
+    }
+    return complete;
+  });
+
+  ipcMain.handle('setup:completeOnboarding', () => {
+    orchestrator.appStore.setOnboardingComplete(true);
+    // Re-initialize voice in case keys were added during onboarding
+    orchestrator.initVoice();
+    return { success: true };
+  });
+
   // App
   ipcMain.handle('app:getVersion', () => app.getVersion());
 
