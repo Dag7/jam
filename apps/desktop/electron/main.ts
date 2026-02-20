@@ -49,6 +49,86 @@ function fixPath(): void {
   if (missing.length > 0) {
     process.env.PATH = `${currentPath}:${missing.join(':')}`;
   }
+
+  // Fix nvm PATH ordering: nvm login shells may put an old default Node first.
+  // Claude Code v2+ requires Node 20.12+, so ensure the newest nvm Node version
+  // comes first in PATH. This prevents crashes when nvm's default is v16/v18.
+  fixNvmNodeOrder();
+}
+
+/** Parse a semver-like version string (e.g. "v22.3.0") into comparable parts */
+function parseNodeVersion(dir: string): [number, number, number] | null {
+  const match = dir.match(/\/v(\d+)\.(\d+)\.(\d+)\//);
+  if (!match) return null;
+  return [parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10)];
+}
+
+function fixNvmNodeOrder(): void {
+  const fs = require('node:fs') as typeof import('node:fs');
+  const nvmDir = `${process.env.HOME}/.nvm/versions/node`;
+
+  // Check if nvm is installed
+  try {
+    if (!fs.existsSync(nvmDir)) return;
+  } catch { return; }
+
+  // Find the current nvm node version in PATH
+  const currentPath = process.env.PATH || '';
+  const parts = currentPath.split(':');
+  const nvmBinPattern = /\.nvm\/versions\/node\/v(\d+)\.(\d+)\.(\d+)\/bin$/;
+  let currentNvmVersion: [number, number, number] | null = null;
+
+  for (const p of parts) {
+    const m = p.match(nvmBinPattern);
+    if (m) {
+      currentNvmVersion = [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+      break;
+    }
+  }
+
+  // If no nvm node in PATH or already >= 20, nothing to do
+  if (!currentNvmVersion) return;
+  if (currentNvmVersion[0] >= 20) return;
+
+  // Scan ~/.nvm/versions/node/ for all installed versions
+  let dirs: string[];
+  try {
+    dirs = fs.readdirSync(nvmDir).filter((d: string) => d.startsWith('v'));
+  } catch { return; }
+
+  // Find the newest installed version
+  let best: { dir: string; version: [number, number, number] } | null = null;
+  for (const d of dirs) {
+    const ver = parseNodeVersion(`/${d}/`);
+    if (!ver) continue;
+    if (ver[0] < 20) continue; // Only consider versions >= 20
+    if (!best || compareVersions(ver, best.version) > 0) {
+      best = { dir: d, version: ver };
+    }
+  }
+
+  if (!best) {
+    log.warn(`nvm default is Node ${currentNvmVersion.join('.')}, but no Node >= 20 found in ${nvmDir}`);
+    return;
+  }
+
+  // Prepend the newest Node's bin dir to PATH
+  const bestBin = `${nvmDir}/${best.dir}/bin`;
+  try {
+    if (!fs.existsSync(bestBin)) return;
+  } catch { return; }
+
+  // Remove any existing nvm entries and prepend the best one
+  const filtered = parts.filter((p) => !nvmBinPattern.test(p));
+  process.env.PATH = [bestBin, ...filtered].join(':');
+  log.info(`nvm PATH fixed: upgraded from Node ${currentNvmVersion.join('.')} → ${best.version.join('.')} (${bestBin})`);
+}
+
+function compareVersions(a: [number, number, number], b: [number, number, number]): number {
+  for (let i = 0; i < 3; i++) {
+    if (a[i] !== b[i]) return a[i] - b[i];
+  }
+  return 0;
 }
 
 fixPath();
@@ -777,7 +857,7 @@ function registerIpcHandlers(): void {
       if (available) {
         // Claude Code v2+ requires Node.js 20.12+
         if (id === 'claude-code' && nodeMajor > 0 && nodeMajor < 20) {
-          error = `Requires Node.js 20+, but login shell has v${nodeVersion}. Run: nvm alias default 22`;
+          error = `Requires Node.js 20+, but found v${nodeVersion}. Install Node 22+: nvm install 22`;
         }
 
         if (id === 'claude-code') {

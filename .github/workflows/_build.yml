@@ -75,6 +75,7 @@ jobs:
       # Signed build (release) — includes code signing + notarization
       - name: Build (signed)
         if: inputs.sign
+        timeout-minutes: 30
         run: yarn workspace @jam/desktop electron:build --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
