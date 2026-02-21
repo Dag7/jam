@@ -1,10 +1,18 @@
-# Jam
+<p align="center">
+  <img src="apps/desktop/src/assets/jam-logo.png" alt="Jam" width="128" />
+</p>
 
-AI Agent Orchestrator — run a team of AI agents from your desktop with voice control.
+<h1 align="center">Jam</h1>
+
+<p align="center">AI Agent Orchestrator — run a team of AI agents from your desktop with voice control.</p>
 
 [![Release](https://img.shields.io/github/v/release/Dag7/jam?label=Download&style=flat-square)](https://github.com/Dag7/jam/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue?style=flat-square)]()
 [![License](https://img.shields.io/github/license/Dag7/jam?style=flat-square)]()
+
+## Preview
+
+<video src="https://youtu.be/sXrvp5j5U6s" controls></video>
 
 ## Quick Start
 
@@ -39,7 +47,7 @@ Jam lets you create, manage, and talk to a team of AI coding agents running on y
 
 - **Multi-agent orchestration** — Run multiple AI agents simultaneously, each in their own PTY
 - **Voice control** — Talk to your agents hands-free with STT/TTS (Whisper + ElevenLabs/OpenAI)
-- **Agent runtimes** — Supports Claude Code and OpenCode as backends
+- **Agent runtimes** — Supports Claude Code, OpenCode, Codex CLI, and Cursor as backends
 - **Living personalities** — Each agent has a SOUL.md that evolves over time
 - **Conversation memory** — Agents remember past conversations across sessions
 - **Dynamic skills** — Agents auto-generate reusable skill files from learned patterns
@@ -62,7 +70,9 @@ Jam lets you create, manage, and talk to a team of AI coding agents running on y
 ├─────────────────────────────────────────────┤
 │  Agent Runtimes                             │
 │  ├── Claude Code  (claude CLI)              │
-│  └── OpenCode     (opencode CLI)            │
+│  ├── OpenCode     (opencode CLI)            │
+│  ├── Codex CLI    (codex CLI)               │
+│  └── Cursor       (cursor-agent CLI)        │
 ├─────────────────────────────────────────────┤
 │  Voice Providers                            │
 │  ├── STT: Whisper / ElevenLabs              │
@@ -74,7 +84,7 @@ Jam lets you create, manage, and talk to a team of AI coding agents running on y
 
 ### Prerequisites
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [OpenCode](https://opencode.ai) CLI installed
+- At least one agent runtime CLI installed: [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenCode](https://opencode.ai), [Codex CLI](https://github.com/openai/codex), or [Cursor](https://cursor.com)
 - API keys for your preferred voice providers (optional, for voice features):
   - OpenAI API key (for Whisper STT and/or OpenAI TTS)
   - ElevenLabs API key (for ElevenLabs STT and/or TTS)
