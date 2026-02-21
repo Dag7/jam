@@ -174,6 +174,8 @@ addLogTransport((entry: LogEntry) => {
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
+  // Prevent the rest of the module from executing (app.whenReady, etc.)
+  process.exit(0);
 }
 
 app.on('second-instance', () => {
@@ -1061,5 +1063,9 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
   orchestrator.shutdown();
 });
