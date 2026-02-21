@@ -22,7 +22,7 @@ export class OpenCodeRuntime implements IAgentRuntime {
     id: 'opencode',
     displayName: 'OpenCode',
     cliCommand: 'opencode',
-    installHint: 'See opencode.ai for installation',
+    installHint: 'curl -fsSL https://opencode.ai/install | bash',
     models: [
       { id: 'claude-opus-4-6', label: 'Claude Opus 4.6', group: 'Anthropic' },
       { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5', group: 'Anthropic' },
