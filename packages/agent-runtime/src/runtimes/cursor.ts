@@ -138,7 +138,8 @@ export class CursorRuntime implements IAgentRuntime {
         }
 
         if (code !== 0) {
-          const errMsg = stderr.slice(0, 500) || `Exit code ${code}`;
+          const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
+          const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
           log.error(`Execute failed (exit ${code}): ${errMsg}`, undefined, profile.id);
           resolve({ success: false, text: '', error: errMsg });
           return;

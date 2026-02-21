@@ -153,7 +153,13 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
         }
 
         if (code !== 0) {
-          const errMsg = stderr.slice(0, 500) || `Exit code ${code}`;
+          // Claude Code sometimes puts errors in stdout (as JSON) rather than stderr
+          let errMsg = stderr.trim();
+          if (!errMsg) {
+            // Try to extract error from stdout JSON
+            errMsg = this.extractErrorFromOutput(stdout) ?? `Exit code ${code}`;
+          }
+          errMsg = errMsg.slice(0, 500);
           log.error(`Execute failed (exit ${code}): ${errMsg}`, undefined, profile.id);
           resolve({ success: false, text: '', error: errMsg });
           return;
@@ -247,6 +253,21 @@ export class ClaudeCodeRuntime implements IAgentRuntime {
   private buildSystemPrompt(profile: AgentProfile): string {
     if (profile.systemPrompt) return profile.systemPrompt;
     return `Your name is ${profile.name}. When asked who you are, respond as ${profile.name}.`;
+  }
+
+  /** Try to extract an error message from stdout (Claude Code outputs errors as JSON) */
+  private extractErrorFromOutput(stdout: string): string | undefined {
+    const lines = stdout.trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const obj = JSON.parse(lines[i]);
+        if (obj.error) return typeof obj.error === 'string' ? obj.error : JSON.stringify(obj.error);
+        if (obj.type === 'error' && obj.message) return obj.message;
+      } catch { /* skip non-JSON */ }
+    }
+    // Fallback: return last non-empty line of raw output
+    const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
+    return lastLine || undefined;
   }
 
   /** Parse streaming JSONL output — find the result event */
