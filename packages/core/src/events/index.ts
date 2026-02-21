@@ -64,6 +64,12 @@ export interface AgentProgressEvent {
   summary: string;
 }
 
+export interface AgentErrorEvent {
+  agentId: AgentId;
+  message: string;
+  details?: string;
+}
+
 export interface TTSCompleteEvent {
   agentId: AgentId;
   audioPath: string;
@@ -79,6 +85,7 @@ export const Events = {
   AGENT_ACKNOWLEDGED: 'agent:acknowledged',
   AGENT_RESPONSE_COMPLETE: 'agent:responseComplete',
   AGENT_PROGRESS: 'agent:progress',
+  AGENT_ERROR: 'agent:error',
   VOICE_TRANSCRIPTION: 'voice:transcription',
   VOICE_STATE_CHANGED: 'voice:stateChanged',
   TTS_COMPLETE: 'tts:complete',

@@ -293,7 +293,7 @@ export default function App() {
 
     // Chat: agent responses from voice commands (async via event, not invoke return)
     const unsubAgentResponse = window.jam.chat.onAgentResponse(
-      ({ agentId, agentName, agentRuntime, agentColor, text }) => {
+      ({ agentId, agentName, agentRuntime, agentColor, text, error }) => {
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'agent',
@@ -302,13 +302,32 @@ export default function App() {
           agentRuntime,
           agentColor,
           content: text,
-          status: 'complete',
+          status: error ? 'error' : 'complete',
           source: 'voice',
           timestamp: Date.now(),
+          error,
         };
         useAppStore.getState().addMessage(msg);
       },
     );
+
+    // App-level errors — surface runtime errors, agent crashes, etc.
+    const unsubAppError = window.jam.app.onError(({ message, details }) => {
+      const errorText = details ? `${message}: ${details}` : message;
+      useAppStore.getState().addMessage({
+        id: crypto.randomUUID(),
+        role: 'agent',
+        agentId: null,
+        agentName: 'System',
+        agentRuntime: null,
+        agentColor: '#ef4444',
+        content: errorText,
+        status: 'error',
+        source: 'text',
+        timestamp: Date.now(),
+        error: errorText,
+      });
+    });
 
     // Chat: progress updates during long-running tasks
     const unsubProgress = window.jam.chat.onAgentProgress(
@@ -342,6 +361,7 @@ export default function App() {
       unsubAcknowledged();
       unsubVoiceCommand();
       unsubAgentResponse();
+      unsubAppError();
       unsubProgress();
       // Stop any playing audio on cleanup
       if (audioRef.current) {

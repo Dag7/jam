@@ -177,6 +177,14 @@ export class Orchestrator {
       this.speakProgress(data.agentId, data.type, data.summary);
     });
 
+    // Agent errors — surface to UI so users see what went wrong
+    this.eventBus.on('agent:error', (data: { agentId: string; message: string; details?: string }) => {
+      this.sendToRenderer('app:error', {
+        message: data.message,
+        details: data.details,
+      });
+    });
+
     // TTS: when AgentManager detects a complete response, synthesize and send audio
     this.eventBus.on('agent:responseComplete', (data: { agentId: string; text: string }) => {
       this.handleResponseComplete(data.agentId, data.text);

@@ -516,7 +516,9 @@ function registerIpcHandlers(): void {
         }
 
         orchestrator.agentManager.voiceCommand(targetId, parsed.command).then((cmdResult) => {
-          if (cmdResult.success && cmdResult.text && mainWindow && !mainWindow.isDestroyed()) {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+
+          if (cmdResult.success && cmdResult.text) {
             mainWindow.webContents.send('chat:agentResponse', {
               agentId: targetId,
               agentName: agent?.profile.name ?? 'Agent',
@@ -524,9 +526,28 @@ function registerIpcHandlers(): void {
               agentColor: agent?.profile.color ?? '#6b7280',
               text: cmdResult.text,
             });
+          } else if (!cmdResult.success) {
+            mainWindow.webContents.send('chat:agentResponse', {
+              agentId: targetId,
+              agentName: agent?.profile.name ?? 'Agent',
+              agentRuntime: agent?.profile.runtime ?? '',
+              agentColor: agent?.profile.color ?? '#6b7280',
+              text: `Error: ${cmdResult.error ?? 'Command failed'}`,
+              error: cmdResult.error ?? 'Command failed',
+            });
           }
         }).catch((err) => {
           log.error(`Voice command execution failed: ${String(err)}`);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('chat:agentResponse', {
+              agentId: targetId,
+              agentName: agent?.profile.name ?? 'Agent',
+              agentRuntime: agent?.profile.runtime ?? '',
+              agentColor: agent?.profile.color ?? '#6b7280',
+              text: `Error: ${String(err)}`,
+              error: String(err),
+            });
+          }
         }).finally(() => {
           voiceCommandsInFlight.delete(targetId);
         });

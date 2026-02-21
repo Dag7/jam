@@ -80,6 +80,12 @@ export class AgentManager {
         // Log last PTY output to diagnose crash reason
         const cleaned = lastOutput.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
         log.error(`Agent "${name}" crashed (exit ${exitCode}). Last output:\n${cleaned || '(no output captured)'}`, undefined, agentId);
+        // Emit error event so UI can display the reason to the user
+        this.eventBus.emit('agent:error', {
+          agentId,
+          message: `Agent "${name}" crashed (exit ${exitCode})`,
+          details: cleaned || undefined,
+        });
       }
       this.updateStatus(agentId, exitCode === 0 ? 'stopped' : 'error');
       this.updateVisualState(agentId, 'offline');
@@ -167,6 +173,11 @@ export class AgentManager {
       this.updateStatus(agentId, 'error');
       this.updateVisualState(agentId, 'error');
       log.error(`Failed to start agent "${state.profile.name}": ${result.error}`, undefined, agentId);
+      this.eventBus.emit('agent:error', {
+        agentId,
+        message: `Failed to start agent "${state.profile.name}"`,
+        details: result.error,
+      });
     }
 
     return result;

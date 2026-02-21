@@ -231,6 +231,7 @@ export interface JamAPI {
         agentRuntime: string;
         agentColor: string;
         text: string;
+        error?: string;
       }) => void,
     ) => () => void;
     onVoiceCommand: (
