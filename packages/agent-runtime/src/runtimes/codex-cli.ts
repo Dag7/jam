@@ -24,10 +24,19 @@ export class CodexCLIRuntime implements IAgentRuntime {
     cliCommand: 'codex',
     installHint: 'npm install -g @openai/codex',
     models: [
-      { id: 'gpt-4.1', label: 'GPT-4.1', group: 'OpenAI' },
-      { id: 'o3', label: 'o3', group: 'OpenAI' },
-      { id: 'o4-mini', label: 'o4-mini', group: 'OpenAI' },
-      { id: 'codex-mini-latest', label: 'Codex Mini', group: 'OpenAI' },
+      { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', group: 'GPT-5' },
+      { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark', group: 'GPT-5' },
+      { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', group: 'GPT-5' },
+      { id: 'gpt-5.2', label: 'GPT-5.2', group: 'GPT-5' },
+      { id: 'gpt-5.1-codex-max', label: 'GPT-5.1 Codex Max', group: 'GPT-5' },
+      { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex', group: 'GPT-5' },
+      { id: 'gpt-5.1', label: 'GPT-5.1', group: 'GPT-5' },
+      { id: 'gpt-5-codex', label: 'GPT-5 Codex', group: 'GPT-5' },
+      { id: 'gpt-5-codex-mini', label: 'GPT-5 Codex Mini', group: 'GPT-5' },
+      { id: 'gpt-5', label: 'GPT-5', group: 'GPT-5' },
+      { id: 'o3', label: 'o3', group: 'Reasoning' },
+      { id: 'o4-mini', label: 'o4-mini', group: 'Reasoning' },
+      { id: 'codex-mini-latest', label: 'Codex Mini (latest)', group: 'Legacy' },
     ],
     detectAuth(homedir: string): boolean {
       return existsSync(`${homedir}/.codex/config.toml`) ||
