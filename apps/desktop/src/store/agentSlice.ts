@@ -28,6 +28,7 @@ export interface AgentEntry {
     allowFullAccess?: boolean;
     allowInterrupts?: boolean;
     cwd?: string;
+    secretBindings?: Array<{ secretId: string; envVarName: string }>;
   };
   status: string;
   visualState: AgentVisualState;
@@ -61,18 +62,16 @@ export const createAgentSlice: StateCreator<
   activeAgentIds: [],
   selectedAgentId: null,
 
-  setAgents: (agents) =>
-    set((state) => {
+  setAgents: (agents) => {
       const map: Record<string, AgentEntry> = {};
       for (const agent of agents) {
         map[agent.profile.id] = agent;
       }
-      return { ...state, agents: map };
-    }),
+      set({ agents: map });
+    },
 
   addAgent: (agent) =>
     set((state) => ({
-      ...state,
       agents: { ...state.agents, [agent.profile.id]: agent },
     })),
 
@@ -80,7 +79,6 @@ export const createAgentSlice: StateCreator<
     set((state) => {
       const { [agentId]: _, ...rest } = state.agents;
       return {
-        ...state,
         agents: rest,
         activeAgentIds: state.activeAgentIds.filter((id) => id !== agentId),
         selectedAgentId:
@@ -93,7 +91,6 @@ export const createAgentSlice: StateCreator<
       const agent = state.agents[agentId];
       if (!agent) return state;
       return {
-        ...state,
         agents: {
           ...state.agents,
           [agentId]: { ...agent, status },
@@ -106,7 +103,6 @@ export const createAgentSlice: StateCreator<
       const agent = state.agents[agentId];
       if (!agent) return state;
       return {
-        ...state,
         agents: {
           ...state.agents,
           [agentId]: { ...agent, profile },
@@ -119,7 +115,6 @@ export const createAgentSlice: StateCreator<
       const agent = state.agents[agentId];
       if (!agent) return state;
       return {
-        ...state,
         agents: {
           ...state.agents,
           [agentId]: { ...agent, visualState },
@@ -128,11 +123,10 @@ export const createAgentSlice: StateCreator<
     }),
 
   setSelectedAgent: (agentId) =>
-    set((state) => ({ ...state, selectedAgentId: agentId })),
+    set({ selectedAgentId: agentId }),
 
   setAgentActive: (agentId, active) =>
     set((state) => ({
-      ...state,
       activeAgentIds: active
         ? [...new Set([...state.activeAgentIds, agentId])]
         : state.activeAgentIds.filter((id) => id !== agentId),

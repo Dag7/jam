@@ -21,8 +21,8 @@ export const createVoiceSlice: StateCreator<
   currentTranscript: null,
 
   setVoiceState: (voiceState) =>
-    set((state) => ({ ...state, voiceState })),
+    set({ voiceState }),
 
   setTranscript: (currentTranscript) =>
-    set((state) => ({ ...state, currentTranscript })),
+    set({ currentTranscript }),
 });

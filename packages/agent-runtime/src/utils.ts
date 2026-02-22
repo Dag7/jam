@@ -23,6 +23,21 @@ export function stripAnsiSimple(input: string): string {
   );
 }
 
+/** Creates a redaction function that replaces known secret values with '***'.
+ *  Filters out short values (< 8 chars) to avoid false-positive masking. */
+export function createSecretRedactor(secretValues: string[]): (text: string) => string {
+  const patterns = secretValues.filter((v) => v.length >= 8);
+  if (patterns.length === 0) return (text) => text;
+
+  return (text: string) => {
+    let result = text;
+    for (const secret of patterns) {
+      result = result.split(secret).join('***');
+    }
+    return result;
+  };
+}
+
 /** Env vars that must be filtered from child processes to prevent
  *  nested-session detection or spawn failures. */
 const FILTERED_ENV_KEYS = new Set([

@@ -7,6 +7,7 @@ import type {
   AgentProfile,
   AgentState,
   AgentStatus,
+  SecretBinding,
   IEventBus,
   ExecutionOptions,
 } from '@jam/core';
@@ -16,6 +17,7 @@ import { RuntimeRegistry } from './runtime-registry.js';
 import { AgentContextBuilder } from './agent-context-builder.js';
 import { TaskTracker } from './task-tracker.js';
 import type { TaskInfo } from './task-tracker.js';
+import { createSecretRedactor } from './utils.js';
 
 const log = createLogger('AgentManager');
 
@@ -38,6 +40,12 @@ export interface AgentStore {
   deleteProfile(agentId: AgentId): void;
 }
 
+/** Resolves secret bindings to env var key-value pairs. Provided by the host app. */
+export type SecretResolver = (bindings: SecretBinding[]) => Record<string, string>;
+
+/** Returns all decrypted secret values (for building output redactors). */
+export type SecretValuesProvider = () => string[];
+
 export class AgentManager {
   private agents = new Map<AgentId, AgentState>();
   private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
@@ -47,12 +55,16 @@ export class AgentManager {
   private taskTracker = new TaskTracker();
   /** AbortControllers per agent — allows interrupting running tasks */
   private abortControllers = new Map<AgentId, AbortController>();
+  /** Output redactor — masks leaked secret values */
+  private redact: (text: string) => string = (t) => t;
 
   constructor(
     private ptyManager: PtyManager,
     private runtimeRegistry: RuntimeRegistry,
     private eventBus: IEventBus,
     private store: AgentStore,
+    private secretResolver?: SecretResolver,
+    private secretValuesProvider?: SecretValuesProvider,
   ) {
     // Restore saved profiles
     for (const profile of this.store.getProfiles()) {
@@ -65,10 +77,13 @@ export class AgentManager {
 
     log.info(`Restored ${this.store.getProfiles().length} agent profiles`);
 
-    // Wire PTY events
+    // Build initial output redactor from stored secrets
+    this.rebuildRedactor();
+
+    // Wire PTY events — redact secret values from terminal output
     this.ptyManager.onOutput((agentId, data) => {
       this.updateLastActivity(agentId);
-      this.eventBus.emit('agent:output', { agentId, data });
+      this.eventBus.emit('agent:output', { agentId, data: this.redact(data) });
     });
 
     this.ptyManager.onExit((agentId, exitCode, lastOutput) => {
@@ -159,9 +174,11 @@ export class AgentManager {
       agentId,
     );
 
+    const secrets = this.secretResolver?.(state.profile.secretBindings ?? []) ?? {};
+
     const result = await this.ptyManager.spawn(agentId, spawnConfig.command, spawnConfig.args, {
       cwd: state.profile.cwd,
-      env: { ...spawnConfig.env, ...state.profile.env, JAM_AGENT_ID: agentId },
+      env: { ...spawnConfig.env, ...state.profile.env, ...secrets, JAM_AGENT_ID: agentId },
     });
 
     if (result.success) {
@@ -254,7 +271,7 @@ export class AgentManager {
   /** Run a voice command via the runtime's execute() method (one-shot child process).
    *  Returns clean text — deterministic completion via process exit.
    *  Echoes the conversation into the terminal view and maintains session continuity. */
-  async voiceCommand(agentId: AgentId, text: string): Promise<{ success: boolean; text?: string; error?: string }> {
+  async voiceCommand(agentId: AgentId, text: string, source: 'text' | 'voice' = 'voice'): Promise<{ success: boolean; text?: string; error?: string }> {
     const state = this.agents.get(agentId);
     if (!state) return { success: false, error: 'Agent not found' };
 
@@ -308,12 +325,14 @@ export class AgentManager {
       });
     };
 
+    const secrets = this.secretResolver?.(state.profile.secretBindings ?? []) ?? {};
+
     let result;
     try {
       result = await runtime.execute(enrichedProfile, text, {
         sessionId,
         cwd: state.profile.cwd,
-        env: { JAM_AGENT_ID: agentId },
+        env: { JAM_AGENT_ID: agentId, ...secrets },
         onProgress,
         signal: abortController.signal,
       });
@@ -338,6 +357,9 @@ export class AgentManager {
 
     this.taskTracker.completeTask(agentId, 'completed');
 
+    // Redact any leaked secret values from agent output
+    result.text = this.redact(result.text);
+
     // Store session ID for conversation continuity
     if (result.sessionId) {
       this.voiceSessions.set(agentId, result.sessionId);
@@ -345,14 +367,16 @@ export class AgentManager {
     }
 
     // Record conversation for cross-session memory (fire-and-forget)
+    // Use distinct timestamps so sort order is deterministic on reload
     if (state.profile.cwd) {
-      const ts = new Date().toISOString();
+      const userTs = new Date().toISOString();
       this.contextBuilder.recordConversation(state.profile.cwd, {
-        timestamp: ts, role: 'user', content: text,
+        timestamp: userTs, role: 'user', content: text, source,
       }).catch(() => {});
       if (result.text) {
+        const agentTs = new Date(Date.now() + 1).toISOString();
         this.contextBuilder.recordConversation(state.profile.cwd, {
-          timestamp: ts, role: 'agent', content: result.text,
+          timestamp: agentTs, role: 'agent', content: result.text, source,
         }).catch(() => {});
       }
     }
@@ -418,6 +442,7 @@ export class AgentManager {
       timestamp: string;
       role: 'user' | 'agent';
       content: string;
+      source: 'text' | 'voice';
       agentId: string;
       agentName: string;
       agentRuntime: string;
@@ -451,6 +476,7 @@ export class AgentManager {
       timestamp: string;
       role: 'user' | 'agent';
       content: string;
+      source: 'text' | 'voice';
       agentId: string;
       agentName: string;
       agentRuntime: string;
@@ -467,6 +493,7 @@ export class AgentManager {
           timestamp: entry.timestamp,
           role: entry.role,
           content: entry.content,
+          source: entry.source ?? 'voice',
           agentId: profile.id,
           agentName: profile.name,
           agentRuntime: profile.runtime,
@@ -475,8 +502,14 @@ export class AgentManager {
       }
     }
 
-    // Sort chronologically and take the last `limit` entries
-    merged.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    // Sort chronologically, with user before agent as tiebreaker for identical timestamps
+    merged.sort((a, b) => {
+      const cmp = a.timestamp.localeCompare(b.timestamp);
+      if (cmp !== 0) return cmp;
+      if (a.role === 'user' && b.role !== 'user') return -1;
+      if (a.role !== 'user' && b.role === 'user') return 1;
+      return 0;
+    });
     const page = merged.slice(-limit);
     const hasMore = anyHasMore || merged.length > limit;
 
@@ -547,5 +580,12 @@ export class AgentManager {
     if (state) {
       state.lastActivity = new Date().toISOString();
     }
+  }
+
+  /** Rebuild the output redactor from the current secret vault.
+   *  Call after secrets are added/removed/updated. */
+  rebuildRedactor(): void {
+    const values = this.secretValuesProvider?.() ?? [];
+    this.redact = createSecretRedactor(values);
   }
 }

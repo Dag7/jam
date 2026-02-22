@@ -1,5 +1,16 @@
 import React, { useState, useEffect } from 'react';
 
+interface SecretBinding {
+  secretId: string;
+  envVarName: string;
+}
+
+interface SecretInfo {
+  id: string;
+  name: string;
+  type: string;
+}
+
 const AGENT_COLORS = [
   '#3b82f6', '#8b5cf6', '#22c55e', '#f97316', '#ec4899', '#06b6d4',
 ];
@@ -56,6 +67,7 @@ export interface AgentFormValues {
   autoStart?: boolean;
   allowFullAccess?: boolean;
   allowInterrupts?: boolean;
+  secretBindings?: SecretBinding[];
 }
 
 interface AgentConfigFormProps {
@@ -87,6 +99,13 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
   const [autoStart, setAutoStart] = useState(initialValues?.autoStart ?? false);
   const [allowFullAccess, setAllowFullAccess] = useState(initialValues?.allowFullAccess ?? false);
   const [allowInterrupts, setAllowInterrupts] = useState(initialValues?.allowInterrupts ?? false);
+  const [secretBindings, setSecretBindings] = useState<SecretBinding[]>(initialValues?.secretBindings ?? []);
+  const [availableSecrets, setAvailableSecrets] = useState<SecretInfo[]>([]);
+
+  // Load available secrets from vault
+  useEffect(() => {
+    window.jam.secrets.list().then(setAvailableSecrets);
+  }, []);
 
   // Load TTS provider from global config and ensure voice is compatible
   useEffect(() => {
@@ -121,6 +140,11 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const voiceId = ttsVoiceId || voices[0]?.id || 'alloy';
+    // Filter out incomplete bindings
+    const validBindings = secretBindings.filter(
+      (b) => b.secretId && b.envVarName.trim(),
+    );
+
     onSubmit({
       ...(isEditing ? { id: initialValues!.id } : {}),
       name,
@@ -133,6 +157,7 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
       autoStart,
       allowFullAccess,
       allowInterrupts,
+      secretBindings: validBindings.length > 0 ? validBindings : undefined,
     });
   };
 
@@ -293,6 +318,76 @@ export const AgentConfigForm: React.FC<AgentConfigFormProps> = ({
           </label>
         </div>
       </div>
+
+      {/* Secret Bindings */}
+      {availableSecrets.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs text-zinc-400">Secret Bindings</label>
+            <button
+              type="button"
+              onClick={() =>
+                setSecretBindings([...secretBindings, { secretId: '', envVarName: '' }])
+              }
+              className="text-xs text-blue-400 hover:text-blue-300"
+            >
+              + Add
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-600 mb-2">
+            Inject secrets as environment variables. The agent can use them without seeing the actual values.
+          </p>
+          <div className="space-y-2">
+            {secretBindings.map((binding, idx) => (
+              <div key={idx} className="flex items-center gap-2">
+                <select
+                  value={binding.secretId}
+                  onChange={(e) => {
+                    const updated = [...secretBindings];
+                    updated[idx] = { ...updated[idx], secretId: e.target.value };
+                    // Auto-fill env var name from secret name
+                    if (e.target.value && !updated[idx].envVarName) {
+                      const secret = availableSecrets.find((s) => s.id === e.target.value);
+                      if (secret) {
+                        updated[idx].envVarName = secret.name
+                          .toUpperCase()
+                          .replace(/[^A-Z0-9]+/g, '_');
+                      }
+                    }
+                    setSecretBindings(updated);
+                  }}
+                  className="flex-1 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-200 focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">Select secret...</option>
+                  {availableSecrets.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={binding.envVarName}
+                  onChange={(e) => {
+                    const updated = [...secretBindings];
+                    updated[idx] = { ...updated[idx], envVarName: e.target.value };
+                    setSecretBindings(updated);
+                  }}
+                  placeholder="ENV_VAR_NAME"
+                  className="flex-1 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => setSecretBindings(secretBindings.filter((_, i) => i !== idx))}
+                  className="text-xs text-red-400 hover:text-red-300 shrink-0"
+                >
+                  x
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-2 pt-2">
         <button

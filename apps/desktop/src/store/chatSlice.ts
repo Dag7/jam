@@ -49,36 +49,33 @@ export const createChatSlice: StateCreator<
 
   addMessage: (msg) =>
     set((state) => ({
-      ...state,
       messages: [...state.messages, msg],
     })),
 
   prependMessages: (msgs) =>
     set((state) => ({
-      ...state,
       messages: [...msgs, ...state.messages],
     })),
 
   updateMessage: (id, updates) =>
     set((state) => ({
-      ...state,
       messages: state.messages.map((m) =>
         m.id === id ? { ...m, ...updates } : m,
       ),
     })),
 
   clearMessages: () =>
-    set((state) => ({ ...state, messages: [], hasMoreHistory: false, historyLoaded: true })),
+    set({ messages: [], hasMoreHistory: false, historyLoaded: true }),
 
   setIsProcessing: (isProcessing) =>
-    set((state) => ({ ...state, isProcessing })),
+    set({ isProcessing }),
 
   setIsLoadingHistory: (isLoadingHistory) =>
-    set((state) => ({ ...state, isLoadingHistory })),
+    set({ isLoadingHistory }),
 
   setHasMoreHistory: (hasMoreHistory) =>
-    set((state) => ({ ...state, hasMoreHistory })),
+    set({ hasMoreHistory }),
 
   setHistoryLoaded: (historyLoaded) =>
-    set((state) => ({ ...state, historyLoaded })),
+    set({ historyLoaded }),
 });

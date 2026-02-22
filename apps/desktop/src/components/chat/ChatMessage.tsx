@@ -9,6 +9,11 @@ interface ChatMessageProps {
 
 const plugins = { code };
 
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export const ChatMessageView: React.FC<ChatMessageProps> = ({ message }) => {
   if (message.role === 'system') {
     return (
@@ -29,6 +34,7 @@ export const ChatMessageView: React.FC<ChatMessageProps> = ({ message }) => {
             <span className="text-[10px] text-zinc-500">
               {message.source === 'voice' ? 'Voice' : 'Text'}
             </span>
+            <span className="text-[10px] text-zinc-600">{formatTime(message.timestamp)}</span>
           </div>
         </div>
       </div>
@@ -70,6 +76,7 @@ export const ChatMessageView: React.FC<ChatMessageProps> = ({ message }) => {
               {runtimeLabel}
             </span>
           )}
+          <span className="text-[10px] text-zinc-600 ml-auto">{formatTime(message.timestamp)}</span>
         </div>
 
         {/* Message body */}

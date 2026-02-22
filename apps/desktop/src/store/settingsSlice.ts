@@ -33,25 +33,21 @@ export const createSettingsSlice: StateCreator<
 
   setSidebarCollapsed: (collapsed) =>
     set((state) => ({
-      ...state,
       settings: { ...state.settings, sidebarCollapsed: collapsed },
     })),
 
   setVoiceMode: (mode) =>
     set((state) => ({
-      ...state,
       settings: { ...state.settings, voiceMode: mode },
     })),
 
   setCurrentView: (view) =>
     set((state) => ({
-      ...state,
       settings: { ...state.settings, currentView: view },
     })),
 
   setViewMode: (mode) =>
     set((state) => ({
-      ...state,
       settings: { ...state.settings, viewMode: mode },
     })),
 });

@@ -70,12 +70,14 @@ export class Orchestrator {
     this.runtimeRegistry.register(new CodexCLIRuntime());
     this.runtimeRegistry.register(new CursorRuntime());
 
-    // Create agent manager
+    // Create agent manager with secret injection support
     this.agentManager = new AgentManager(
       this.ptyManager,
       this.runtimeRegistry,
       this.eventBus,
       this.appStore,
+      (bindings) => this.appStore.resolveSecretBindings(bindings),
+      () => this.appStore.getAllSecretValues(),
     );
 
     // Create memory store

@@ -739,7 +739,7 @@ function registerIpcHandlers(): void {
 
     log.info(`Chat → "${agent.profile.name}": "${parsed.command.slice(0, 60)}"`, undefined, targetId);
 
-    const result = await orchestrator.agentManager.voiceCommand(targetId, parsed.command);
+    const result = await orchestrator.agentManager.voiceCommand(targetId, parsed.command, 'text');
 
     return {
       success: result.success,
@@ -795,6 +795,22 @@ function registerIpcHandlers(): void {
   });
   ipcMain.handle('apiKeys:delete', (_, service: string) => {
     orchestrator.appStore.setApiKey(service, '');
+    return { success: true };
+  });
+
+  // Secrets vault — encrypted storage for agent environment variables
+  ipcMain.handle('secrets:list', () => {
+    return orchestrator.appStore.getSecrets();
+  });
+  ipcMain.handle('secrets:set', (_, id: string, name: string, type: string, value: string) => {
+    orchestrator.appStore.setSecret(id, name, type, value);
+    // Rebuild the output redactor with updated secret values
+    orchestrator.agentManager.rebuildRedactor();
+    return { success: true };
+  });
+  ipcMain.handle('secrets:delete', (_, id: string) => {
+    orchestrator.appStore.deleteSecret(id);
+    orchestrator.agentManager.rebuildRedactor();
     return { success: true };
   });
 

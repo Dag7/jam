@@ -94,13 +94,18 @@ export class CommandParser {
   }
 
   private classifyCommand(command: string): CommandType {
-    // Check if the command is primarily a status query
-    for (const pattern of STATUS_PATTERNS) {
-      if (pattern.test(command)) return 'status-query';
+    const words = command.trim().split(/\s+/);
+
+    // Only classify short commands as status queries or interrupts.
+    // Long sentences (> 6 words) that happen to contain "status" or "update"
+    // are clearly task descriptions, not status queries.
+    if (words.length <= 6) {
+      for (const pattern of STATUS_PATTERNS) {
+        if (pattern.test(command)) return 'status-query';
+      }
     }
 
     // Check if it's an interrupt command (short commands only — "stop working" is interrupt, "stop the server" is a task)
-    const words = command.trim().split(/\s+/);
     if (words.length <= 3) {
       for (const pattern of INTERRUPT_PATTERNS) {
         if (pattern.test(command)) return 'interrupt';

@@ -25,7 +25,6 @@ export const createTerminalSlice: StateCreator<
     set((state) => {
       const existing = state.terminalBuffers[agentId] ?? { pendingData: [] };
       return {
-        ...state,
         terminalBuffers: {
           ...state.terminalBuffers,
           [agentId]: {
@@ -37,7 +36,6 @@ export const createTerminalSlice: StateCreator<
 
   flushTerminalData: (agentId) =>
     set((state) => ({
-      ...state,
       terminalBuffers: {
         ...state.terminalBuffers,
         [agentId]: { pendingData: [] },
@@ -46,7 +44,6 @@ export const createTerminalSlice: StateCreator<
 
   clearTerminal: (agentId) =>
     set((state) => ({
-      ...state,
       terminalBuffers: {
         ...state.terminalBuffers,
         [agentId]: { pendingData: [] },

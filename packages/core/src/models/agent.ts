@@ -22,6 +22,14 @@ export interface AgentVoiceConfig {
   speed?: number;
 }
 
+/** Maps a secret from the global vault to an env var in the agent's process. */
+export interface SecretBinding {
+  /** References a secret ID in AppStore (e.g., "github-token") */
+  secretId: string;
+  /** Env var name injected into the agent process (e.g., "GITHUB_TOKEN") */
+  envVarName: string;
+}
+
 export interface AgentProfile {
   id: AgentId;
   name: string;
@@ -38,6 +46,8 @@ export interface AgentProfile {
   allowInterrupts?: boolean;
   cwd?: string;
   env?: Record<string, string>;
+  /** Secrets bound to this agent, injected as env vars at spawn time */
+  secretBindings?: SecretBinding[];
 }
 
 export interface AgentState {

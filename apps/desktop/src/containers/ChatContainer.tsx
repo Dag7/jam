@@ -39,7 +39,7 @@ export const ChatContainer: React.FC = () => {
           agentColor: m.agentColor,
           content: m.content,
           status: 'complete' as const,
-          source: 'voice' as const,
+          source: (m.source ?? 'voice') as 'text' | 'voice',
           timestamp: new Date(m.timestamp).getTime(),
         }));
         prependMessages(chatMessages);

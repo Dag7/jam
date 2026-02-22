@@ -134,6 +134,12 @@ export interface JamAPI {
     delete: (service: string) => Promise<{ success: boolean }>;
   };
 
+  secrets: {
+    list: () => Promise<Array<{ id: string; name: string; type: string }>>;
+    set: (id: string, name: string, type: string, value: string) => Promise<{ success: boolean }>;
+    delete: (id: string) => Promise<{ success: boolean }>;
+  };
+
   window: {
     minimize: () => void;
     close: () => void;
@@ -206,6 +212,7 @@ export interface JamAPI {
         timestamp: string;
         role: 'user' | 'agent';
         content: string;
+        source?: 'text' | 'voice';
         agentId: string;
         agentName: string;
         agentRuntime: string;

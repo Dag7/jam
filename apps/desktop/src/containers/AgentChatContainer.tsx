@@ -81,7 +81,7 @@ export const AgentChatContainer: React.FC<AgentChatContainerProps> = ({
           agentColor: m.agentColor,
           content: m.content,
           status: 'complete' as const,
-          source: 'voice' as const,
+          source: (m.source ?? 'voice') as 'text' | 'voice',
           timestamp: new Date(m.timestamp).getTime(),
         }));
 

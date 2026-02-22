@@ -10,6 +10,7 @@ export interface ConversationEntry {
   timestamp: string;
   role: 'user' | 'agent';
   content: string;
+  source?: 'text' | 'voice';
 }
 
 export interface SkillDefinition {
@@ -94,8 +95,14 @@ export class AgentContextBuilder {
         }
       }
 
-      // Sort chronologically
-      allEntries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      // Sort chronologically, with user before agent as tiebreaker for identical timestamps
+      allEntries.sort((a, b) => {
+        const cmp = a.timestamp.localeCompare(b.timestamp);
+        if (cmp !== 0) return cmp;
+        if (a.role === 'user' && b.role !== 'user') return -1;
+        if (a.role !== 'user' && b.role === 'user') return 1;
+        return 0;
+      });
 
       // Apply 'before' cursor
       let filtered = allEntries;

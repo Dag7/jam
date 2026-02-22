@@ -141,6 +141,12 @@ export interface JamAPI {
     delete: (service: string) => Promise<{ success: boolean }>;
   };
 
+  secrets: {
+    list: () => Promise<Array<{ id: string; name: string; type: string }>>;
+    set: (id: string, name: string, type: string, value: string) => Promise<{ success: boolean }>;
+    delete: (id: string) => Promise<{ success: boolean }>;
+  };
+
   window: {
     minimize: () => void;
     close: () => void;
@@ -323,6 +329,12 @@ contextBridge.exposeInMainWorld('jam', {
     set: (service, key) => ipcRenderer.invoke('apiKeys:set', service, key),
     has: (service) => ipcRenderer.invoke('apiKeys:has', service),
     delete: (service) => ipcRenderer.invoke('apiKeys:delete', service),
+  },
+
+  secrets: {
+    list: () => ipcRenderer.invoke('secrets:list'),
+    set: (id, name, type, value) => ipcRenderer.invoke('secrets:set', id, name, type, value),
+    delete: (id) => ipcRenderer.invoke('secrets:delete', id),
   },
 
   window: {

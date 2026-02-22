@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { SecretsManager } from '@/components/settings/SecretsManager';
 
 type STTProvider = 'openai' | 'elevenlabs';
 type TTSProvider = 'openai' | 'elevenlabs';
@@ -454,6 +455,9 @@ export const SettingsContainer: React.FC<{
             )}
           </div>
         </section>
+
+        {/* Secrets Vault */}
+        <SecretsManager />
 
         {/* Agent Defaults */}
         <section>

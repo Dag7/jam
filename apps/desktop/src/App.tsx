@@ -171,7 +171,7 @@ export default function App() {
               agentColor: m.agentColor,
               content: m.content,
               status: 'complete' as const,
-              source: 'voice' as const,
+              source: (m.source ?? 'voice') as 'text' | 'voice',
               timestamp: new Date(m.timestamp).getTime(),
             }));
             useAppStore.getState().prependMessages(chatMessages);
