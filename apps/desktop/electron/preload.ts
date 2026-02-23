@@ -289,6 +289,71 @@ export interface JamAPI {
       }) => void,
     ) => () => void;
   };
+
+  tasks: {
+    list: (filter?: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    get: (taskId: string) => Promise<Record<string, unknown> | null>;
+    create: (input: {
+      title: string;
+      description: string;
+      priority?: string;
+      assignedTo?: string;
+      tags?: string[];
+    }) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
+    update: (
+      taskId: string,
+      updates: Record<string, unknown>,
+    ) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
+    delete: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+    onCreated: (callback: (data: { task: Record<string, unknown> }) => void) => () => void;
+    onUpdated: (callback: (data: { task: Record<string, unknown> }) => void) => () => void;
+    onCompleted: (callback: (data: { task: Record<string, unknown>; durationMs: number }) => void) => () => void;
+  };
+
+  team: {
+    channels: {
+      list: (agentId?: string) => Promise<Array<Record<string, unknown>>>;
+      create: (
+        name: string,
+        type: string,
+        participants: string[],
+      ) => Promise<{ success: boolean; channel?: Record<string, unknown>; error?: string }>;
+      getMessages: (
+        channelId: string,
+        limit?: number,
+        before?: string,
+      ) => Promise<Array<Record<string, unknown>>>;
+      sendMessage: (
+        channelId: string,
+        senderId: string,
+        content: string,
+        replyTo?: string,
+      ) => Promise<{ success: boolean; message?: Record<string, unknown>; error?: string }>;
+      onMessageReceived: (
+        callback: (data: { message: Record<string, unknown>; channel: Record<string, unknown> }) => void,
+      ) => () => void;
+    };
+    relationships: {
+      get: (sourceAgentId: string, targetAgentId: string) => Promise<Record<string, unknown> | null>;
+      getAll: (agentId: string) => Promise<Array<Record<string, unknown>>>;
+      onTrustUpdated: (
+        callback: (data: { relationship: Record<string, unknown> }) => void,
+      ) => () => void;
+    };
+    stats: {
+      get: (agentId: string) => Promise<Record<string, unknown> | null>;
+      onUpdated: (
+        callback: (data: { agentId: string; stats: Record<string, unknown> }) => void,
+      ) => () => void;
+    };
+    soul: {
+      get: (agentId: string) => Promise<Record<string, unknown>>;
+      evolve: (agentId: string) => Promise<{ success: boolean; prompt?: string; error?: string }>;
+      onEvolved: (
+        callback: (data: { agentId: string; soul: Record<string, unknown>; version: number }) => void,
+      ) => () => void;
+    };
+  };
 }
 
 contextBridge.exposeInMainWorld('jam', {
@@ -412,6 +477,45 @@ contextBridge.exposeInMainWorld('jam', {
     onVoiceCommand: (cb) => createEventListener('chat:voiceCommand', cb),
     onAgentProgress: (cb) => createEventListener('chat:agentProgress', cb),
     onMessageQueued: (cb) => createEventListener('chat:messageQueued', cb),
+  },
+
+  tasks: {
+    list: (filter) => ipcRenderer.invoke('tasks:list', filter),
+    get: (taskId) => ipcRenderer.invoke('tasks:get', taskId),
+    create: (input) => ipcRenderer.invoke('tasks:create', input),
+    update: (taskId, updates) => ipcRenderer.invoke('tasks:update', taskId, updates),
+    delete: (taskId) => ipcRenderer.invoke('tasks:delete', taskId),
+    onCreated: (cb) => createEventListener('tasks:created', cb),
+    onUpdated: (cb) => createEventListener('tasks:updated', cb),
+    onCompleted: (cb) => createEventListener('tasks:completed', cb),
+  },
+
+  team: {
+    channels: {
+      list: (agentId) => ipcRenderer.invoke('channels:list', agentId),
+      create: (name, type, participants) =>
+        ipcRenderer.invoke('channels:create', name, type, participants),
+      getMessages: (channelId, limit, before) =>
+        ipcRenderer.invoke('channels:getMessages', channelId, limit, before),
+      sendMessage: (channelId, senderId, content, replyTo) =>
+        ipcRenderer.invoke('channels:sendMessage', channelId, senderId, content, replyTo),
+      onMessageReceived: (cb) => createEventListener('message:received', cb),
+    },
+    relationships: {
+      get: (sourceAgentId, targetAgentId) =>
+        ipcRenderer.invoke('relationships:get', sourceAgentId, targetAgentId),
+      getAll: (agentId) => ipcRenderer.invoke('relationships:getAll', agentId),
+      onTrustUpdated: (cb) => createEventListener('trust:updated', cb),
+    },
+    stats: {
+      get: (agentId) => ipcRenderer.invoke('stats:get', agentId),
+      onUpdated: (cb) => createEventListener('stats:updated', cb),
+    },
+    soul: {
+      get: (agentId) => ipcRenderer.invoke('soul:get', agentId),
+      evolve: (agentId) => ipcRenderer.invoke('soul:evolve', agentId),
+      onEvolved: (cb) => createEventListener('soul:evolved', cb),
+    },
   },
 } as JamAPI);
 

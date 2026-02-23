@@ -3,3 +3,7 @@ export * from './voice-provider.js';
 export * from './memory-store.js';
 export * from './event-bus.js';
 export * from './presentation.js';
+export * from './task-store.js';
+export * from './communication-hub.js';
+export * from './relationship-store.js';
+export * from './stats-store.js';

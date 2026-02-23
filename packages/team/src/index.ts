@@ -1,0 +1,13 @@
+export { FileTaskStore } from './stores/file-task-store.js';
+export { FileCommunicationHub } from './stores/file-communication-hub.js';
+export { FileRelationshipStore } from './stores/file-relationship-store.js';
+export { FileStatsStore } from './stores/file-stats-store.js';
+export { SoulManager } from './soul-manager.js';
+export { TaskScheduler } from './task-scheduler.js';
+export type { SchedulePattern, ScheduledTask } from './task-scheduler.js';
+export { SmartTaskAssigner } from './task-assigner.js';
+export type { ITaskAssigner } from './task-assigner.js';
+export { SelfImprovementEngine } from './self-improvement-engine.js';
+export type { ReflectionContext, ReflectionResult } from './self-improvement-engine.js';
+export { InboxWatcher } from './inbox-watcher.js';
+export { TeamEventHandler } from './team-event-handler.js';

@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { SecretsManager } from '@/components/settings/SecretsManager';
-
-type STTProvider = 'openai' | 'elevenlabs';
-type TTSProvider = 'openai' | 'elevenlabs';
-
-type VoiceSensitivity = 'low' | 'medium' | 'high';
+import {
+  type STTProvider,
+  type TTSProvider,
+  type VoiceSensitivity,
+  STT_MODELS,
+  TTS_VOICES,
+  AGENT_MODELS,
+  VOICE_PROVIDERS,
+} from '@/constants/provider-catalog';
 
 interface Config {
   sttProvider: STTProvider;
@@ -18,66 +22,6 @@ interface Config {
   noSpeechThreshold: number;
   noiseBlocklist: string[];
 }
-
-// --- STT models per provider ---
-const STT_MODELS: Record<STTProvider, Array<{ id: string; label: string }>> = {
-  openai: [
-    { id: 'whisper-1', label: 'Whisper v1' },
-    { id: 'gpt-4o-transcribe', label: 'GPT-4o Transcribe' },
-    { id: 'gpt-4o-mini-transcribe', label: 'GPT-4o Mini Transcribe' },
-  ],
-  elevenlabs: [
-    { id: 'scribe_v1', label: 'Scribe v1 (Recommended)' },
-    { id: 'scribe_v1_experimental', label: 'Scribe v1 Experimental' },
-  ],
-};
-
-// --- TTS voices per provider ---
-const TTS_VOICES: Record<TTSProvider, Array<{ id: string; label: string }>> = {
-  openai: [
-    { id: 'alloy', label: 'Alloy' },
-    { id: 'ash', label: 'Ash' },
-    { id: 'ballad', label: 'Ballad' },
-    { id: 'coral', label: 'Coral' },
-    { id: 'echo', label: 'Echo' },
-    { id: 'fable', label: 'Fable' },
-    { id: 'nova', label: 'Nova' },
-    { id: 'onyx', label: 'Onyx' },
-    { id: 'sage', label: 'Sage' },
-    { id: 'shimmer', label: 'Shimmer' },
-  ],
-  elevenlabs: [
-    { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam (Deep, Narration)' },
-    { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Bella (Soft, Feminine)' },
-    { id: 'onwK4e9ZLuTAKqWW03F9', label: 'Daniel (Authoritative, British)' },
-    { id: 'AZnzlk1XvdvUeBnXmlld', label: 'Domi (Strong, Feminine)' },
-    { id: 'MF3mGyEYCl7XYWbV9V6O', label: 'Elli (Friendly, Young)' },
-    { id: 'jsCqWAovK2LkecY7zXl4', label: 'Freya (Expressive, Nordic)' },
-    { id: 'oWAxZDx7w5VEj9dCyTzz', label: 'Grace (Southern, Warm)' },
-    { id: 'N2lVS1w4EtoT3dr4eOWO', label: 'Callum (Intense, Transatlantic)' },
-    { id: 'IKne3meq5aSn9XLyUdCD', label: 'Charlie (Natural, Australian)' },
-    { id: 'XB0fDUnXU5powFXDhCwa', label: 'Charlotte (Swedish, Seductive)' },
-    { id: '21m00Tcm4TlvDq8ikWAM', label: 'Rachel (Calm, American)' },
-    { id: 'yoZ06aMxZJJ28mfd3POQ', label: 'Sam (Raspy, American)' },
-    { id: 'ThT5KcBeYPX3keUQqHPh', label: 'Dorothy (Pleasant, British)' },
-    { id: 'VR6AewLTigWG4xSOukaG', label: 'Arnold (Crisp, American)' },
-    { id: 'ErXwobaYiN019PkySvjV', label: 'Antoni (Well-rounded)' },
-  ],
-};
-
-// --- AI agent models ---
-const AGENT_MODELS = [
-  { id: 'claude-opus-4-6', label: 'Claude Opus 4.6' },
-  { id: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-  { id: 'o4-mini', label: 'OpenAI o4-mini' },
-  { id: 'gpt-4.1', label: 'GPT-4.1' },
-];
-
-const PROVIDERS = [
-  { id: 'openai' as const, label: 'OpenAI' },
-  { id: 'elevenlabs' as const, label: 'ElevenLabs' },
-];
 
 // Combobox-style select: dropdown with custom input option
 const ComboSelect: React.FC<{
@@ -257,7 +201,7 @@ export const SettingsContainer: React.FC<{
                 onChange={(e) => handleSTTProviderChange(e.target.value as STTProvider)}
                 className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
               >
-                {PROVIDERS.map((p) => (
+                {VOICE_PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
@@ -286,7 +230,7 @@ export const SettingsContainer: React.FC<{
                 onChange={(e) => handleTTSProviderChange(e.target.value as TTSProvider)}
                 className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
               >
-                {PROVIDERS.map((p) => (
+                {VOICE_PROVIDERS.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>

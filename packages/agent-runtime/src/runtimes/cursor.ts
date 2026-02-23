@@ -1,21 +1,18 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import type {
-  IAgentRuntime,
   SpawnConfig,
   AgentOutput,
   InputContext,
   AgentProfile,
   ExecutionResult,
-  ExecutionOptions,
   RuntimeMetadata,
 } from '@jam/core';
-import { createLogger } from '@jam/core';
-import { stripAnsiSimple, buildCleanEnv } from '../utils.js';
+import { stripAnsiSimple } from '../utils.js';
+import { BaseAgentRuntime } from './base-runtime.js';
+import { JsonlOutputStrategy } from './output-strategy.js';
+import { parseJsonlStreamEvent, emitJsonlTerminalLine, parseJsonlResult } from './jsonl-parser.js';
 
-const log = createLogger('CursorRuntime');
-
-export class CursorRuntime implements IAgentRuntime {
+export class CursorRuntime extends BaseAgentRuntime {
   readonly runtimeId = 'cursor';
 
   readonly metadata: RuntimeMetadata = {
@@ -44,17 +41,10 @@ export class CursorRuntime implements IAgentRuntime {
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {
     const args: string[] = [];
-
-    // Note: --trust is only valid with -p/headless mode, not interactive PTY
     if (profile.model) {
       args.push('--model', profile.model);
     }
-
-    return {
-      command: 'cursor-agent',
-      args,
-      env: {},
-    };
+    return { command: 'cursor-agent', args, env: {} };
   }
 
   parseOutput(raw: string): AgentOutput {
@@ -73,208 +63,41 @@ export class CursorRuntime implements IAgentRuntime {
 
   formatInput(text: string, context?: InputContext): string {
     let input = text;
-
     if (context?.sharedContext) {
       input = `[Context from other agents: ${context.sharedContext}]\n\n${input}`;
     }
-
     return input;
   }
 
-  async execute(profile: AgentProfile, text: string, options?: ExecutionOptions): Promise<ExecutionResult> {
-    const env = buildCleanEnv({ ...options?.env });
+  // --- Template method hooks ---
 
-    log.info(`Executing: cursor-agent -p <<< "${text.slice(0, 60)}"`, undefined, profile.id);
-
-    return new Promise((resolve) => {
-      const args = ['-p', '--output-format', 'stream-json', '--trust'];
-
-      if (profile.model) {
-        args.push('--model', profile.model);
-      }
-
-      const child = spawn('cursor-agent', args, {
-        cwd: options?.cwd ?? profile.cwd ?? process.env.HOME ?? '/',
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-
-      child.stdin.write(text);
-      child.stdin.end();
-
-      let stdout = '';
-      let stderr = '';
-      let lineBuf = '';
-
-      if (options?.signal) {
-        options.signal.addEventListener('abort', () => {
-          child.kill('SIGTERM');
-        }, { once: true });
-      }
-
-      child.stdout.on('data', (chunk: Buffer) => {
-        const chunkStr = chunk.toString();
-        stdout += chunkStr;
-
-        if (options?.onProgress || options?.onOutput) {
-          lineBuf += chunkStr;
-          const lines = lineBuf.split('\n');
-          lineBuf = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            if (options.onProgress) this.parseStreamEvent(line, options.onProgress);
-            if (options.onOutput) this.emitTerminalLine(line, options.onOutput);
-          }
-        }
-      });
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-
-      child.on('close', (code) => {
-        if (lineBuf.trim()) {
-          if (options?.onProgress) this.parseStreamEvent(lineBuf, options.onProgress);
-          if (options?.onOutput) this.emitTerminalLine(lineBuf, options.onOutput);
-        }
-
-        if (code !== 0) {
-          const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
-          const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
-          log.error(`Execute failed (exit ${code}): ${errMsg}`, undefined, profile.id);
-          resolve({ success: false, text: '', error: errMsg });
-          return;
-        }
-
-        const result = this.parseOneShotOutput(stdout);
-        log.info(`Execute complete: ${result.text.length} chars`, undefined, profile.id);
-        resolve(result);
-      });
-
-      child.on('error', (err) => {
-        log.error(`Spawn error: ${String(err)}`, undefined, profile.id);
-        resolve({ success: false, text: '', error: String(err) });
-      });
-    });
+  protected getCommand(): string {
+    return 'cursor-agent';
   }
 
-  private parseStreamEvent(
-    line: string,
-    onProgress: (event: { type: 'tool-use' | 'thinking' | 'text'; summary: string }) => void,
-  ): void {
-    try {
-      const event = JSON.parse(line);
-
-      if (event.type === 'tool_use' || event.tool_name) {
-        const toolName = event.tool_name ?? event.name ?? 'a tool';
-        onProgress({ type: 'tool-use', summary: `Using ${toolName}` });
-        return;
-      }
-
-      if (event.type === 'thinking') {
-        onProgress({ type: 'thinking', summary: 'Thinking...' });
-        return;
-      }
-
-      if (event.type === 'message_start') {
-        onProgress({ type: 'thinking', summary: 'Processing request...' });
-        return;
-      }
-
-      if (event.type === 'content_block_start' && event.content_block?.type === 'text') {
-        onProgress({ type: 'text', summary: 'Composing response...' });
-        return;
-      }
-    } catch {
-      // Not JSON — ignore
+  protected buildExecuteArgs(profile: AgentProfile): string[] {
+    const args = ['-p', '--output-format', 'stream-json', '--trust'];
+    if (profile.model) {
+      args.push('--model', profile.model);
     }
+    return args;
   }
 
-  /** Convert a JSONL event into markdown-friendly text for streamdown rendering */
-  private emitTerminalLine(
-    line: string,
-    onOutput: (data: string) => void,
-  ): void {
-    try {
-      const raw = JSON.parse(line);
-      // Unwrap stream_event wrapper if present
-      const event = raw.type === 'stream_event' && raw.event ? raw.event : raw;
-
-      if (event.type === 'tool_use' || event.tool_name) {
-        const toolName = event.tool_name ?? event.name ?? 'tool';
-        const input = event.input?.command ?? event.input?.file_path ?? '';
-        onOutput(`\n\`${toolName}\` ${input ? String(input).slice(0, 200) : ''}\n`);
-        return;
-      }
-      if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
-        const name = event.content_block.name ?? 'tool';
-        onOutput(`\n\`${name}\` `);
-        return;
-      }
-      if (event.type === 'tool_result' || event.content_type === 'tool_result') {
-        const output = event.output ?? event.content ?? '';
-        if (output) onOutput(`\n\`\`\`\n${String(output).slice(0, 500)}\n\`\`\`\n`);
-        return;
-      }
-      if (event.type === 'content_block_delta') {
-        const text = event.delta?.text ?? event.delta?.thinking;
-        if (text) {
-          onOutput(text);
-          return;
-        }
-      }
-      if (event.type === 'thinking' || (event.type === 'content_block_start' && event.content_block?.type === 'thinking')) {
-        onOutput('\n*thinking...*\n');
-        return;
-      }
-      if (event.type === 'assistant' && event.message?.content) {
-        for (const block of event.message.content) {
-          if (block.type === 'text' && block.text) {
-            onOutput(block.text);
-          } else if (block.type === 'tool_use') {
-            const input = block.input?.command ?? block.input?.file_path ?? '';
-            onOutput(`\n\`${block.name}\` ${input ? String(input).slice(0, 200) : ''}\n`);
-          }
-        }
-        return;
-      }
-      if (event.type === 'result' && event.result) {
-        onOutput(`\n${event.result}\n`);
-        return;
-      }
-    } catch {
-      const trimmed = line.trim();
-      if (trimmed) onOutput(trimmed + '\n');
-    }
+  protected buildExecuteEnv(): Record<string, string> {
+    return {};
   }
 
-  private parseOneShotOutput(stdout: string): ExecutionResult {
-    const lines = stdout.trim().split('\n');
+  protected createOutputStrategy() {
+    return new JsonlOutputStrategy(parseJsonlStreamEvent, emitJsonlTerminalLine);
+  }
 
-    for (let i = lines.length - 1; i >= 0; i--) {
-      try {
-        const obj = JSON.parse(lines[i]);
-        if (obj.type === 'result') {
-          return {
-            success: true,
-            text: obj.result ?? '',
-            sessionId: obj.session_id,
-          };
-        }
-      } catch { /* skip non-JSON lines */ }
+  protected parseExecutionOutput(stdout: string, stderr: string, code: number): ExecutionResult {
+    if (code !== 0) {
+      const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
+      const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
+      return { success: false, text: '', error: errMsg };
     }
 
-    // Fallback: try as single JSON
-    try {
-      const data = JSON.parse(stdout);
-      return {
-        success: true,
-        text: data.result ?? data.text ?? data.content ?? stdout,
-        sessionId: data.session_id,
-      };
-    } catch {
-      return { success: true, text: stripAnsiSimple(stdout).trim() };
-    }
+    return parseJsonlResult(stdout);
   }
 }

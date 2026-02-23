@@ -31,3 +31,6 @@ out/
 
 # Audio cache
 audio-cache/
+
+# Test coverage
+coverage/

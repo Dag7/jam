@@ -11,43 +11,11 @@ interface SecretInfo {
   type: string;
 }
 
-const AGENT_COLORS = [
-  '#3b82f6', '#8b5cf6', '#22c55e', '#f97316', '#ec4899', '#06b6d4',
-];
-
-type TTSProvider = 'openai' | 'elevenlabs';
-
-const TTS_VOICES: Record<TTSProvider, Array<{ id: string; label: string }>> = {
-  openai: [
-    { id: 'alloy', label: 'Alloy' },
-    { id: 'ash', label: 'Ash' },
-    { id: 'ballad', label: 'Ballad' },
-    { id: 'coral', label: 'Coral' },
-    { id: 'echo', label: 'Echo' },
-    { id: 'fable', label: 'Fable' },
-    { id: 'nova', label: 'Nova' },
-    { id: 'onyx', label: 'Onyx' },
-    { id: 'sage', label: 'Sage' },
-    { id: 'shimmer', label: 'Shimmer' },
-  ],
-  elevenlabs: [
-    { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam (Deep, Narration)' },
-    { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Bella (Soft, Feminine)' },
-    { id: 'onwK4e9ZLuTAKqWW03F9', label: 'Daniel (Authoritative, British)' },
-    { id: 'AZnzlk1XvdvUeBnXmlld', label: 'Domi (Strong, Feminine)' },
-    { id: 'MF3mGyEYCl7XYWbV9V6O', label: 'Elli (Friendly, Young)' },
-    { id: 'jsCqWAovK2LkecY7zXl4', label: 'Freya (Expressive, Nordic)' },
-    { id: 'oWAxZDx7w5VEj9dCyTzz', label: 'Grace (Southern, Warm)' },
-    { id: 'N2lVS1w4EtoT3dr4eOWO', label: 'Callum (Intense, Transatlantic)' },
-    { id: 'IKne3meq5aSn9XLyUdCD', label: 'Charlie (Natural, Australian)' },
-    { id: 'XB0fDUnXU5powFXDhCwa', label: 'Charlotte (Swedish, Seductive)' },
-    { id: '21m00Tcm4TlvDq8ikWAM', label: 'Rachel (Calm, American)' },
-    { id: 'yoZ06aMxZJJ28mfd3POQ', label: 'Sam (Raspy, American)' },
-    { id: 'ThT5KcBeYPX3keUQqHPh', label: 'Dorothy (Pleasant, British)' },
-    { id: 'VR6AewLTigWG4xSOukaG', label: 'Arnold (Crisp, American)' },
-    { id: 'ErXwobaYiN019PkySvjV', label: 'Antoni (Well-rounded)' },
-  ],
-};
+import {
+  type TTSProvider,
+  TTS_VOICES,
+  AGENT_COLORS,
+} from '@/constants/provider-catalog';
 
 export interface RuntimeMetadataInfo {
   id: string;

@@ -14,6 +14,13 @@
     "build": "yarn workspaces foreach -At run build",
     "typecheck": "yarn workspaces foreach -At run typecheck",
     "clean": "yarn workspaces foreach -Ap run clean",
-    "dev": "yarn workspace @jam/desktop dev"
+    "dev": "yarn workspace @jam/desktop dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.0.18",
+    "vitest": "^4.0.18"
   }
 }

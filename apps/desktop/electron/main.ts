@@ -6,152 +6,28 @@ import {
   Menu,
   nativeImage,
   systemPreferences,
-  shell,
 } from 'electron';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
 import { createLogger, addLogTransport, type LogEntry } from '@jam/core';
 import { Orchestrator } from './orchestrator';
-import { saveConfig } from './config';
+import { CommandRouter } from './command-router';
+import { fixPath } from './utils/path-fix';
+import { registerAgentHandlers, ensureClaudePermissionAccepted } from './ipc/agent-handlers';
+import { registerTerminalHandlers } from './ipc/terminal-handlers';
+import { registerVoiceHandlers } from './ipc/voice-handlers';
+import { registerChatHandlers } from './ipc/chat-handlers';
+import { registerConfigHandlers } from './ipc/config-handlers';
+import { registerWindowHandlers } from './ipc/window-handlers';
+import { registerSetupHandlers } from './ipc/setup-handlers';
+import { registerServiceHandlers } from './ipc/service-handlers';
+import { registerTaskHandlers } from './ipc/task-handlers';
+import { registerTeamHandlers } from './ipc/team-handlers';
 
 const log = createLogger('Main');
 
-// --- Fix PATH for macOS GUI apps ---
-// Electron apps on macOS don't inherit the shell PATH, so tools like
-// 'claude', 'opencode', etc. won't be found. Resolve the real PATH from
-// the user's login shell at startup.
-function fixPath(): void {
-  if (process.platform !== 'darwin' && process.platform !== 'linux') return;
-
-  try {
-    const shell = process.env.SHELL || '/bin/zsh';
-    // Use login (-l) but NOT interactive (-i) to avoid prompt/compinit noise
-    const result = execSync(`${shell} -lc 'echo -n "$PATH"'`, {
-      encoding: 'utf-8',
-      timeout: 5000,
-    }).trim();
-    if (result && !result.includes('\n')) {
-      process.env.PATH = result;
-    }
-  } catch {
-    // Fallback: append common locations
-  }
-
-  // Always ensure common tool locations are in PATH
-  const extras = [
-    '/usr/local/bin',
-    '/opt/homebrew/bin',
-    `${process.env.HOME}/.local/bin`,
-    `${process.env.HOME}/.cargo/bin`,
-    '/opt/homebrew/sbin',
-  ];
-  const currentPath = process.env.PATH || '';
-  const pathSet = new Set(currentPath.split(':'));
-  const missing = extras.filter((p) => !pathSet.has(p));
-  if (missing.length > 0) {
-    process.env.PATH = `${currentPath}:${missing.join(':')}`;
-  }
-
-  // Fix nvm PATH ordering: nvm login shells may put an old default Node first.
-  // Claude Code v2+ requires Node 20.12+, so ensure the newest nvm Node version
-  // comes first in PATH. This prevents crashes when nvm's default is v16/v18.
-  fixNvmNodeOrder();
-}
-
-/** Parse a semver-like version string (e.g. "v22.3.0") into comparable parts */
-function parseNodeVersion(dir: string): [number, number, number] | null {
-  const match = dir.match(/\/v(\d+)\.(\d+)\.(\d+)\//);
-  if (!match) return null;
-  return [parseInt(match[1], 10), parseInt(match[2], 10), parseInt(match[3], 10)];
-}
-
-function fixNvmNodeOrder(): void {
-  const fs = require('node:fs') as typeof import('node:fs');
-  const nvmDir = `${process.env.HOME}/.nvm/versions/node`;
-
-  // Check if nvm is installed
-  try {
-    if (!fs.existsSync(nvmDir)) return;
-  } catch { return; }
-
-  // Check what `node --version` actually resolves to in current PATH.
-  // This catches ALL cases: nvm default too old, homebrew node too old, etc.
-  let currentMajor: number;
-  try {
-    const ver = execSync('node --version', { encoding: 'utf-8', timeout: 5000 }).trim();
-    currentMajor = parseInt(ver.replace(/^v/, '').split('.')[0], 10) || 0;
-    if (currentMajor >= 20) return; // Already good
-  } catch {
-    // node not found at all — try to provide one from nvm
-    currentMajor = 0;
-  }
-
-  // Node is missing or too old. Scan nvm for the newest version >= 20.
-  let dirs: string[];
-  try {
-    dirs = fs.readdirSync(nvmDir).filter((d: string) => d.startsWith('v'));
-  } catch { return; }
-
-  let best: { dir: string; version: [number, number, number] } | null = null;
-  for (const d of dirs) {
-    const ver = parseNodeVersion(`/${d}/`);
-    if (!ver) continue;
-    if (ver[0] < 20) continue;
-    if (!best || compareVersions(ver, best.version) > 0) {
-      best = { dir: d, version: ver };
-    }
-  }
-
-  if (!best) {
-    log.warn(`Node v${currentMajor} found, but no Node >= 20 installed in ${nvmDir}`);
-    return;
-  }
-
-  // Prepend the best nvm Node to the FRONT of PATH (before homebrew, before everything)
-  const bestBin = `${nvmDir}/${best.dir}/bin`;
-  try {
-    if (!fs.existsSync(bestBin)) return;
-  } catch { return; }
-
-  process.env.PATH = `${bestBin}:${process.env.PATH}`;
-  log.info(`Node PATH fixed: prepended v${best.version.join('.')} (was v${currentMajor || 'none'}) → ${bestBin}`);
-}
-
-function compareVersions(a: [number, number, number], b: [number, number, number]): number {
-  for (let i = 0; i < 3; i++) {
-    if (a[i] !== b[i]) return a[i] - b[i];
-  }
-  return 0;
-}
-
+// --- Fix PATH for macOS/Linux GUI apps ---
 fixPath();
 log.debug(`PATH resolved: ${process.env.PATH}`);
-
-// --- Ensure Claude Code's --dangerously-skip-permissions prompt is pre-accepted ---
-// Claude Code shows a confirmation dialog every time --dangerously-skip-permissions
-// is used unless `skipDangerousModePermissionPrompt: true` is in settings.json.
-// In a PTY context nobody can answer the prompt, so the agent hangs/crashes.
-function ensureClaudePermissionAccepted(): void {
-  try {
-    const fs = require('node:fs');
-    const settingsPath = `${process.env.HOME}/.claude/settings.json`;
-    let settings: Record<string, unknown> = {};
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    } catch {
-      // File might not exist yet — create it
-    }
-    if (!settings.skipDangerousModePermissionPrompt) {
-      settings.skipDangerousModePermissionPrompt = true;
-      const dir = `${process.env.HOME}/.claude`;
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
-      log.info('Set skipDangerousModePermissionPrompt in Claude settings');
-    }
-  } catch (err) {
-    log.warn(`Could not update Claude settings: ${String(err)}`);
-  }
-}
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -159,22 +35,15 @@ let orchestrator: Orchestrator;
 let isQuitting = false;
 
 // --- HMR cleanup ---
-// vite-plugin-electron restarts the main process on code changes.
-// Without explicit cleanup, child processes (PTY agents, one-shot execute() calls)
-// become orphaned. Hook into the process exit to shut down gracefully.
 if (process.env.VITE_DEV_SERVER_URL) {
-  // In dev mode, register cleanup that runs before the process is replaced
   const hmrCleanup = () => {
     try {
-      if (orchestrator) {
-        orchestrator.shutdown();
-      }
+      if (orchestrator) orchestrator.shutdown();
     } catch {
       // Best-effort cleanup during HMR
     }
   };
   process.on('exit', hmrCleanup);
-  // SIGHUP is sent by vite-plugin-electron when restarting the main process
   process.on('SIGHUP', () => {
     hmrCleanup();
     process.exit(0);
@@ -185,7 +54,6 @@ if (process.env.VITE_DEV_SERVER_URL) {
 const LOG_BUFFER_SIZE = 500;
 const logBuffer: LogEntry[] = [];
 
-// Register a transport that buffers logs and forwards them to the renderer
 addLogTransport((entry: LogEntry) => {
   logBuffer.push(entry);
   if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
@@ -198,7 +66,6 @@ addLogTransport((entry: LogEntry) => {
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
-  // Prevent the rest of the module from executing (app.whenReady, etc.)
   process.exit(0);
 }
 
@@ -229,14 +96,12 @@ function createWindow(): void {
     },
   });
 
-  // Dev or production loading
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  // Minimize to tray on close
   mainWindow.on('close', (event) => {
     if (tray && !isQuitting) {
       event.preventDefault();
@@ -294,790 +159,65 @@ function createTray(): void {
   });
 }
 
-// --- IPC Handlers ---
+// --- IPC Handler Registration ---
 function registerIpcHandlers(): void {
-  // Runtime metadata (data-driven UI)
-  ipcMain.handle('runtimes:listMetadata', () =>
-    orchestrator.runtimeRegistry.listMetadata(),
+  const getWindow = () => mainWindow;
+
+  const router = new CommandRouter(
+    orchestrator.agentManager,
+    orchestrator.commandParser,
+    orchestrator.voiceService,
   );
 
-  // Agent management
-  ipcMain.handle('agents:create', (_, profile) =>
-    orchestrator.agentManager.create(profile),
-  );
-  ipcMain.handle('agents:update', (_, agentId, updates) =>
-    orchestrator.agentManager.update(agentId, updates),
-  );
-  ipcMain.handle('agents:delete', (_, agentId) =>
-    orchestrator.agentManager.delete(agentId),
-  );
-  ipcMain.handle('agents:list', () =>
-    orchestrator.agentManager.list(),
-  );
-  ipcMain.handle('agents:get', (_, agentId) =>
-    orchestrator.agentManager.get(agentId) ?? null,
-  );
-  ipcMain.handle('agents:start', (_, agentId) => {
-    // Pre-accept permission prompts for runtimes that support full access mode
-    const agent = orchestrator.agentManager.get(agentId);
-    if (agent?.profile.allowFullAccess) {
-      const rt = orchestrator.runtimeRegistry.get(agent.profile.runtime);
-      if (rt?.metadata.supportsFullAccess) {
-        ensureClaudePermissionAccepted();
-      }
-    }
-    return orchestrator.agentManager.start(agentId);
+  // Register domain-specific handler modules with narrow deps
+  registerAgentHandlers({
+    runtimeRegistry: orchestrator.runtimeRegistry,
+    agentManager: orchestrator.agentManager,
   });
-  ipcMain.handle('agents:stop', (_, agentId) =>
-    orchestrator.agentManager.stop(agentId),
-  );
-  ipcMain.handle('agents:restart', (_, agentId) =>
-    orchestrator.agentManager.restart(agentId),
-  );
-  ipcMain.handle('agents:stopAll', () => {
-    orchestrator.agentManager.stopAll();
-    return { success: true };
+  registerTerminalHandlers({
+    ptyManager: orchestrator.ptyManager,
   });
-
-  // Terminal I/O
-  ipcMain.on('terminal:write', (_, agentId: string, data: string) => {
-    orchestrator.ptyManager.write(agentId, data);
+  registerVoiceHandlers({
+    getVoiceService: () => orchestrator.voiceService,
+    agentManager: orchestrator.agentManager,
+    config: orchestrator.config,
+    speakToRenderer: (id, text) => orchestrator.speakToRenderer(id, text),
+  }, router, getWindow);
+  registerChatHandlers({
+    commandParser: orchestrator.commandParser,
+    agentManager: orchestrator.agentManager,
+  }, router, getWindow);
+  registerConfigHandlers({
+    config: orchestrator.config,
+    appStore: orchestrator.appStore,
+    agentManager: orchestrator.agentManager,
+    memoryStore: orchestrator.memoryStore,
+    initVoice: () => orchestrator.initVoice(),
   });
-  ipcMain.on(
-    'terminal:resize',
-    (_, agentId: string, cols: number, rows: number) => {
-      orchestrator.ptyManager.resize(agentId, cols, rows);
-    },
-  );
-  ipcMain.handle('terminal:getScrollback', (_, agentId) =>
-    orchestrator.ptyManager.getScrollback(agentId),
-  );
-
-  // Voice — routing is purely name-based (not driven by UI selection)
-  let lastVoiceTargetId: string | null = null;
-  const voiceCommandsInFlight = new Set<string>(); // per-agent guard
-  let ttsSpeaking = false;
-
-  /** Send a system message to the chat UI + speak it via TTS */
-  function sendStatusMessage(targetId: string, message: string): void {
-    const agent = orchestrator.agentManager.get(targetId);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('chat:agentAcknowledged', {
-        agentId: targetId,
-        agentName: agent?.profile.name ?? 'Agent',
-        agentRuntime: agent?.profile.runtime ?? '',
-        agentColor: agent?.profile.color ?? '#6b7280',
-        ackText: message,
-      });
-    }
-    // Speak the status via TTS
-    if (orchestrator.voiceService && agent) {
-      orchestrator.voiceService.synthesize(
-        message,
-        agent.profile.voice.ttsVoiceId || 'alloy',
-        targetId,
-      ).then(async (audioPath) => {
-        const { readFile } = await import('node:fs/promises');
-        const audioBuffer = await readFile(audioPath);
-        const base64 = audioBuffer.toString('base64');
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('voice:ttsAudio', {
-            agentId: targetId,
-            audioData: `data:audio/mpeg;base64,${base64}`,
-          });
-        }
-      }).catch((err) => {
-        log.error(`TTS status failed: ${String(err)}`);
-      });
-    }
-  }
-
-  // TTS playback state is driven by the renderer (which actually plays audio).
-  // The renderer calls voice:ttsState(true) when audio starts, false when it
-  // finishes or is interrupted by the user speaking.
-  ipcMain.on('voice:ttsState', (_, playing: boolean) => {
-    ttsSpeaking = playing;
-    log.debug(`TTS state from renderer: ${playing ? 'speaking' : 'idle'}`);
+  registerWindowHandlers(getWindow);
+  registerSetupHandlers({
+    runtimeRegistry: orchestrator.runtimeRegistry,
+    appStore: orchestrator.appStore,
+    initVoice: () => orchestrator.initVoice(),
+  });
+  registerServiceHandlers({
+    serviceRegistry: orchestrator.serviceRegistry,
+    scanServices: () => orchestrator.scanServices(),
+  });
+  registerTaskHandlers({
+    taskStore: orchestrator.taskStore,
+  });
+  registerTeamHandlers({
+    communicationHub: orchestrator.communicationHub,
+    relationshipStore: orchestrator.relationshipStore,
+    statsStore: orchestrator.statsStore,
+    soulManager: orchestrator.soulManager,
+    selfImprovement: orchestrator.selfImprovement,
   });
 
-  ipcMain.on(
-    'voice:audioChunk',
-    async (_, _agentId: string, chunk: ArrayBuffer) => {
-      if (!orchestrator.voiceService) {
-        log.warn('Voice audio received but voice service not initialized');
-        return;
-      }
-
-      // Guard: skip if TTS is playing (prevents mic feedback loop in VAD mode)
-      if (ttsSpeaking) {
-        log.debug('Voice audio ignored: TTS is speaking');
-        return;
-      }
-
-      try {
-        log.debug(`Voice audio chunk received (${chunk.byteLength} bytes)`);
-        const result = await orchestrator.voiceService.transcribe(
-          Buffer.from(chunk),
-        );
-
-        log.info(`Transcribed: "${result.text}" (confidence: ${result.confidence})`);
-
-        // --- Noise filtering pipeline ---
-
-        // Strip ambient noise — STT often transcribes background sounds as
-        // parenthetical descriptions like "(door closes)", "(birds chirping)" etc.
-        const cleaned = result.text.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
-        if (cleaned.length < 5) {
-          log.debug(`Filtered noise (too short ${cleaned.length} chars): "${result.text}"`);
-          return;
-        }
-
-        // Low confidence filter — Whisper returns confidence between 0-1
-        if (result.confidence !== undefined && result.confidence < 0.4) {
-          log.debug(`Filtered by low confidence (${result.confidence.toFixed(2)}): "${cleaned}"`);
-          return;
-        }
-
-        // no_speech_prob filter (Whisper) — only trust it when confidence is also low
-        // Whisper's no_speech_prob is unreliable: it can report 0.8+ on perfectly clear speech
-        const { noSpeechThreshold, noiseBlocklist } = orchestrator.config;
-        const confidence = result.confidence ?? 1;
-        if (result.noSpeechProb !== undefined && result.noSpeechProb > noSpeechThreshold && confidence < 0.7) {
-          log.debug(`Filtered by no_speech_prob (${result.noSpeechProb.toFixed(2)} > ${noSpeechThreshold}, confidence ${confidence.toFixed(2)}): "${cleaned}"`);
-          return;
-        }
-
-        // Noise phrase blocklist — common phantom transcriptions from ambient sound
-        const lowerCleaned = cleaned.toLowerCase().trim();
-        if (noiseBlocklist.some((phrase: string) => lowerCleaned === phrase.toLowerCase())) {
-          log.debug(`Filtered by noise blocklist: "${cleaned}"`);
-          return;
-        }
-
-        // Single-word filter — real commands are almost always 2+ words
-        // (Agent names alone don't trigger actions)
-        const wordCount = cleaned.split(/\s+/).length;
-        if (wordCount < 2) {
-          log.debug(`Filtered single word: "${cleaned}"`);
-          return;
-        }
-
-        const parsed = orchestrator.voiceService.parseCommand(cleaned);
-
-        if (parsed.isMetaCommand) {
-          log.info(`Voice meta command: ${parsed.command}`);
-          return;
-        }
-
-        // Route purely by name — no UI selection fallback
-        let targetId: string | undefined;
-
-        if (parsed.targetAgentName) {
-          targetId = orchestrator.voiceService.resolveAgentId(parsed.targetAgentName);
-          if (!targetId) {
-            log.warn(`Agent name "${parsed.targetAgentName}" not found`);
-          }
-        }
-
-        // Fallback: last agent that was voice-commanded, then first running agent
-        if (!targetId && lastVoiceTargetId) {
-          targetId = lastVoiceTargetId;
-          log.debug(`Routing to last voice target: ${targetId}`);
-        }
-        if (!targetId) {
-          const running = orchestrator.agentManager.list().filter((a) => a.status === 'running');
-          if (running.length === 1) {
-            targetId = running[0].profile.id;
-            log.debug(`Routing to only running agent: ${targetId}`);
-          } else if (running.length > 1) {
-            log.warn(`No agent name detected and ${running.length} agents running — say the agent's name`);
-            return;
-          }
-        }
-
-        if (!targetId || !parsed.command) {
-          log.warn(`Voice command not routed: no target agent found`);
-          return;
-        }
-
-        const agent = orchestrator.agentManager.get(targetId);
-        lastVoiceTargetId = targetId;
-
-        // --- Command classification: status / interrupt / task ---
-
-        // Status query — read from task tracker, never disturb the agent
-        if (parsed.commandType === 'status-query') {
-          log.info(`Voice status query → "${agent?.profile.name ?? targetId}"`);
-          const summary = orchestrator.agentManager.getTaskStatusSummary(targetId);
-          sendStatusMessage(targetId, summary);
-          return;
-        }
-
-        // Interrupt — abort current task
-        if (parsed.commandType === 'interrupt') {
-          const aborted = orchestrator.agentManager.abortTask(targetId);
-          const name = agent?.profile.name ?? 'Agent';
-          const message = aborted
-            ? `Stopped ${name}'s current task.`
-            : `${name} isn't working on anything right now.`;
-          log.info(`Voice interrupt → "${name}": ${message}`);
-          sendStatusMessage(targetId, message);
-          voiceCommandsInFlight.delete(targetId);
-          return;
-        }
-
-        voiceCommandsInFlight.add(targetId);
-        log.info(`Voice → "${agent?.profile.name ?? targetId}": "${parsed.command}"`);
-
-        // Notify renderer of the voice user message for the chat UI
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('chat:voiceCommand', {
-            text: parsed.command,
-            agentId: targetId,
-            agentName: agent?.profile.name ?? null,
-          });
-        }
-
-        // Enqueue — if busy, waits until current task finishes
-        const { promise, queuePosition } = orchestrator.agentManager.enqueueCommand(targetId, parsed.command, 'voice');
-
-        if (queuePosition > 0 && mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('chat:messageQueued', {
-            agentId: targetId,
-            agentName: agent?.profile.name ?? 'Agent',
-            agentRuntime: agent?.profile.runtime ?? '',
-            agentColor: agent?.profile.color ?? '#6b7280',
-            queuePosition,
-            command: parsed.command.slice(0, 60),
-          });
-        }
-
-        promise.then((cmdResult) => {
-          if (!mainWindow || mainWindow.isDestroyed()) return;
-
-          if (cmdResult.success && cmdResult.text) {
-            mainWindow.webContents.send('chat:agentResponse', {
-              agentId: targetId,
-              agentName: agent?.profile.name ?? 'Agent',
-              agentRuntime: agent?.profile.runtime ?? '',
-              agentColor: agent?.profile.color ?? '#6b7280',
-              text: cmdResult.text,
-            });
-          } else if (!cmdResult.success) {
-            mainWindow.webContents.send('chat:agentResponse', {
-              agentId: targetId,
-              agentName: agent?.profile.name ?? 'Agent',
-              agentRuntime: agent?.profile.runtime ?? '',
-              agentColor: agent?.profile.color ?? '#6b7280',
-              text: `Error: ${cmdResult.error ?? 'Command failed'}`,
-              error: cmdResult.error ?? 'Command failed',
-            });
-          }
-        }).catch((err) => {
-          log.error(`Voice command execution failed: ${String(err)}`);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('chat:agentResponse', {
-              agentId: targetId,
-              agentName: agent?.profile.name ?? 'Agent',
-              agentRuntime: agent?.profile.runtime ?? '',
-              agentColor: agent?.profile.color ?? '#6b7280',
-              text: `Error: ${String(err)}`,
-              error: String(err),
-            });
-          }
-        }).finally(() => {
-          voiceCommandsInFlight.delete(targetId);
-        });
-      } catch (error) {
-        log.error(`Voice transcription error: ${String(error)}`);
-      }
-    },
-  );
-
-  ipcMain.handle(
-    'voice:requestTTS',
-    async (_, agentId: string, text: string) => {
-      if (!orchestrator.voiceService) {
-        return { success: false, error: 'Voice service not initialized' };
-      }
-
-      const agent = orchestrator.agentManager.get(agentId);
-      if (!agent) return { success: false, error: 'Agent not found' };
-
-      try {
-        const voiceId = (agent.profile.voice.ttsVoiceId && agent.profile.voice.ttsVoiceId !== 'default')
-          ? agent.profile.voice.ttsVoiceId
-          : orchestrator.config.ttsVoice;
-        const audioPath = await orchestrator.voiceService.synthesize(
-          text,
-          voiceId,
-          agentId,
-        );
-        return { success: true, audioPath };
-      } catch (error) {
-        return { success: false, error: String(error) };
-      }
-    },
-  );
-
-  // Voice filter settings — renderer reads these for VAD threshold + min recording
-  const SENSITIVITY_THRESHOLDS: Record<string, number> = { low: 0.01, medium: 0.03, high: 0.06 };
-
-  ipcMain.handle('voice:getFilterSettings', () => {
-    const { voiceSensitivity, minRecordingMs } = orchestrator.config;
-    return {
-      vadThreshold: SENSITIVITY_THRESHOLDS[voiceSensitivity] ?? 0.03,
-      minRecordingMs: minRecordingMs ?? 600,
-    };
-  });
-
-  ipcMain.handle('voice:checkMicPermission', async () => {
-    if (process.platform === 'darwin') {
-      const status = systemPreferences.getMediaAccessStatus('microphone');
-      if (status === 'granted') return { granted: true };
-      // Try requesting if not yet decided
-      if (status === 'not-determined') {
-        const granted = await systemPreferences.askForMediaAccess('microphone');
-        return { granted };
-      }
-      return { granted: false, status };
-    }
-    // On Windows/Linux, permission is handled at OS level
-    return { granted: true };
-  });
-
-  // Chat — text commands routed through execute() pipeline (same as voice)
-  let lastTextTargetId: string | null = null;
-
-  ipcMain.handle('chat:sendCommand', async (_, text: string) => {
-    // Handle /status command
-    const statusMatch = text.match(/^\/status\s*(.*)/i);
-    if (statusMatch) {
-      const agentName = statusMatch[1].trim().toLowerCase();
-      let targetId: string | undefined;
-      if (agentName) {
-        targetId = orchestrator.commandParser.resolveAgentId(agentName);
-      }
-      if (!targetId) {
-        // Try last targets or only running agent
-        targetId = lastTextTargetId ?? lastVoiceTargetId ?? undefined;
-        if (!targetId) {
-          const running = orchestrator.agentManager.list().filter((a) => a.status === 'running');
-          if (running.length === 1) targetId = running[0].profile.id;
-        }
-      }
-      if (!targetId) return { success: false, error: 'No agent specified. Use /status <agent-name>' };
-
-      const summary = orchestrator.agentManager.getTaskStatusSummary(targetId);
-      const agent = orchestrator.agentManager.get(targetId);
-      return {
-        success: true,
-        text: summary,
-        agentId: targetId,
-        agentName: agent?.profile.name ?? 'Agent',
-        agentRuntime: agent?.profile.runtime ?? '',
-        agentColor: agent?.profile.color ?? '#6b7280',
-      };
-    }
-
-    const parsed = orchestrator.commandParser.parse(text);
-
-    if (parsed.isMetaCommand) {
-      return { success: false, error: 'Meta commands not yet supported via text' };
-    }
-
-    // Name-based routing (same logic as voice)
-    let targetId: string | undefined;
-
-    if (parsed.targetAgentName) {
-      targetId = orchestrator.commandParser.resolveAgentId(parsed.targetAgentName);
-      if (!targetId) {
-        return { success: false, error: `Agent "${parsed.targetAgentName}" not found` };
-      }
-    }
-
-    // Fallback: last text target → last voice target → only running agent
-    if (!targetId && lastTextTargetId) {
-      const agent = orchestrator.agentManager.get(lastTextTargetId);
-      if (agent && agent.status === 'running') {
-        targetId = lastTextTargetId;
-      }
-    }
-    if (!targetId && lastVoiceTargetId) {
-      const agent = orchestrator.agentManager.get(lastVoiceTargetId);
-      if (agent && agent.status === 'running') {
-        targetId = lastVoiceTargetId;
-      }
-    }
-    if (!targetId) {
-      const running = orchestrator.agentManager.list().filter((a) => a.status === 'running');
-      if (running.length === 1) {
-        targetId = running[0].profile.id;
-      } else if (running.length === 0) {
-        return { success: false, error: 'No agents running' };
-      } else {
-        return {
-          success: false,
-          error: `Multiple agents running — say the agent's name (${running.map((a) => a.profile.name).join(', ')})`,
-        };
-      }
-    }
-
-    lastTextTargetId = targetId;
-    const agent = orchestrator.agentManager.get(targetId);
-    if (!agent) return { success: false, error: 'Agent not found' };
-
-    // Classify command — handle status/interrupt via text too
-    if (parsed.commandType === 'status-query') {
-      const summary = orchestrator.agentManager.getTaskStatusSummary(targetId);
-      return {
-        success: true,
-        text: summary,
-        agentId: targetId,
-        agentName: agent.profile.name,
-        agentRuntime: agent.profile.runtime,
-        agentColor: agent.profile.color,
-      };
-    }
-
-    if (parsed.commandType === 'interrupt') {
-      const aborted = orchestrator.agentManager.abortTask(targetId);
-      voiceCommandsInFlight.delete(targetId);
-      return {
-        success: true,
-        text: aborted ? `Stopped ${agent.profile.name}'s current task.` : `${agent.profile.name} isn't working on anything right now.`,
-        agentId: targetId,
-        agentName: agent.profile.name,
-        agentRuntime: agent.profile.runtime,
-        agentColor: agent.profile.color,
-      };
-    }
-
-    log.info(`Chat → "${agent.profile.name}": "${parsed.command.slice(0, 60)}"`, undefined, targetId);
-
-    // Enqueue the command — if agent is busy, it waits in the queue
-    const { promise, queuePosition } = orchestrator.agentManager.enqueueCommand(targetId, parsed.command, 'text');
-
-    if (queuePosition > 0) {
-      // Notify the renderer that the message was queued (not running yet)
-      mainWindow?.webContents.send('chat:messageQueued', {
-        agentId: targetId,
-        agentName: agent.profile.name,
-        agentRuntime: agent.profile.runtime,
-        agentColor: agent.profile.color,
-        queuePosition,
-        command: parsed.command.slice(0, 60),
-      });
-    }
-
-    const result = await promise;
-
-    return {
-      success: result.success,
-      text: result.text,
-      error: result.error,
-      agentId: targetId,
-      agentName: agent.profile.name,
-      agentRuntime: agent.profile.runtime,
-      agentColor: agent.profile.color,
-    };
-  });
-
-  // Task status — query agent's current task from in-memory tracker
-  ipcMain.handle('agents:getTaskStatus', (_, agentId: string) => {
-    return orchestrator.agentManager.getTaskStatus(agentId);
-  });
-
-  // Interrupt — abort the agent's current task (UI cancel button)
-  ipcMain.handle('chat:interruptAgent', (_, agentId: string) => {
-    const agent = orchestrator.agentManager.get(agentId);
-    const aborted = orchestrator.agentManager.abortTask(agentId);
-    voiceCommandsInFlight.delete(agentId);
-    return {
-      success: aborted,
-      text: aborted
-        ? `Stopped ${agent?.profile.name ?? 'agent'}'s current task.`
-        : `${agent?.profile.name ?? 'Agent'} isn't working on anything right now.`,
-    };
-  });
-
-  // Chat history — paginated conversation loading from JSONL files
-  ipcMain.handle('chat:loadHistory', async (_, options?: { agentId?: string; before?: string; limit?: number }) => {
-    return orchestrator.agentManager.loadConversationHistory(options);
-  });
-
-  // Memory
-  ipcMain.handle('memory:load', (_, agentId) =>
-    orchestrator.memoryStore.load(agentId),
-  );
-  ipcMain.handle('memory:save', async (_, agentId, memory) => {
-    try {
-      await orchestrator.memoryStore.save(agentId, memory);
-      return { success: true };
-    } catch (error) {
-      return { success: false, error: String(error) };
-    }
-  });
-
-  // Config
-  ipcMain.handle('config:get', () => orchestrator.config);
-  ipcMain.handle('config:set', (_, config) => {
-    Object.assign(orchestrator.config, config);
-    saveConfig(orchestrator.config);
-    // Re-initialize voice if provider changed
-    orchestrator.initVoice();
-    return { success: true };
-  });
-
-  // API Keys — don't call initVoice() here; config:set always follows and handles it
-  ipcMain.handle('apiKeys:set', (_, service: string, key: string) => {
-    orchestrator.appStore.setApiKey(service, key);
-    return { success: true };
-  });
-  ipcMain.handle('apiKeys:has', (_, service: string) => {
-    return orchestrator.appStore.getApiKey(service) !== null;
-  });
-  ipcMain.handle('apiKeys:delete', (_, service: string) => {
-    orchestrator.appStore.setApiKey(service, '');
-    return { success: true };
-  });
-
-  // Secrets vault — encrypted storage for agent environment variables
-  ipcMain.handle('secrets:list', () => {
-    return orchestrator.appStore.getSecrets();
-  });
-  ipcMain.handle('secrets:set', (_, id: string, name: string, type: string, value: string) => {
-    orchestrator.appStore.setSecret(id, name, type, value);
-    // Rebuild the output redactor with updated secret values
-    orchestrator.agentManager.rebuildRedactor();
-    return { success: true };
-  });
-  ipcMain.handle('secrets:delete', (_, id: string) => {
-    orchestrator.appStore.deleteSecret(id);
-    orchestrator.agentManager.rebuildRedactor();
-    return { success: true };
-  });
-
-  // Window controls
-  ipcMain.handle('window:minimize', () => mainWindow?.minimize());
-  ipcMain.handle('window:close', () => mainWindow?.hide());
-  ipcMain.handle('window:maximize', () => {
-    if (mainWindow?.isMaximized()) {
-      mainWindow.unmaximize();
-    } else {
-      mainWindow?.maximize();
-    }
-  });
-
-  // Compact mode — save/restore window bounds
-  let savedBounds: Electron.Rectangle | null = null;
-
-  ipcMain.handle('window:setCompact', (_, compact: boolean) => {
-    if (!mainWindow) return;
-
-    if (compact) {
-      savedBounds = mainWindow.getBounds();
-      const { x, y, width } = savedBounds;
-      // Keep same top-left position, shrink to a strip
-      const compactHeight = 90;
-      const compactWidth = Math.min(width, 700);
-      mainWindow.setMinimumSize(300, compactHeight);
-      mainWindow.setBounds({ x, y, width: compactWidth, height: compactHeight }, true);
-      mainWindow.setAlwaysOnTop(true, 'floating');
-    } else {
-      mainWindow.setAlwaysOnTop(false);
-      mainWindow.setMinimumSize(640, 480);
-      if (savedBounds) {
-        mainWindow.setBounds(savedBounds, true);
-        savedBounds = null;
-      }
-    }
-  });
-
-  // Setup / Onboarding
-  ipcMain.handle('setup:detectRuntimes', () => {
-    const homedir = process.env.HOME || '';
-
-    // Check the Node.js version that agents will actually use.
-    // PTY spawns use -c (not login shell), so they inherit the Electron
-    // process's PATH (resolved by fixPath at startup). Check that PATH's node.
-    // Claude Code v2+ requires Node.js 20.12+.
-    let nodeVersion = '';
-    let nodeMajor = 0;
-    try {
-      nodeVersion = execSync('node --version', {
-        encoding: 'utf-8',
-        timeout: 5000,
-      }).trim().replace(/^v/, '');
-      nodeMajor = parseInt(nodeVersion.split('.')[0], 10) || 0;
-    } catch {
-      // node not in PATH
-    }
-
-    const runtimes: Array<{
-      id: string;
-      name: string;
-      available: boolean;
-      authenticated: boolean;
-      version: string;
-      nodeVersion: string;
-      error: string;
-      authHint: string;
-    }> = [];
-
-    for (const rt of orchestrator.runtimeRegistry.list()) {
-      const { metadata } = rt;
-      let available = false;
-      let authenticated = false;
-      let version = '';
-      let error = '';
-      let authHint = '';
-
-      // Check binary exists AND works by running --version
-      try {
-        const verOutput = execSync(`${metadata.cliCommand} --version 2>/dev/null || command -v ${metadata.cliCommand}`, {
-          encoding: 'utf-8',
-          timeout: 10000,
-        }).trim();
-        available = true;
-        // Extract version string (first line, strip noise)
-        const firstLine = verOutput.split('\n')[0].trim();
-        if (firstLine && !firstLine.startsWith('/')) {
-          version = firstLine;
-        }
-      } catch {
-        // Binary not in PATH or broken
-      }
-
-      if (available) {
-        // Check Node.js version requirement
-        if (metadata.nodeVersionRequired && nodeMajor > 0 && nodeMajor < metadata.nodeVersionRequired) {
-          error = `Requires Node.js ${metadata.nodeVersionRequired}+, but found v${nodeVersion}. Install Node 22+: nvm install 22`;
-        }
-
-        authenticated = metadata.detectAuth(homedir);
-        authHint = metadata.getAuthHint();
-      } else {
-        authHint = metadata.installHint;
-      }
-
-      runtimes.push({ id: metadata.id, name: metadata.displayName, available, authenticated, version, nodeVersion, error, authHint });
-    }
-    return runtimes;
-  });
-
-  // Quick diagnostic: spawn the CLI and capture first output to check if it works
-  ipcMain.handle('setup:testRuntime', async (_, runtimeId: string) => {
-    const rt = orchestrator.runtimeRegistry.get(runtimeId);
-    const cmd = rt?.metadata.cliCommand ?? runtimeId;
-    try {
-      // Run a quick print command that requires auth — captures stderr too
-      const output = execSync(
-        `${cmd} -p "say hello" --max-turns 1 --output-format json 2>&1 | head -50`,
-        { encoding: 'utf-8', timeout: 15000 },
-      ).trim();
-      return { success: true, output: output.slice(0, 500) };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      // execSync error includes stderr — that's what we want
-      const stderr = (err as { stderr?: Buffer })?.stderr?.toString() ?? '';
-      return { success: false, output: stderr.slice(0, 500) || message.slice(0, 500) };
-    }
-  });
-
-  // Open a terminal window to run a command (for CLI auth flows)
-  ipcMain.handle('setup:openTerminal', (_, command: string) => {
-    try {
-      if (process.platform === 'darwin') {
-        execSync(`osascript -e 'tell application "Terminal" to do script "${command}"' -e 'tell application "Terminal" to activate'`, { timeout: 5000 });
-      } else if (process.platform === 'linux') {
-        execSync(`x-terminal-emulator -e "${command}" &`, { timeout: 5000 });
-      } else {
-        execSync(`start cmd /k "${command}"`, { timeout: 5000 });
-      }
-      return { success: true };
-    } catch {
-      return { success: false, error: 'Could not open terminal' };
-    }
-  });
-
-  ipcMain.handle('setup:getOnboardingStatus', () => {
-    return orchestrator.appStore.isOnboardingComplete();
-  });
-
-  ipcMain.handle('setup:resetOnboarding', () => {
-    orchestrator.appStore.setOnboardingComplete(false);
-    return { success: true };
-  });
-
-  ipcMain.handle('setup:getSetupStatus', () => {
-    const hasAgents = orchestrator.appStore.getProfiles().length > 0;
-    const hasOpenai = orchestrator.appStore.getApiKey('openai') !== null;
-    const hasElevenlabs = orchestrator.appStore.getApiKey('elevenlabs') !== null;
-    const hasVoiceKeys = hasOpenai || hasElevenlabs;
-
-    // Detect runtimes
-    let hasRuntime = false;
-    for (const cmd of orchestrator.runtimeRegistry.getCliCommands()) {
-      try {
-        execSync(`command -v ${cmd}`, { encoding: 'utf-8', timeout: 3000 });
-        hasRuntime = true;
-        break;
-      } catch {
-        // not found
-      }
-    }
-
-    const missing: string[] = [];
-    if (!hasRuntime) missing.push('runtime');
-    if (!hasVoiceKeys) missing.push('voice-keys');
-    if (!hasAgents) missing.push('agent');
-
-    return { hasRuntime, hasVoiceKeys, hasAgents, missing };
-  });
-
-  ipcMain.handle('setup:completeOnboarding', () => {
-    orchestrator.appStore.setOnboardingComplete(true);
-    // Re-initialize voice in case keys were added during onboarding
-    orchestrator.initVoice();
-
-    // Ensure Claude Code's --dangerously-skip-permissions prompt is pre-accepted.
-    // Without this, Claude Code shows a confirmation dialog on every launch
-    // which never gets answered in the PTY — causing agents to hang/crash.
-    ensureClaudePermissionAccepted();
-
-    return { success: true };
-  });
-
-  // Services — background processes tracked by agents
-  ipcMain.handle('services:list', async () => {
-    // Scan fresh before returning
-    orchestrator.scanServices();
-    // Allow scan to complete (fire-and-forget above, give it a tick)
-    await new Promise(r => setTimeout(r, 50));
-    return orchestrator.serviceRegistry.list();
-  });
-
-  ipcMain.handle('services:stop', (_, pid: number) => {
-    const success = orchestrator.serviceRegistry.stopService(pid);
-    return { success };
-  });
-
-  ipcMain.handle('services:openUrl', (_, port: number) => {
-    try {
-      shell.openExternal(`http://localhost:${port}`);
-      return { success: true };
-    } catch {
-      return { success: false };
-    }
-  });
-
-  // App
+  // App + Logs (trivial, kept inline)
   ipcMain.handle('app:getVersion', () => app.getVersion());
-
-  // Logs
   ipcMain.handle('logs:get', () => logBuffer);
-
 }
 
 // --- App lifecycle ---
@@ -1094,7 +234,6 @@ app.whenReady().then(() => {
     orchestrator.setMainWindow(mainWindow);
   }
 
-  // Request microphone permission on macOS before initializing voice
   if (process.platform === 'darwin') {
     systemPreferences.askForMediaAccess('microphone').then((granted) => {
       if (!granted) {
@@ -1105,13 +244,9 @@ app.whenReady().then(() => {
     });
   }
 
-  // Initialize voice if API keys are present
   orchestrator.initVoice();
-
-  // Start health checks
   orchestrator.agentManager.startHealthCheck();
 
-  // Pre-accept permission prompts for runtimes that support full access mode
   const needsPermissionSetup = orchestrator.agentManager.list().some((a) => {
     if (!a.profile.allowFullAccess || !a.profile.autoStart) return false;
     const rt = orchestrator.runtimeRegistry.get(a.profile.runtime);
@@ -1121,9 +256,7 @@ app.whenReady().then(() => {
     ensureClaudePermissionAccepted();
   }
 
-  // Auto-start configured agents
   orchestrator.startAutoStartAgents();
-
   log.info('App started successfully');
 });
 

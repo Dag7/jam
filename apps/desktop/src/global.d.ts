@@ -288,6 +288,71 @@ export interface JamAPI {
       }) => void,
     ) => () => void;
   };
+
+  tasks: {
+    list: (filter?: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+    get: (taskId: string) => Promise<Record<string, unknown> | null>;
+    create: (input: {
+      title: string;
+      description: string;
+      priority?: string;
+      assignedTo?: string;
+      tags?: string[];
+    }) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
+    update: (
+      taskId: string,
+      updates: Record<string, unknown>,
+    ) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
+    delete: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+    onCreated: (callback: (data: { task: Record<string, unknown> }) => void) => () => void;
+    onUpdated: (callback: (data: { task: Record<string, unknown> }) => void) => () => void;
+    onCompleted: (callback: (data: { task: Record<string, unknown>; durationMs: number }) => void) => () => void;
+  };
+
+  team: {
+    channels: {
+      list: (agentId?: string) => Promise<Array<Record<string, unknown>>>;
+      create: (
+        name: string,
+        type: string,
+        participants: string[],
+      ) => Promise<{ success: boolean; channel?: Record<string, unknown>; error?: string }>;
+      getMessages: (
+        channelId: string,
+        limit?: number,
+        before?: string,
+      ) => Promise<Array<Record<string, unknown>>>;
+      sendMessage: (
+        channelId: string,
+        senderId: string,
+        content: string,
+        replyTo?: string,
+      ) => Promise<{ success: boolean; message?: Record<string, unknown>; error?: string }>;
+      onMessageReceived: (
+        callback: (data: { message: Record<string, unknown>; channel: Record<string, unknown> }) => void,
+      ) => () => void;
+    };
+    relationships: {
+      get: (sourceAgentId: string, targetAgentId: string) => Promise<Record<string, unknown> | null>;
+      getAll: (agentId: string) => Promise<Array<Record<string, unknown>>>;
+      onTrustUpdated: (
+        callback: (data: { relationship: Record<string, unknown> }) => void,
+      ) => () => void;
+    };
+    stats: {
+      get: (agentId: string) => Promise<Record<string, unknown> | null>;
+      onUpdated: (
+        callback: (data: { agentId: string; stats: Record<string, unknown> }) => void,
+      ) => () => void;
+    };
+    soul: {
+      get: (agentId: string) => Promise<Record<string, unknown>>;
+      evolve: (agentId: string) => Promise<{ success: boolean; prompt?: string; error?: string }>;
+      onEvolved: (
+        callback: (data: { agentId: string; soul: Record<string, unknown>; version: number }) => void,
+      ) => () => void;
+    };
+  };
 }
 
 declare global {

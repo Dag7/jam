@@ -72,8 +72,6 @@ export class AgentManager {
   private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
   /** Session IDs per agent for voice command conversation continuity */
   private voiceSessions = new Map<AgentId, string>();
-  private contextBuilder = new AgentContextBuilder();
-  private taskTracker = new TaskTracker();
   /** AbortControllers per agent — allows interrupting running tasks */
   private abortControllers = new Map<AgentId, AbortController>();
   /** Per-agent message queues — messages are processed sequentially */
@@ -88,6 +86,8 @@ export class AgentManager {
     private runtimeRegistry: RuntimeRegistry,
     private eventBus: IEventBus,
     private store: AgentStore,
+    private contextBuilder: AgentContextBuilder,
+    private taskTracker: TaskTracker,
     private secretResolver?: SecretResolver,
     private secretValuesProvider?: SecretValuesProvider,
     sharedSkillsDir?: string,

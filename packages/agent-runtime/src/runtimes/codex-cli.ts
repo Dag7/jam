@@ -1,7 +1,6 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
 import type {
-  IAgentRuntime,
   SpawnConfig,
   AgentOutput,
   InputContext,
@@ -10,12 +9,11 @@ import type {
   ExecutionOptions,
   RuntimeMetadata,
 } from '@jam/core';
-import { createLogger } from '@jam/core';
-import { stripAnsiSimple, buildCleanEnv } from '../utils.js';
+import { stripAnsiSimple } from '../utils.js';
+import { BaseAgentRuntime } from './base-runtime.js';
+import { ThrottledOutputStrategy } from './output-strategy.js';
 
-const log = createLogger('CodexCLIRuntime');
-
-export class CodexCLIRuntime implements IAgentRuntime {
+export class CodexCLIRuntime extends BaseAgentRuntime {
   readonly runtimeId = 'codex';
 
   readonly metadata: RuntimeMetadata = {
@@ -47,16 +45,10 @@ export class CodexCLIRuntime implements IAgentRuntime {
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {
     const args: string[] = [];
-
     if (profile.model) {
       args.push('--model', profile.model);
     }
-
-    return {
-      command: 'codex',
-      args,
-      env: {},
-    };
+    return { command: 'codex', args, env: {} };
   }
 
   parseOutput(raw: string): AgentOutput {
@@ -75,97 +67,55 @@ export class CodexCLIRuntime implements IAgentRuntime {
 
   formatInput(text: string, context?: InputContext): string {
     let input = text;
-
     if (context?.sharedContext) {
       input = `[Context from other agents: ${context.sharedContext}]\n\n${input}`;
     }
-
     return input;
   }
 
-  async execute(profile: AgentProfile, text: string, options?: ExecutionOptions): Promise<ExecutionResult> {
-    const env = buildCleanEnv({ ...options?.env });
+  // --- Template method hooks ---
 
-    log.info(`Executing: codex exec <<< "${text.slice(0, 60)}"`, undefined, profile.id);
+  protected getCommand(): string {
+    return 'codex';
+  }
 
-    return new Promise((resolve) => {
-      const args = ['exec'];
-
-      if (profile.model) {
-        args.push('--model', profile.model);
-      }
-
+  /** Codex passes input text as a CLI argument, not stdin */
+  protected buildExecuteArgs(profile: AgentProfile, _options?: ExecutionOptions, text?: string): string[] {
+    const args = ['exec'];
+    if (profile.model) {
+      args.push('--model', profile.model);
+    }
+    if (text) {
       args.push(text);
+    }
+    return args;
+  }
 
-      const child = spawn('codex', args, {
-        cwd: options?.cwd ?? profile.cwd ?? process.env.HOME ?? '/',
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+  protected buildExecuteEnv(): Record<string, string> {
+    return {};
+  }
 
-      let stdout = '';
-      let stderr = '';
-      let lastProgressEmit = 0;
-      let firstChunkSent = false;
+  /** Codex uses CLI arg for input — no stdin needed */
+  protected writeInput(_child: ChildProcess, _profile: AgentProfile, _text: string): void {
+    // No-op: text is passed as CLI argument via buildExecuteArgs
+  }
 
-      if (options?.signal) {
-        options.signal.addEventListener('abort', () => {
-          child.kill('SIGTERM');
-        }, { once: true });
+  protected createOutputStrategy() {
+    return new ThrottledOutputStrategy((cleaned) => {
+      if (cleaned.includes('executing') || cleaned.includes('Running') || cleaned.includes('shell')) {
+        return 'tool-use';
       }
-
-      child.stdout.on('data', (chunk: Buffer) => {
-        const chunkStr = chunk.toString();
-        stdout += chunkStr;
-
-        // Stream ANSI-stripped output for streamdown rendering
-        if (options?.onOutput) {
-          options.onOutput(stripAnsiSimple(chunkStr));
-        }
-
-        if (options?.onProgress) {
-          if (!firstChunkSent) {
-            firstChunkSent = true;
-            lastProgressEmit = Date.now();
-            options.onProgress({ type: 'thinking', summary: 'Processing request...' });
-          }
-
-          const now = Date.now();
-          if (now - lastProgressEmit > 5000) {
-            lastProgressEmit = now;
-            const cleaned = stripAnsiSimple(chunkStr).trim();
-            if (cleaned.length > 0) {
-              const type = cleaned.includes('executing') || cleaned.includes('Running') || cleaned.includes('shell')
-                ? 'tool-use' as const
-                : 'text' as const;
-              options.onProgress({ type, summary: cleaned.slice(0, 80) });
-            }
-          }
-        }
-      });
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-
-      child.on('close', (code) => {
-        if (code !== 0) {
-          const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
-          const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
-          log.error(`Execute failed (exit ${code}): ${errMsg}`, undefined, profile.id);
-          resolve({ success: false, text: '', error: errMsg });
-          return;
-        }
-
-        const cleaned = stripAnsiSimple(stdout).trim();
-        log.info(`Execute complete: ${cleaned.length} chars`, undefined, profile.id);
-        resolve({ success: true, text: cleaned });
-      });
-
-      child.on('error', (err) => {
-        log.error(`Spawn error: ${String(err)}`, undefined, profile.id);
-        resolve({ success: false, text: '', error: String(err) });
-      });
+      return 'text';
     });
+  }
+
+  protected parseExecutionOutput(stdout: string, stderr: string, code: number): ExecutionResult {
+    if (code !== 0) {
+      const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
+      const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
+      return { success: false, text: '', error: errMsg };
+    }
+
+    return { success: true, text: stripAnsiSimple(stdout).trim() };
   }
 }

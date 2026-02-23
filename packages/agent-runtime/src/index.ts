@@ -6,8 +6,12 @@ export { ClaudeCodeRuntime } from './runtimes/claude-code.js';
 export { OpenCodeRuntime } from './runtimes/opencode.js';
 export { CodexCLIRuntime } from './runtimes/codex-cli.js';
 export { CursorRuntime } from './runtimes/cursor.js';
+export { BaseAgentRuntime } from './runtimes/base-runtime.js';
 export { TaskTracker } from './task-tracker.js';
 export { ServiceRegistry } from './service-registry.js';
+
+export type { OutputStrategy } from './runtimes/output-strategy.js';
+export { JsonlOutputStrategy, ThrottledOutputStrategy } from './runtimes/output-strategy.js';
 
 export type { PtyInstance, PtyOutputHandler, PtyExitHandler } from './pty-manager.js';
 export type { AgentStore, SecretResolver, SecretValuesProvider } from './agent-manager.js';

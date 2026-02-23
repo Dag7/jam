@@ -7,6 +7,8 @@ import { EventBus } from '@jam/eventbus';
 import {
   PtyManager,
   AgentManager,
+  AgentContextBuilder,
+  TaskTracker,
   RuntimeRegistry,
   ClaudeCodeRuntime,
   OpenCodeRuntime,
@@ -22,9 +24,21 @@ import {
   ElevenLabsTTSProvider,
   OpenAITTSProvider,
 } from '@jam/voice';
-import type { ISTTProvider, ITTSProvider } from '@jam/core';
+import type { ISTTProvider, ITTSProvider, AgentState } from '@jam/core';
 import { createLogger } from '@jam/core';
 import { FileMemoryStore } from '@jam/memory';
+import {
+  FileTaskStore,
+  FileCommunicationHub,
+  FileRelationshipStore,
+  FileStatsStore,
+  SoulManager,
+  TaskScheduler,
+  SmartTaskAssigner,
+  SelfImprovementEngine,
+  InboxWatcher,
+  TeamEventHandler,
+} from '@jam/team';
 import { AppStore } from './storage/store';
 import { loadConfig, type JamConfig, type STTProviderType, type TTSProviderType } from './config';
 
@@ -58,6 +72,18 @@ export class Orchestrator {
   readonly commandParser: CommandParser;
   voiceService: VoiceService | null = null;
 
+  // Team system services
+  readonly taskStore: FileTaskStore;
+  readonly communicationHub: FileCommunicationHub;
+  readonly relationshipStore: FileRelationshipStore;
+  readonly statsStore: FileStatsStore;
+  readonly soulManager: SoulManager;
+  readonly taskScheduler: TaskScheduler;
+  readonly taskAssigner: SmartTaskAssigner;
+  readonly selfImprovement: SelfImprovementEngine;
+  readonly inboxWatcher: InboxWatcher;
+  readonly teamEventHandler: TeamEventHandler;
+
   private mainWindow: BrowserWindow | null = null;
 
   constructor() {
@@ -78,12 +104,17 @@ export class Orchestrator {
     // Shared skills directory — injected into every agent's context
     const sharedSkillsDir = join(homedir(), '.jam', 'shared-skills');
 
-    // Create agent manager with secret injection + shared skills
+    // Create agent manager with injected dependencies
+    const contextBuilder = new AgentContextBuilder();
+    const taskTracker = new TaskTracker();
+
     this.agentManager = new AgentManager(
       this.ptyManager,
       this.runtimeRegistry,
       this.eventBus,
       this.appStore,
+      contextBuilder,
+      taskTracker,
       (bindings) => this.appStore.resolveSecretBindings(bindings),
       () => this.appStore.getAllSecretValues(),
       sharedSkillsDir,
@@ -92,6 +123,31 @@ export class Orchestrator {
     // Create memory store
     const agentsDir = join(app.getPath('userData'), 'agents');
     this.memoryStore = new FileMemoryStore(agentsDir);
+
+    // Create team system services
+    const teamDir = join(app.getPath('userData'), 'team');
+    this.taskStore = new FileTaskStore(teamDir);
+    this.communicationHub = new FileCommunicationHub(teamDir, this.eventBus);
+    this.relationshipStore = new FileRelationshipStore(teamDir);
+    this.statsStore = new FileStatsStore(teamDir);
+    this.soulManager = new SoulManager(agentsDir, this.eventBus);
+    this.taskAssigner = new SmartTaskAssigner();
+    this.taskScheduler = new TaskScheduler(this.taskStore, this.eventBus);
+    this.selfImprovement = new SelfImprovementEngine(
+      this.taskStore,
+      this.statsStore,
+      this.soulManager,
+      this.eventBus,
+    );
+    this.inboxWatcher = new InboxWatcher(agentsDir, this.taskStore, this.eventBus);
+    this.teamEventHandler = new TeamEventHandler(
+      this.eventBus,
+      this.statsStore,
+      this.relationshipStore,
+      this.taskStore,
+      this.taskAssigner,
+      () => this.agentManager.list().map((a) => a.profile),
+    );
 
     // Bootstrap shared skills (creates directory + default skills if missing)
     this.bootstrapSharedSkills(sharedSkillsDir).catch(err =>
@@ -223,6 +279,29 @@ export class Orchestrator {
     this.eventBus.on('agent:responseComplete', (data: { agentId: string; text: string }) => {
       this.handleResponseComplete(data.agentId, data.text);
     });
+
+    // Team events → renderer
+    this.eventBus.on('task:created', (data) => {
+      this.sendToRenderer('tasks:created', data);
+    });
+    this.eventBus.on('task:updated', (data) => {
+      this.sendToRenderer('tasks:updated', data);
+    });
+    this.eventBus.on('task:completed', (data) => {
+      this.sendToRenderer('tasks:completed', data);
+    });
+    this.eventBus.on('stats:updated', (data) => {
+      this.sendToRenderer('stats:updated', data);
+    });
+    this.eventBus.on('soul:evolved', (data) => {
+      this.sendToRenderer('soul:evolved', data);
+    });
+    this.eventBus.on('message:received', (data) => {
+      this.sendToRenderer('message:received', data);
+    });
+    this.eventBus.on('trust:updated', (data) => {
+      this.sendToRenderer('trust:updated', data);
+    });
   }
 
   initVoice(): void {
@@ -247,29 +326,29 @@ export class Orchestrator {
     this.syncAgentNames();
   }
 
+  /** Provider registries — adding a new provider is a data change, not a code change (OCP) */
+  private readonly sttFactories: Record<string, (key: string, model: string) => ISTTProvider> = {
+    openai: (key, model) => new WhisperSTTProvider(key, model),
+    elevenlabs: (key, model) => new ElevenLabsSTTProvider(key, model),
+  };
+
+  private readonly ttsFactories: Record<string, (key: string) => ITTSProvider> = {
+    openai: (key) => new OpenAITTSProvider(key),
+    elevenlabs: (key) => new ElevenLabsTTSProvider(key),
+  };
+
   private createSTTProvider(type: STTProviderType): ISTTProvider | null {
     const key = this.appStore.getApiKey(type);
     if (!key) return null;
-
-    const model = this.config.sttModel;
-    switch (type) {
-      case 'openai':
-        return new WhisperSTTProvider(key, model);
-      case 'elevenlabs':
-        return new ElevenLabsSTTProvider(key, model);
-    }
+    const factory = this.sttFactories[type];
+    return factory ? factory(key, this.config.sttModel) : null;
   }
 
   private createTTSProvider(type: TTSProviderType): ITTSProvider | null {
     const key = this.appStore.getApiKey(type);
     if (!key) return null;
-
-    switch (type) {
-      case 'openai':
-        return new OpenAITTSProvider(key);
-      case 'elevenlabs':
-        return new ElevenLabsTTSProvider(key);
-    }
+    const factory = this.ttsFactories[type];
+    return factory ? factory(key) : null;
   }
 
   syncAgentNames(): void {
@@ -287,105 +366,8 @@ export class Orchestrator {
     }
   }
 
-  /** Speak a short acknowledgment phrase — bypasses length check and markdown stripping */
-  private async speakAck(agentId: string, ackText: string): Promise<void> {
-    if (!this.voiceService) return;
-
-    const agent = this.agentManager.get(agentId);
-    if (!agent) return;
-
-    try {
-      const voiceId = this.resolveVoiceId(agent);
-      log.info(`TTS ack: "${ackText}" (voice=${voiceId})`, undefined, agentId);
-      const audioPath = await this.voiceService.synthesize(ackText, voiceId, agentId);
-
-      const audioBuffer = await readFile(audioPath);
-      const base64 = audioBuffer.toString('base64');
-      this.sendToRenderer('voice:ttsAudio', {
-        agentId,
-        audioData: `data:audio/mpeg;base64,${base64}`,
-      });
-    } catch (error) {
-      log.error(`TTS ack failed: ${String(error)}`, undefined, agentId);
-    }
-  }
-
-  /** Speak a short progress update for long-running tasks */
-  private async speakProgress(agentId: string, type: string, summary: string): Promise<void> {
-    if (!this.voiceService) return;
-
-    const agent = this.agentManager.get(agentId);
-    if (!agent) return;
-
-    // Build a brief spoken phrase based on progress type
-    let phrase: string;
-    if (type === 'tool-use') {
-      if (summary.toLowerCase().includes('bash')) {
-        phrase = 'Running a command.';
-      } else if (summary.toLowerCase().includes('write') || summary.toLowerCase().includes('edit')) {
-        phrase = 'Writing some code.';
-      } else if (summary.toLowerCase().includes('read') || summary.toLowerCase().includes('glob')) {
-        phrase = 'Reading files.';
-      } else {
-        phrase = 'Still working on it.';
-      }
-    } else {
-      phrase = 'Still thinking about it.';
-    }
-
-    try {
-      const voiceId = this.resolveVoiceId(agent);
-      log.debug(`TTS progress: "${phrase}"`, undefined, agentId);
-      const audioPath = await this.voiceService.synthesize(phrase, voiceId, agentId);
-
-      const audioBuffer = await readFile(audioPath);
-      const base64 = audioBuffer.toString('base64');
-      this.sendToRenderer('voice:ttsAudio', {
-        agentId,
-        audioData: `data:audio/mpeg;base64,${base64}`,
-      });
-    } catch (error) {
-      log.error(`TTS progress failed: ${String(error)}`, undefined, agentId);
-    }
-  }
-
-  /** Speak a funny death notification when an agent crashes */
-  private async speakAgentDeath(agentId: string): Promise<void> {
-    const agent = this.agentManager.get(agentId);
-    const name = agent?.profile.name ?? 'Unknown Agent';
-    const deathPhrase = pickDeathPhrase(name);
-
-    log.info(`Agent death notification: "${deathPhrase}"`, undefined, agentId);
-
-    // Show death message in chat UI
-    this.sendToRenderer('chat:agentAcknowledged', {
-      agentId,
-      agentName: name,
-      agentRuntime: agent?.profile.runtime ?? '',
-      agentColor: agent?.profile.color ?? '#6b7280',
-      ackText: deathPhrase,
-    });
-
-    // Speak the death phrase via TTS
-    if (!this.voiceService || !agent) return;
-
-    try {
-      const voiceId = this.resolveVoiceId(agent);
-      const audioPath = await this.voiceService.synthesize(deathPhrase, voiceId, agentId);
-
-      const audioBuffer = await readFile(audioPath);
-      const base64 = audioBuffer.toString('base64');
-      this.sendToRenderer('voice:ttsAudio', {
-        agentId,
-        audioData: `data:audio/mpeg;base64,${base64}`,
-      });
-    } catch (error) {
-      log.error(`TTS death notification failed: ${String(error)}`, undefined, agentId);
-    }
-  }
-
   /** Resolve the TTS voice ID for an agent, handling provider compatibility */
-  private resolveVoiceId(agent: { profile: { voice: { ttsVoiceId: string } } }): string {
+  private resolveVoiceId(agent: AgentState): string {
     const OPENAI_VOICES = new Set(['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer']);
     const isOpenAI = this.config.ttsProvider === 'openai';
     const agentVoice = agent.profile.voice.ttsVoiceId;
@@ -402,72 +384,102 @@ export class Orchestrator {
     return this.config.ttsVoice;
   }
 
-  /** Synthesize TTS audio from a completed agent response and send to renderer */
-  private async handleResponseComplete(agentId: string, responseText: string): Promise<void> {
+  /** Core TTS pipeline: synthesize text → read file → base64 → send to renderer.
+   *  Used by all TTS callers (ack, progress, death, response complete, status messages). */
+  async speakToRenderer(agentId: string, text: string): Promise<void> {
     if (!this.voiceService) return;
 
     const agent = this.agentManager.get(agentId);
     if (!agent) return;
 
-    let text = responseText;
-
-    // Skip trivial output
-    if (!text || text.length < 10) {
-      log.debug(`Skipping TTS: output too short (${text.length} chars)`, undefined, agentId);
-      return;
-    }
-
-    // Strip markdown formatting before TTS — prevents reading "hashtag hashtag" etc.
-    text = this.stripMarkdownForTTS(text);
-
-    // Truncate for TTS (avoid reading huge code blocks aloud)
-    if (text.length > 1500) text = text.slice(0, 1500) + '...';
-
-    log.debug(`TTS text: "${text.slice(0, 100)}..."`, undefined, agentId);
-
     try {
       const voiceId = this.resolveVoiceId(agent);
-
-      log.info(`Synthesizing TTS (${text.length} chars, voice=${voiceId})`, undefined, agentId);
       const audioPath = await this.voiceService.synthesize(text, voiceId, agentId);
-
       const audioBuffer = await readFile(audioPath);
-      const base64 = audioBuffer.toString('base64');
-      log.info(`Sending TTS audio to renderer (${Math.round(audioBuffer.length / 1024)}KB)`, undefined, agentId);
       this.sendToRenderer('voice:ttsAudio', {
         agentId,
-        audioData: `data:audio/mpeg;base64,${base64}`,
+        audioData: `data:audio/mpeg;base64,${audioBuffer.toString('base64')}`,
       });
     } catch (error) {
-      log.error(`TTS synthesis failed: ${String(error)}`, undefined, agentId);
+      log.error(`TTS failed: ${String(error)}`, undefined, agentId);
     }
+  }
+
+  /** Speak a short acknowledgment phrase */
+  private async speakAck(agentId: string, ackText: string): Promise<void> {
+    log.info(`TTS ack: "${ackText}"`, undefined, agentId);
+    await this.speakToRenderer(agentId, ackText);
+  }
+
+  /** Data-driven tool-use → TTS phrase mappings (OCP: add entries to extend) */
+  private readonly progressPhrases: Array<{ pattern: RegExp; phrase: string }> = [
+    { pattern: /bash|command|shell/i, phrase: 'Running a command.' },
+    { pattern: /write|edit|create/i, phrase: 'Writing some code.' },
+    { pattern: /read|glob|search|grep/i, phrase: 'Reading files.' },
+    { pattern: /web|fetch|browse/i, phrase: 'Searching the web.' },
+    { pattern: /test|spec|assert/i, phrase: 'Running tests.' },
+  ];
+
+  /** Speak a short progress update for long-running tasks */
+  private async speakProgress(agentId: string, type: string, summary: string): Promise<void> {
+    let phrase = 'Still thinking about it.';
+    if (type === 'tool-use') {
+      const match = this.progressPhrases.find(p => p.pattern.test(summary));
+      phrase = match?.phrase ?? 'Still working on it.';
+    }
+    log.debug(`TTS progress: "${phrase}"`, undefined, agentId);
+    await this.speakToRenderer(agentId, phrase);
+  }
+
+  /** Speak a funny death notification when an agent crashes */
+  private async speakAgentDeath(agentId: string): Promise<void> {
+    const agent = this.agentManager.get(agentId);
+    const name = agent?.profile.name ?? 'Unknown Agent';
+    const deathPhrase = pickDeathPhrase(name);
+
+    log.info(`Agent death notification: "${deathPhrase}"`, undefined, agentId);
+
+    this.sendToRenderer('chat:agentAcknowledged', {
+      agentId,
+      agentName: name,
+      agentRuntime: agent?.profile.runtime ?? '',
+      agentColor: agent?.profile.color ?? '#6b7280',
+      ackText: deathPhrase,
+    });
+
+    await this.speakToRenderer(agentId, deathPhrase);
   }
 
   /** Strip markdown formatting so TTS reads natural text, not syntax */
   private stripMarkdownForTTS(text: string): string {
     return text
-      // Remove code blocks (```...```) — don't read code aloud
       .replace(/```[\s\S]*?```/g, ' (code block omitted) ')
-      // Remove inline code
       .replace(/`([^`]+)`/g, '$1')
-      // Remove headers (# ## ### etc.)
       .replace(/^#{1,6}\s+/gm, '')
-      // Remove bold/italic markers
       .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
       .replace(/_{1,3}([^_]+)_{1,3}/g, '$1')
-      // Remove links — keep text, drop URL
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      // Remove images
       .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-      // Remove horizontal rules
       .replace(/^[-*_]{3,}\s*$/gm, '')
-      // Remove bullet markers
       .replace(/^\s*[-*+]\s+/gm, '')
-      // Remove numbered list markers
       .replace(/^\s*\d+\.\s+/gm, '')
-      // Collapse multiple newlines
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+  }
+
+  /** Synthesize TTS audio from a completed agent response and send to renderer */
+  private async handleResponseComplete(agentId: string, responseText: string): Promise<void> {
+    if (!this.voiceService) return;
+    if (!responseText || responseText.length < 10) {
+      log.debug(`Skipping TTS: output too short (${responseText.length} chars)`, undefined, agentId);
+      return;
+    }
+
+    let text = this.stripMarkdownForTTS(responseText);
+    if (text.length > 1500) text = text.slice(0, 1500) + '...';
+
+    log.info(`Synthesizing TTS (${text.length} chars)`, undefined, agentId);
+    await this.speakToRenderer(agentId, text);
   }
 
   async startAutoStartAgents(): Promise<void> {
@@ -481,6 +493,14 @@ export class Orchestrator {
 
     // Initial scan for background services agents may have left running
     this.scanServices();
+
+    // Start team services
+    this.teamEventHandler.start();
+    this.taskScheduler.start();
+    for (const agent of agents) {
+      this.inboxWatcher.watchAgent(agent.profile.id);
+    }
+    log.info('Team services started');
   }
 
   /** Scan all agent workspaces for .services.json and update the registry */
@@ -495,6 +515,9 @@ export class Orchestrator {
   }
 
   shutdown(): void {
+    this.teamEventHandler.stop();
+    this.taskScheduler.stop();
+    this.inboxWatcher.stopAll();
     this.agentManager.stopHealthCheck();
     this.agentManager.stopAll();
     this.serviceRegistry.stopAll();

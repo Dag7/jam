@@ -1,21 +1,18 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
 import type {
-  IAgentRuntime,
   SpawnConfig,
   AgentOutput,
   InputContext,
   AgentProfile,
   ExecutionResult,
-  ExecutionOptions,
   RuntimeMetadata,
 } from '@jam/core';
-import { createLogger } from '@jam/core';
-import { stripAnsiSimple, buildCleanEnv } from '../utils.js';
+import { stripAnsiSimple } from '../utils.js';
+import { BaseAgentRuntime } from './base-runtime.js';
+import { ThrottledOutputStrategy } from './output-strategy.js';
 
-const log = createLogger('OpenCodeRuntime');
-
-export class OpenCodeRuntime implements IAgentRuntime {
+export class OpenCodeRuntime extends BaseAgentRuntime {
   readonly runtimeId = 'opencode';
 
   readonly metadata: RuntimeMetadata = {
@@ -39,18 +36,11 @@ export class OpenCodeRuntime implements IAgentRuntime {
   };
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {
-    const args: string[] = [];
     const env: Record<string, string> = {};
-
     if (profile.model) {
       env.OPENCODE_MODEL = profile.model;
     }
-
-    return {
-      command: 'opencode',
-      args,
-      env,
-    };
+    return { command: 'opencode', args: [], env };
   }
 
   parseOutput(raw: string): AgentOutput {
@@ -65,105 +55,54 @@ export class OpenCodeRuntime implements IAgentRuntime {
 
   formatInput(text: string, context?: InputContext): string {
     let input = text;
-
     if (context?.sharedContext) {
       input = `[Shared context: ${context.sharedContext}]\n\n${input}`;
     }
-
     return input;
   }
 
-  async execute(profile: AgentProfile, text: string, options?: ExecutionOptions): Promise<ExecutionResult> {
-    const runtimeEnv: Record<string, string> = {};
+  // --- Template method hooks ---
+
+  protected getCommand(): string {
+    return 'opencode';
+  }
+
+  protected buildExecuteArgs(): string[] {
+    return ['run'];
+  }
+
+  protected buildExecuteEnv(profile: AgentProfile): Record<string, string> {
+    const env: Record<string, string> = {};
     if (profile.model) {
-      runtimeEnv.OPENCODE_MODEL = profile.model;
+      env.OPENCODE_MODEL = profile.model;
+    }
+    return env;
+  }
+
+  /** OpenCode receives system prompt inline via stdin */
+  protected writeInput(child: ChildProcess, profile: AgentProfile, text: string): void {
+    const stdinText = profile.systemPrompt
+      ? `[${profile.systemPrompt}]\n\n${text}`
+      : `[You are ${profile.name}. When asked who you are, respond as ${profile.name}.]\n\n${text}`;
+    child.stdin!.write(stdinText);
+    child.stdin!.end();
+  }
+
+  protected createOutputStrategy() {
+    return new ThrottledOutputStrategy((cleaned) =>
+      cleaned.includes('executing') || cleaned.includes('running')
+        ? 'tool-use'
+        : 'text',
+    );
+  }
+
+  protected parseExecutionOutput(stdout: string, stderr: string, code: number): ExecutionResult {
+    if (code !== 0) {
+      const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
+      const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
+      return { success: false, text: '', error: errMsg };
     }
 
-    const env = buildCleanEnv({ ...runtimeEnv, ...options?.env });
-
-    log.info(`Executing: opencode run <<< "${text.slice(0, 60)}"`, undefined, profile.id);
-
-    return new Promise((resolve) => {
-      const child = spawn('opencode', ['run'], {
-        cwd: options?.cwd ?? profile.cwd ?? process.env.HOME ?? '/',
-        env,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-
-      // Pipe text via stdin — use enriched prompt directly if present (from AgentContextBuilder)
-      const stdinText = profile.systemPrompt
-        ? `[${profile.systemPrompt}]\n\n${text}`
-        : `[You are ${profile.name}. When asked who you are, respond as ${profile.name}.]\n\n${text}`;
-      child.stdin.write(stdinText);
-      child.stdin.end();
-
-      let stdout = '';
-      let stderr = '';
-      let lastProgressEmit = 0;
-      let firstChunkSent = false;
-
-      // Abort signal support
-      if (options?.signal) {
-        options.signal.addEventListener('abort', () => {
-          child.kill('SIGTERM');
-        }, { once: true });
-      }
-
-      child.stdout.on('data', (chunk: Buffer) => {
-        const chunkStr = chunk.toString();
-        stdout += chunkStr;
-
-        // Stream ANSI-stripped output for streamdown rendering
-        if (options?.onOutput) {
-          options.onOutput(stripAnsiSimple(chunkStr));
-        }
-
-        // Emit throttled progress events from raw output
-        if (options?.onProgress) {
-          // Emit immediately on first output so status isn't stuck on "initializing"
-          if (!firstChunkSent) {
-            firstChunkSent = true;
-            lastProgressEmit = Date.now();
-            options.onProgress({ type: 'thinking', summary: 'Processing request...' });
-          }
-
-          const now = Date.now();
-          if (now - lastProgressEmit > 5000) {
-            lastProgressEmit = now;
-            const cleaned = stripAnsiSimple(chunkStr).trim();
-            if (cleaned.length > 0) {
-              const type = cleaned.includes('executing') || cleaned.includes('running')
-                ? 'tool-use' as const
-                : 'text' as const;
-              options.onProgress({ type, summary: cleaned.slice(0, 80) });
-            }
-          }
-        }
-      });
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
-      });
-
-      child.on('close', (code) => {
-        if (code !== 0) {
-          const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
-          const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
-          log.error(`Execute failed (exit ${code}): ${errMsg}`, undefined, profile.id);
-          resolve({ success: false, text: '', error: errMsg });
-          return;
-        }
-
-        // Strip ANSI and return
-        const cleaned = stripAnsiSimple(stdout).trim();
-        log.info(`Execute complete: ${cleaned.length} chars`, undefined, profile.id);
-        resolve({ success: true, text: cleaned });
-      });
-
-      child.on('error', (err) => {
-        log.error(`Spawn error: ${String(err)}`, undefined, profile.id);
-        resolve({ success: false, text: '', error: String(err) });
-      });
-    });
+    return { success: true, text: stripAnsiSimple(stdout).trim() };
   }
 }

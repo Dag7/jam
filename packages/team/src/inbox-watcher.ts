@@ -1,0 +1,101 @@
+import { watch, type FSWatcher } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { ITaskStore, IEventBus } from '@jam/core';
+import { Events } from '@jam/core';
+
+/**
+ * Watches agent inbox files for new task requests.
+ * Agents can self-create or delegate tasks by appending JSONL to
+ * `{baseDir}/{agentId}/inbox.jsonl`.
+ */
+export class InboxWatcher {
+  private watchers: Map<string, FSWatcher> = new Map();
+  private offsets: Map<string, number> = new Map();
+
+  constructor(
+    private readonly baseDir: string,
+    private readonly taskStore: ITaskStore,
+    private readonly eventBus: IEventBus,
+  ) {}
+
+  watchAgent(agentId: string): void {
+    if (this.watchers.has(agentId)) return;
+
+    const inboxPath = join(this.baseDir, agentId, 'inbox.jsonl');
+    this.offsets.set(inboxPath, 0);
+
+    try {
+      const watcher = watch(inboxPath, () => {
+        this.processInbox(agentId, inboxPath);
+      });
+      this.watchers.set(agentId, watcher);
+    } catch {
+      // File may not exist yet — that's fine, we'll create on first write
+    }
+  }
+
+  unwatchAgent(agentId: string): void {
+    const watcher = this.watchers.get(agentId);
+    if (watcher) {
+      watcher.close();
+      this.watchers.delete(agentId);
+    }
+  }
+
+  stopAll(): void {
+    for (const [id] of this.watchers) {
+      this.unwatchAgent(id);
+    }
+  }
+
+  private async processInbox(
+    agentId: string,
+    inboxPath: string,
+  ): Promise<void> {
+    try {
+      const content = await readFile(inboxPath, 'utf-8');
+      const offset = this.offsets.get(inboxPath) ?? 0;
+      const newContent = content.slice(offset);
+      this.offsets.set(inboxPath, content.length);
+
+      const lines = newContent.split('\n').filter((l) => l.trim());
+
+      for (const line of lines) {
+        try {
+          const request = JSON.parse(line) as {
+            title: string;
+            description: string;
+            priority?: string;
+            assignedTo?: string;
+            tags?: string[];
+          };
+
+          const task = await this.taskStore.create({
+            title: request.title,
+            description: request.description || '',
+            status: 'pending',
+            priority: (request.priority as 'low' | 'normal' | 'high' | 'critical') ?? 'normal',
+            source: 'agent',
+            createdBy: agentId,
+            assignedTo: request.assignedTo,
+            createdAt: new Date().toISOString(),
+            tags: request.tags ?? [],
+          });
+
+          this.eventBus.emit(Events.TASK_CREATED, { task });
+        } catch {
+          // skip malformed lines
+        }
+      }
+
+      // Clear processed inbox
+      if (lines.length > 0) {
+        await writeFile(inboxPath, '', 'utf-8');
+        this.offsets.set(inboxPath, 0);
+      }
+    } catch {
+      // inbox file may not exist yet
+    }
+  }
+}

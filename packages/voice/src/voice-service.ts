@@ -15,6 +15,8 @@ export interface VoiceServiceConfig {
   ttsProvider: ITTSProvider;
   eventBus: IEventBus;
   audioCacheDir: string;
+  /** Optional injected command parser — defaults to new instance if not provided */
+  commandParser?: CommandParser;
 }
 
 export class VoiceService {
@@ -28,7 +30,7 @@ export class VoiceService {
     this.sttProvider = config.sttProvider;
     this.ttsProvider = config.ttsProvider;
     this.eventBus = config.eventBus;
-    this.commandParser = new CommandParser();
+    this.commandParser = config.commandParser ?? new CommandParser();
     this.audioCacheDir = config.audioCacheDir;
   }
 

@@ -23,6 +23,7 @@
     "@jam/core": "workspace:*",
     "@jam/eventbus": "workspace:*",
     "@jam/memory": "workspace:*",
+    "@jam/team": "workspace:*",
     "@jam/voice": "workspace:*",
     "@streamdown/code": "^1.0.2",
     "@xterm/addon-fit": "^0.10.0",

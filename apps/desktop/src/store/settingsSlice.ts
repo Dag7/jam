@@ -8,13 +8,13 @@ export interface SettingsSlice {
   settings: {
     voiceMode: VoiceMode;
     sidebarCollapsed: boolean;
-    currentView: 'stage' | 'settings';
+    currentView: 'stage' | 'settings' | 'dashboard';
     viewMode: ViewMode;
   };
 
   setSidebarCollapsed: (collapsed: boolean) => void;
   setVoiceMode: (mode: VoiceMode) => void;
-  setCurrentView: (view: 'stage' | 'settings') => void;
+  setCurrentView: (view: 'stage' | 'settings' | 'dashboard') => void;
   setViewMode: (mode: ViewMode) => void;
 }
 
