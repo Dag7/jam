@@ -11,6 +11,7 @@ export const ChatContainer: React.FC = () => {
   const hasMoreHistory = useAppStore((s) => s.hasMoreHistory);
   const threadAgentId = useAppStore((s) => s.threadAgentId);
   const setThreadAgent = useAppStore((s) => s.setThreadAgent);
+  const deleteMessage = useAppStore((s) => s.deleteMessage);
   const loadingRef = useRef(false);
 
   const handleLoadMore = useCallback(async () => {
@@ -69,6 +70,7 @@ export const ChatContainer: React.FC = () => {
       hasMoreHistory={hasMoreHistory}
       onLoadMore={handleLoadMore}
       onViewOutput={handleViewOutput}
+      onDeleteMessage={deleteMessage}
       threadAgentId={threadAgentId}
     />
   );

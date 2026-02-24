@@ -9,6 +9,7 @@ interface ChatViewProps {
   hasMoreHistory?: boolean;
   onLoadMore?: () => void;
   onViewOutput?: (agentId: string) => void;
+  onDeleteMessage?: (id: string) => void;
   threadAgentId?: string | null;
 }
 
@@ -18,6 +19,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   hasMoreHistory,
   onLoadMore,
   onViewOutput,
+  onDeleteMessage,
   threadAgentId,
 }) => {
   const {
@@ -145,6 +147,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             message={msg}
             onViewOutput={onViewOutput}
             isThreadOpen={!!msg.agentId && msg.agentId === threadAgentId}
+            onDelete={onDeleteMessage}
           />
         ))}
 

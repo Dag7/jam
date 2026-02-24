@@ -14,6 +14,7 @@ export const AgentChatContainer: React.FC<AgentChatContainerProps> = ({
   agentId,
 }) => {
   const messages = useAppStore((s) => s.messages);
+  const deleteMessage = useAppStore((s) => s.deleteMessage);
   const prevScrollHeightRef = useRef(0);
   const wasLoadingRef = useRef(false);
   const loadingRef = useRef(false);
@@ -163,7 +164,7 @@ export const AgentChatContainer: React.FC<AgentChatContainerProps> = ({
           </div>
         )}
         {agentMessages.map((msg) => (
-          <ChatMessageView key={msg.id} message={msg} />
+          <ChatMessageView key={msg.id} message={msg} onDelete={deleteMessage} />
         ))}
 
         {/* Scroll anchor */}
