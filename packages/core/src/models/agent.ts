@@ -48,6 +48,8 @@ export interface AgentProfile {
   env?: Record<string, string>;
   /** Secrets bound to this agent, injected as env vars at spawn time */
   secretBindings?: SecretBinding[];
+  /** System agents are bootstrapped by the app and cannot be deleted/edited */
+  isSystem?: boolean;
 }
 
 export interface AgentState {

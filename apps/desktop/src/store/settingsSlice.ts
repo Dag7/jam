@@ -7,14 +7,14 @@ export type ViewMode = 'chat' | 'stage' | 'compact';
 export interface SettingsSlice {
   settings: {
     voiceMode: VoiceMode;
-    sidebarCollapsed: boolean;
-    currentView: 'stage' | 'settings' | 'dashboard';
+    navExpanded: boolean;
+    logsDrawerOpen: boolean;
     viewMode: ViewMode;
   };
 
-  setSidebarCollapsed: (collapsed: boolean) => void;
+  setNavExpanded: (expanded: boolean) => void;
+  setLogsDrawerOpen: (open: boolean) => void;
   setVoiceMode: (mode: VoiceMode) => void;
-  setCurrentView: (view: 'stage' | 'settings' | 'dashboard') => void;
   setViewMode: (mode: ViewMode) => void;
 }
 
@@ -26,24 +26,24 @@ export const createSettingsSlice: StateCreator<
 > = (set) => ({
   settings: {
     voiceMode: 'always-listening',
-    sidebarCollapsed: false,
-    currentView: 'stage',
+    navExpanded: false,
+    logsDrawerOpen: false,
     viewMode: 'chat',
   },
 
-  setSidebarCollapsed: (collapsed) =>
+  setNavExpanded: (expanded) =>
     set((state) => ({
-      settings: { ...state.settings, sidebarCollapsed: collapsed },
+      settings: { ...state.settings, navExpanded: expanded },
+    })),
+
+  setLogsDrawerOpen: (open) =>
+    set((state) => ({
+      settings: { ...state.settings, logsDrawerOpen: open },
     })),
 
   setVoiceMode: (mode) =>
     set((state) => ({
       settings: { ...state.settings, voiceMode: mode },
-    })),
-
-  setCurrentView: (view) =>
-    set((state) => ({
-      settings: { ...state.settings, currentView: view },
     })),
 
   setViewMode: (mode) =>

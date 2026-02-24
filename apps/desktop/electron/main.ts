@@ -206,6 +206,8 @@ function registerIpcHandlers(): void {
   });
   registerTaskHandlers({
     taskStore: orchestrator.taskStore,
+    scheduleStore: orchestrator.scheduleStore,
+    taskExecutor: orchestrator.taskExecutor,
   });
   registerTeamHandlers({
     communicationHub: orchestrator.communicationHub,
@@ -213,6 +215,8 @@ function registerIpcHandlers(): void {
     statsStore: orchestrator.statsStore,
     soulManager: orchestrator.soulManager,
     selfImprovement: orchestrator.selfImprovement,
+    scheduleStore: orchestrator.scheduleStore,
+    codeImprovement: orchestrator.codeImprovement,
   });
 
   // App + Logs (trivial, kept inline)

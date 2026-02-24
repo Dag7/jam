@@ -22,8 +22,8 @@ export class SmartTaskAssigner implements ITaskAssigner {
   ): string | null {
     if (agents.length === 0) return null;
 
-    let bestAgent: string | null = null;
-    let bestScore = -Infinity;
+    // Collect all candidates with scores for fair tiebreaking
+    const candidates: Array<{ id: string; score: number }> = [];
 
     for (const agent of agents) {
       const agentStats = stats.get(agent.id);
@@ -61,12 +61,14 @@ export class SmartTaskAssigner implements ITaskAssigner {
         score += Math.min(10, agentStats.streaks.current * 2);
       }
 
-      if (score > bestScore) {
-        bestScore = score;
-        bestAgent = agent.id;
-      }
+      candidates.push({ id: agent.id, score });
     }
 
-    return bestAgent;
+    if (candidates.length === 0) return null;
+
+    // Find max score, then randomly pick among tied candidates
+    const maxScore = Math.max(...candidates.map((c) => c.score));
+    const tied = candidates.filter((c) => c.score === maxScore);
+    return tied[Math.floor(Math.random() * tied.length)].id;
   }
 }

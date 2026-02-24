@@ -6,6 +6,7 @@ import { Events } from '@jam/core';
 function defaultSoul(): SoulStructure {
   return {
     persona: '',
+    role: '',
     traits: {},
     goals: [],
     strengths: [],
@@ -32,6 +33,7 @@ function parseSoulMd(content: string): SoulStructure {
       if (k === 'version') soul.version = parseInt(value, 10) || 1;
       else if (k === 'lastReflection') soul.lastReflection = value;
       else if (k === 'persona') soul.persona = value;
+      else if (k === 'role') soul.role = value;
     }
   }
 
@@ -81,6 +83,14 @@ function parseSoulMd(content: string): SoulStructure {
     }
   }
 
+  // If no role in frontmatter, try to extract from body
+  if (!soul.role) {
+    const roleSection = body.match(/##\s+Role\n([\s\S]*?)(?=\n##|$)/);
+    if (roleSection) {
+      soul.role = roleSection[1].trim();
+    }
+  }
+
   return soul;
 }
 
@@ -93,8 +103,15 @@ function serializeSoulMd(soul: SoulStructure): string {
   lines.push(`version: ${soul.version}`);
   lines.push(`lastReflection: ${soul.lastReflection}`);
   if (soul.persona) lines.push(`persona: ${soul.persona}`);
+  if (soul.role) lines.push(`role: ${soul.role}`);
   lines.push('---');
   lines.push('');
+
+  if (soul.role) {
+    lines.push('## Role');
+    lines.push(soul.role);
+    lines.push('');
+  }
 
   if (soul.persona) {
     lines.push('## Persona');
@@ -167,10 +184,14 @@ export class SoulManager {
       newGoals?: string[];
       newStrengths?: string[];
       newWeaknesses?: string[];
+      role?: string;
     },
   ): Promise<SoulStructure> {
     const soul = await this.load(agentId);
 
+    if (reflections.role) {
+      soul.role = reflections.role;
+    }
     if (reflections.newLearnings) {
       soul.learnings.push(...reflections.newLearnings);
     }

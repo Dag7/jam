@@ -45,6 +45,8 @@ export function useTasks() {
     return result;
   }, [tasks, taskFilter]);
 
+  const removeTask = useAppStore((s) => s.removeTask);
+
   const createTask = useCallback(
     async (input: { title: string; description: string; priority?: string; assignedTo?: string; tags?: string[] }) => {
       return window.jam.tasks.create(input);
@@ -59,11 +61,29 @@ export function useTasks() {
     [],
   );
 
+  const deleteTask = useCallback(
+    async (taskId: string) => {
+      const result = await window.jam.tasks.delete(taskId);
+      if (result.success) removeTask(taskId);
+      return result;
+    },
+    [removeTask],
+  );
+
+  const bulkDeleteTasks = useCallback(
+    async (taskIds: string[]) => {
+      await Promise.all(taskIds.map((id) => deleteTask(id)));
+    },
+    [deleteTask],
+  );
+
   return {
     tasks: Object.values(tasks),
     filteredTasks,
     createTask,
     updateTask: updateTaskStatus,
+    deleteTask,
+    bulkDeleteTasks,
     setFilter: setTaskFilter,
     filter: taskFilter,
     isLoading,

@@ -29,6 +29,7 @@ export interface AgentEntry {
     allowInterrupts?: boolean;
     cwd?: string;
     secretBindings?: Array<{ secretId: string; envVarName: string }>;
+    isSystem?: boolean;
   };
   status: string;
   visualState: AgentVisualState;

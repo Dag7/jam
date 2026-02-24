@@ -3,6 +3,7 @@ import { TraitRadar } from '@/components/charts/TraitRadar';
 interface SoulViewProps {
   soul: {
     persona: string;
+    role: string;
     traits: Record<string, number>;
     goals: string[];
     strengths: string[];
@@ -22,6 +23,14 @@ export function SoulView({ soul }: SoulViewProps) {
           v{soul.version}
         </span>
       </div>
+
+      {/* Role */}
+      {soul.role && (
+        <div className="bg-zinc-800/50 rounded-lg px-3 py-2 border border-zinc-700/50">
+          <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-0.5">Role</h4>
+          <p className="text-sm font-medium text-zinc-200">{soul.role}</p>
+        </div>
+      )}
 
       {/* Persona */}
       <div>

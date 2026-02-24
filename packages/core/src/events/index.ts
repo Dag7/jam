@@ -119,6 +119,24 @@ export interface StatsUpdatedEvent {
   stats: AgentStats;
 }
 
+// Code improvement events
+export interface CodeImprovementProposedEvent {
+  improvement: import('../models/code-improvement.js').CodeImprovement;
+}
+
+export interface CodeImprovementCompletedEvent {
+  improvement: import('../models/code-improvement.js').CodeImprovement;
+}
+
+export interface CodeImprovementFailedEvent {
+  improvement: import('../models/code-improvement.js').CodeImprovement;
+  error: string;
+}
+
+export interface CodeImprovementRolledBackEvent {
+  improvement: import('../models/code-improvement.js').CodeImprovement;
+}
+
 export const Events = {
   AGENT_CREATED: 'agent:created',
   AGENT_DELETED: 'agent:deleted',
@@ -140,4 +158,8 @@ export const Events = {
   TRUST_UPDATED: 'trust:updated',
   SOUL_EVOLVED: 'soul:evolved',
   STATS_UPDATED: 'stats:updated',
+  CODE_PROPOSED: 'code:proposed',
+  CODE_IMPROVED: 'code:improved',
+  CODE_FAILED: 'code:failed',
+  CODE_ROLLED_BACK: 'code:rolledback',
 } as const;

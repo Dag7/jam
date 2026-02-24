@@ -16,6 +16,13 @@ export interface ChatMessage {
   source: 'text' | 'voice';
   timestamp: number;
   error?: string;
+  /** System task result — shown as compact notification with expandable output */
+  taskResult?: {
+    taskId: string;
+    title: string;
+    success: boolean;
+    summary: string;
+  };
 }
 
 export interface ChatSlice {

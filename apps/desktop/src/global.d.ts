@@ -209,8 +209,22 @@ export interface JamAPI {
       logFile?: string;
       startedAt: string;
       alive?: boolean;
+      command?: string;
+      cwd?: string;
+    }>>;
+    listForAgent: (agentId: string) => Promise<Array<{
+      agentId: string;
+      pid: number;
+      port?: number;
+      name: string;
+      logFile?: string;
+      startedAt: string;
+      alive?: boolean;
+      command?: string;
+      cwd?: string;
     }>>;
     stop: (pid: number) => Promise<{ success: boolean }>;
+    restart: (serviceName: string) => Promise<{ success: boolean; pid?: number; error?: string }>;
     openUrl: (port: number) => Promise<{ success: boolean }>;
   };
 
@@ -287,6 +301,15 @@ export interface JamAPI {
         command: string;
       }) => void,
     ) => () => void;
+    onSystemNotification: (
+      callback: (data: {
+        taskId: string;
+        agentId: string;
+        title: string;
+        success: boolean;
+        summary: string;
+      }) => void,
+    ) => () => void;
   };
 
   tasks: {
@@ -304,6 +327,17 @@ export interface JamAPI {
       updates: Record<string, unknown>,
     ) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
     delete: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+    cancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+    createRecurring: (input: {
+      title: string;
+      description: string;
+      pattern: { cron?: string; intervalMs?: number };
+      priority?: string;
+      assignedTo?: string;
+      tags?: string[];
+      source?: string;
+      createdBy?: string;
+    }) => Promise<{ success: boolean; schedule?: Record<string, unknown>; error?: string }>;
     onCreated: (callback: (data: { task: Record<string, unknown> }) => void) => () => void;
     onUpdated: (callback: (data: { task: Record<string, unknown> }) => void) => () => void;
     onCompleted: (callback: (data: { task: Record<string, unknown>; durationMs: number }) => void) => () => void;
@@ -351,6 +385,31 @@ export interface JamAPI {
       onEvolved: (
         callback: (data: { agentId: string; soul: Record<string, unknown>; version: number }) => void,
       ) => () => void;
+    };
+    schedules: {
+      list: () => Promise<Array<Record<string, unknown>>>;
+      create: (schedule: {
+        name: string;
+        pattern: Record<string, unknown>;
+        taskTemplate: Record<string, unknown>;
+      }) => Promise<{ success: boolean; schedule?: Record<string, unknown>; error?: string }>;
+      update: (id: string, updates: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+      delete: (id: string) => Promise<{ success: boolean; error?: string }>;
+    };
+    improvements: {
+      list: (filter?: Record<string, unknown>) => Promise<Array<Record<string, unknown>>>;
+      propose: (agentId: string, title: string, description: string) => Promise<{
+        success: boolean;
+        improvement?: Record<string, unknown>;
+        error?: string;
+      }>;
+      execute: (improvementId: string) => Promise<{
+        success: boolean;
+        improvement?: Record<string, unknown>;
+        error?: string;
+      }>;
+      rollback: (improvementId: string) => Promise<{ success: boolean; error?: string }>;
+      health: () => Promise<{ healthy: boolean; lastCheck: string; issues: string[] }>;
     };
   };
 }

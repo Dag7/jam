@@ -4,21 +4,29 @@ import type { ServiceRegistry } from '@jam/agent-runtime';
 /** Narrow dependency interface — only what service handlers need */
 export interface ServiceHandlerDeps {
   serviceRegistry: ServiceRegistry;
-  scanServices: () => void;
+  scanServices: () => Promise<void>;
 }
 
 export function registerServiceHandlers(deps: ServiceHandlerDeps): void {
   const { serviceRegistry, scanServices } = deps;
 
   ipcMain.handle('services:list', async () => {
-    scanServices();
-    await new Promise(r => setTimeout(r, 50));
+    await scanServices();
     return serviceRegistry.list();
   });
 
-  ipcMain.handle('services:stop', (_, pid: number) => {
+  ipcMain.handle('services:listForAgent', async (_, agentId: string) => {
+    await scanServices();
+    return serviceRegistry.listForAgent(agentId);
+  });
+
+  ipcMain.handle('services:stop', async (_, pid: number) => {
     const success = serviceRegistry.stopService(pid);
     return { success };
+  });
+
+  ipcMain.handle('services:restart', async (_, serviceName: string) => {
+    return serviceRegistry.restartService(serviceName);
   });
 
   ipcMain.handle('services:openUrl', (_, port: number) => {

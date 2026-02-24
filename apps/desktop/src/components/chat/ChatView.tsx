@@ -1,5 +1,6 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useCallback, useRef, useEffect } from 'react';
 import { ChatMessageView } from './ChatMessage';
+import { useScrollToBottom } from '@/hooks/useScrollToBottom';
 import type { ChatMessage } from '@/store/chatSlice';
 
 interface ChatViewProps {
@@ -19,71 +20,71 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onViewOutput,
   threadAgentId,
 }) => {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const prevMessageCountRef = useRef(messages.length);
-  const isAtBottomRef = useRef(true);
+  const {
+    containerRef,
+    containerNode,
+    endRef,
+    showScrollButton,
+    scrollToBottom,
+    reset,
+    onContainerPointerDown,
+  } = useScrollToBottom();
+
   const prevScrollHeightRef = useRef(0);
+  const wasLoadingRef = useRef(false);
+  const initialScrollDoneRef = useRef(false);
 
-  // Track whether user is near bottom
-  const updateIsAtBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    isAtBottomRef.current =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-  }, []);
+  // Scroll to bottom on initial message load
+  useEffect(() => {
+    if (messages.length > 0 && !initialScrollDoneRef.current) {
+      initialScrollDoneRef.current = true;
+      scrollToBottom('instant');
+    }
+  }, [messages.length, scrollToBottom]);
 
-  // Reset refs when messages are cleared (prevents stale scroll state)
+  // Reset when messages are cleared
   useEffect(() => {
     if (messages.length === 0) {
-      prevMessageCountRef.current = 0;
+      initialScrollDoneRef.current = false;
       prevScrollHeightRef.current = 0;
-      isAtBottomRef.current = true;
+      reset();
     }
-  }, [messages.length]);
+  }, [messages.length, reset]);
 
-  // Auto-scroll to bottom on new messages (only if already at bottom)
+  // Save scroll height when starting to load older messages
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    const prevCount = prevMessageCountRef.current;
-    const newCount = messages.length;
-    prevMessageCountRef.current = newCount;
-
-    if (newCount > prevCount) {
-      // Messages were added at the end — scroll down if we were at bottom
-      if (isAtBottomRef.current) {
-        el.scrollTop = el.scrollHeight;
-      }
-    } else if (newCount > 0 && prevCount === 0) {
-      // Initial load — scroll to bottom
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages.length]);
-
-  // Preserve scroll position when prepending history
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    if (prevScrollHeightRef.current > 0) {
-      const heightDiff = el.scrollHeight - prevScrollHeightRef.current;
-      if (heightDiff > 0) {
-        el.scrollTop += heightDiff;
+    if (isLoadingHistory && !wasLoadingRef.current) {
+      const el = containerNode.current;
+      if (el) {
+        prevScrollHeightRef.current = el.scrollHeight;
       }
     }
-    prevScrollHeightRef.current = el.scrollHeight;
-  }, [messages]);
+    wasLoadingRef.current = !!isLoadingHistory;
+  }, [isLoadingHistory, containerNode]);
+
+  // Preserve scroll position after older messages are loaded
+  useEffect(() => {
+    const el = containerNode.current;
+    if (!el) return;
+    if (prevScrollHeightRef.current > 0 && !isLoadingHistory) {
+      const newScrollHeight = el.scrollHeight;
+      const scrollDiff = newScrollHeight - prevScrollHeightRef.current;
+      if (scrollDiff > 0) {
+        el.scrollTop = scrollDiff;
+      }
+      prevScrollHeightRef.current = 0;
+    }
+  }, [messages, isLoadingHistory, containerNode]);
 
   // Detect scroll near top for infinite scroll
   const handleScroll = useCallback(() => {
-    updateIsAtBottom();
-    const el = scrollRef.current;
+    const el = containerNode.current;
     if (!el || !onLoadMore || !hasMoreHistory || isLoadingHistory) return;
     if (el.scrollTop < 200) {
       prevScrollHeightRef.current = el.scrollHeight;
       onLoadMore();
     }
-  }, [onLoadMore, hasMoreHistory, isLoadingHistory, updateIsAtBottom]);
+  }, [onLoadMore, hasMoreHistory, isLoadingHistory, containerNode]);
 
   if (messages.length === 0 && !isLoadingHistory) {
     return (
@@ -112,38 +113,59 @@ export const ChatView: React.FC<ChatViewProps> = ({
   }
 
   return (
-    <div
-      ref={scrollRef}
-      className="flex-1 overflow-y-auto px-4 py-4"
-      onScroll={handleScroll}
-    >
-      {/* Loading indicator at top */}
-      {isLoadingHistory && (
-        <div className="flex justify-center py-3">
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <div className="w-3 h-3 border border-zinc-500 border-t-transparent rounded-full animate-spin" />
-            Loading older messages...
+    <div className="flex-1 min-h-0 relative">
+      <div
+        ref={containerRef}
+        className="h-full overflow-y-auto px-4 py-4"
+        onScroll={handleScroll}
+        onPointerDown={onContainerPointerDown}
+      >
+        {/* Loading indicator at top */}
+        {isLoadingHistory && (
+          <div className="flex justify-center py-3">
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <div className="w-3 h-3 border border-zinc-500 border-t-transparent rounded-full animate-spin" />
+              Loading older messages...
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* "Beginning of history" marker */}
-      {!hasMoreHistory && messages.length > 0 && (
-        <div className="flex justify-center py-3 mb-2">
-          <span className="text-[10px] text-zinc-600 bg-zinc-800/50 px-3 py-1 rounded-full">
-            Beginning of conversation history
-          </span>
-        </div>
-      )}
+        {/* "Beginning of history" marker */}
+        {!hasMoreHistory && messages.length > 0 && (
+          <div className="flex justify-center py-3 mb-2">
+            <span className="text-[10px] text-zinc-600 bg-zinc-800/50 px-3 py-1 rounded-full">
+              Beginning of conversation history
+            </span>
+          </div>
+        )}
 
-      {messages.map((msg) => (
-        <ChatMessageView
-          key={msg.id}
-          message={msg}
-          onViewOutput={onViewOutput}
-          isThreadOpen={!!msg.agentId && msg.agentId === threadAgentId}
-        />
-      ))}
+        {messages.map((msg) => (
+          <ChatMessageView
+            key={msg.id}
+            message={msg}
+            onViewOutput={onViewOutput}
+            isThreadOpen={!!msg.agentId && msg.agentId === threadAgentId}
+          />
+        ))}
+
+        {/* Scroll anchor */}
+        <div ref={endRef} className="min-h-[1px] shrink-0" />
+      </div>
+
+      {/* Scroll to bottom button */}
+      {showScrollButton && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom('instant')}
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1.5 bg-zinc-700 text-zinc-200 rounded-full shadow-lg hover:bg-zinc-600 transition-all text-xs font-medium"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 5v14" />
+            <path d="m19 12-7 7-7-7" />
+          </svg>
+          Scroll to bottom
+        </button>
+      )}
     </div>
   );
 };

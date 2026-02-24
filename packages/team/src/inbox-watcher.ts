@@ -2,27 +2,28 @@ import { watch, type FSWatcher } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ITaskStore, IEventBus } from '@jam/core';
-import { Events } from '@jam/core';
+import { Events, createLogger } from '@jam/core';
+
+const log = createLogger('InboxWatcher');
 
 /**
  * Watches agent inbox files for new task requests.
  * Agents can self-create or delegate tasks by appending JSONL to
- * `{baseDir}/{agentId}/inbox.jsonl`.
+ * `{agentCwd}/inbox.jsonl`.
  */
 export class InboxWatcher {
   private watchers: Map<string, FSWatcher> = new Map();
   private offsets: Map<string, number> = new Map();
 
   constructor(
-    private readonly baseDir: string,
     private readonly taskStore: ITaskStore,
     private readonly eventBus: IEventBus,
   ) {}
 
-  watchAgent(agentId: string): void {
+  watchAgent(agentId: string, cwd: string): void {
     if (this.watchers.has(agentId)) return;
 
-    const inboxPath = join(this.baseDir, agentId, 'inbox.jsonl');
+    const inboxPath = join(cwd, 'inbox.jsonl');
     this.offsets.set(inboxPath, 0);
 
     try {
@@ -68,22 +69,36 @@ export class InboxWatcher {
             description: string;
             priority?: string;
             assignedTo?: string;
+            from?: string;
             tags?: string[];
           };
+
+          // `from` is the sender agent ID; falls back to inbox owner
+          const sender = request.from || agentId;
 
           const task = await this.taskStore.create({
             title: request.title,
             description: request.description || '',
-            status: 'pending',
+            status: request.assignedTo ? 'assigned' : 'pending',
             priority: (request.priority as 'low' | 'normal' | 'high' | 'critical') ?? 'normal',
             source: 'agent',
-            createdBy: agentId,
-            assignedTo: request.assignedTo,
+            createdBy: sender,
+            assignedTo: request.assignedTo || agentId,
             createdAt: new Date().toISOString(),
             tags: request.tags ?? [],
           });
 
           this.eventBus.emit(Events.TASK_CREATED, { task });
+
+          // Notify UI about the inbox message
+          log.info(`Inbox task from ${sender} → ${agentId}: "${request.title}"`);
+          this.eventBus.emit('task:resultReady', {
+            taskId: task.id,
+            agentId: sender,
+            title: request.title,
+            text: `Delegated task to ${agentId}: "${request.title}"`,
+            success: true,
+          });
         } catch {
           // skip malformed lines
         }

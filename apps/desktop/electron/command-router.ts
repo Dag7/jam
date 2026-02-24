@@ -96,9 +96,10 @@ export class CommandRouter {
       }
     }
 
-    // 3. Fallback: only running agent
+    // 3. Fallback: only running non-system agent
     if (!targetId) {
-      const running = this.agentManager.list().filter((a) => a.status === 'running');
+      const running = this.agentManager.list()
+        .filter((a) => a.status === 'running' && !a.profile.isSystem);
       if (running.length === 1) {
         targetId = running[0].profile.id;
         log.debug(`Routing to only running agent: ${targetId}`);
@@ -111,7 +112,7 @@ export class CommandRouter {
   /** Get metadata about the running agents (for error messages) */
   getRunningAgentNames(): string[] {
     return this.agentManager.list()
-      .filter((a) => a.status === 'running')
+      .filter((a) => a.status === 'running' && !a.profile.isSystem)
       .map((a) => a.profile.name);
   }
 

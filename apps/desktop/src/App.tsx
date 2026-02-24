@@ -1,29 +1,31 @@
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/store';
 import { AppShell } from '@/components/layout/AppShell';
-import { Sidebar, type SidebarTab } from '@/components/layout/Sidebar';
-import { AgentPanelContainer } from '@/containers/AgentPanelContainer';
+import { IconRail, type NavTab } from '@/components/layout/Sidebar';
+import { AgentsOverviewContainer } from '@/containers/AgentsOverviewContainer';
 import { AgentStageContainer } from '@/containers/AgentStageContainer';
 import { ChatContainer } from '@/containers/ChatContainer';
 import { CommandBarContainer } from '@/containers/CommandBarContainer';
 import { SettingsContainer } from '@/containers/SettingsContainer';
-import { LogsContainer } from '@/containers/LogsContainer';
 import { DashboardContainer } from '@/containers/dashboard/DashboardContainer';
 import { CompactViewContainer } from '@/containers/CompactViewContainer';
 import { OnboardingContainer } from '@/containers/OnboardingContainer';
 import { SetupBanner } from '@/components/SetupBanner';
 import { ThreadDrawer } from '@/components/chat/ThreadDrawer';
+import { LogsDrawer } from '@/components/LogsDrawer';
 import { ServiceBar } from '@/components/ServiceBar';
 import { useTTSQueue } from '@/hooks/useTTSQueue';
 import { useIPCSubscriptions } from '@/hooks/useIPCSubscriptions';
 
 export default function App() {
-  const sidebarCollapsed = useAppStore((s) => s.settings.sidebarCollapsed);
-  const setSidebarCollapsed = useAppStore((s) => s.setSidebarCollapsed);
+  const navExpanded = useAppStore((s) => s.settings.navExpanded);
+  const setNavExpanded = useAppStore((s) => s.setNavExpanded);
+  const logsDrawerOpen = useAppStore((s) => s.settings.logsDrawerOpen);
+  const setLogsDrawerOpen = useAppStore((s) => s.setLogsDrawerOpen);
   const viewMode = useAppStore((s) => s.settings.viewMode);
   const threadAgentId = useAppStore((s) => s.threadAgentId);
   const setThreadAgent = useAppStore((s) => s.setThreadAgent);
-  const [activeTab, setActiveTab] = useState<SidebarTab>('agents');
+  const [activeTab, setActiveTab] = useState<NavTab>('chat');
 
   // Onboarding gate
   const [onboardingChecked, setOnboardingChecked] = useState(false);
@@ -57,21 +59,21 @@ export default function App() {
     return <OnboardingContainer onComplete={() => setShowOnboarding(false)} />;
   }
 
-  const renderPanel = () => {
+  const renderMainContent = () => {
     switch (activeTab) {
+      case 'chat':
+        return viewMode === 'chat' ? <ChatContainer /> : <AgentStageContainer />;
       case 'agents':
-        return <AgentPanelContainer />;
+        return <AgentsOverviewContainer />;
       case 'dashboard':
         return <DashboardContainer />;
       case 'settings':
         return (
           <SettingsContainer
-            onClose={() => setActiveTab('agents')}
+            onClose={() => setActiveTab('chat')}
             onRerunSetup={() => setShowOnboarding(true)}
           />
         );
-      case 'logs':
-        return <LogsContainer />;
     }
   };
 
@@ -85,28 +87,33 @@ export default function App() {
 
   return (
     <AppShell>
-      <Sidebar
-        collapsed={sidebarCollapsed}
+      <IconRail
+        expanded={navExpanded}
         activeTab={activeTab}
-        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
+        logsOpen={logsDrawerOpen}
+        onToggleExpanded={() => setNavExpanded(!navExpanded)}
         onTabChange={setActiveTab}
-      >
-        {renderPanel()}
-      </Sidebar>
+        onToggleLogs={() => setLogsDrawerOpen(!logsDrawerOpen)}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         <SetupBanner onOpenSettings={() => setActiveTab('settings')} />
         <div className="flex-1 flex min-h-0">
           <div className="flex-1 flex flex-col min-w-0">
-            {viewMode === 'chat' ? <ChatContainer /> : <AgentStageContainer />}
+            {renderMainContent()}
           </div>
 
-          {/* Thread drawer — right-side terminal panel */}
+          {/* Thread drawer — right-side terminal panel (priority over logs) */}
           {threadAgentId && (
             <ThreadDrawer
               agentId={threadAgentId}
               onClose={() => setThreadAgent(null)}
             />
+          )}
+
+          {/* Logs drawer — right-side log panel */}
+          {logsDrawerOpen && !threadAgentId && (
+            <LogsDrawer onClose={() => setLogsDrawerOpen(false)} />
           )}
         </div>
         <ServiceBar />

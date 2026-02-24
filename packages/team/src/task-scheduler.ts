@@ -1,6 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import type { Task, ITaskStore, IEventBus } from '@jam/core';
-import { Events } from '@jam/core';
+import { Events, createLogger, JAM_SYSTEM_AGENT_ID } from '@jam/core';
+import { isCronDue } from './cron-parser.js';
+import type { FileScheduleStore, PersistedSchedule } from './stores/file-schedule-store.js';
+
+const log = createLogger('TaskScheduler');
 
 export interface SchedulePattern {
   /** Run every N milliseconds */
@@ -11,6 +14,8 @@ export interface SchedulePattern {
   minute?: number;
   /** Day of week (0=Sun, 6=Sat). If omitted, runs daily. */
   dayOfWeek?: number;
+  /** Standard 5-field cron expression (minute hour dom month dow) */
+  cron?: string;
 }
 
 export interface ScheduledTask {
@@ -21,23 +26,83 @@ export interface ScheduledTask {
   enabled: boolean;
 }
 
-const CHECK_INTERVAL_MS = 60_000; // check every minute
+/** Default system schedules seeded on first startup */
+const SYSTEM_SCHEDULES: Array<{
+  name: string;
+  pattern: SchedulePattern;
+  taskTemplate: Omit<Task, 'id' | 'createdAt' | 'status'>;
+  enabled?: boolean;
+}> = [
+  {
+    name: 'Daily Self-Reflection',
+    pattern: { cron: '0 2 * * *' },
+    taskTemplate: {
+      title: 'Daily Self-Reflection',
+      description: 'Analyze recent performance, extract learnings, adjust traits and goals.',
+      priority: 'normal',
+      source: 'system',
+      createdBy: 'system',
+      tags: ['self-improvement'],
+    },
+  },
+  {
+    name: 'Stats Aggregation',
+    pattern: { cron: '0 */6 * * *' },
+    taskTemplate: {
+      title: 'Stats Aggregation',
+      description: 'Aggregate agent performance stats across the team.',
+      priority: 'low',
+      source: 'system',
+      createdBy: 'system',
+      tags: ['stats'],
+    },
+  },
+  {
+    name: 'Weekly Code Review',
+    pattern: { cron: '0 3 * * 0' },
+    taskTemplate: {
+      title: 'Weekly Code Review',
+      description: 'Review recent code changes and suggest improvements.',
+      priority: 'normal',
+      source: 'system',
+      createdBy: 'system',
+      tags: ['code-improvement'],
+    },
+  },
+  {
+    name: 'Inbox Check',
+    pattern: { cron: '0 */3 * * *' },
+    taskTemplate: {
+      title: 'Inbox Check',
+      description: 'Scan agent inboxes for new commands or messages and process them.',
+      priority: 'low',
+      source: 'system',
+      createdBy: 'system',
+      tags: ['inbox'],
+    },
+    enabled: false,
+  },
+];
 
 export class TaskScheduler {
-  private readonly schedules: Map<string, ScheduledTask> = new Map();
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** In-memory fallback for backwards compatibility (used when no store provided) */
+  private readonly memorySchedules: Map<string, ScheduledTask> = new Map();
 
   constructor(
     private readonly taskStore: ITaskStore,
     private readonly eventBus: IEventBus,
+    private readonly scheduleStore?: FileScheduleStore,
+    private readonly checkIntervalMs: number = 60_000,
   ) {}
 
+  /** Register an in-memory schedule (legacy API, used when no persistent store) */
   register(
     schedule: SchedulePattern,
     taskTemplate: Omit<Task, 'id' | 'createdAt' | 'status'>,
   ): string {
-    const id = randomUUID();
-    this.schedules.set(id, {
+    const id = crypto.randomUUID();
+    this.memorySchedules.set(id, {
       id,
       schedule,
       taskTemplate,
@@ -48,13 +113,18 @@ export class TaskScheduler {
   }
 
   unregister(scheduleId: string): void {
-    this.schedules.delete(scheduleId);
+    this.memorySchedules.delete(scheduleId);
   }
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.timer) return;
-    this.timer = setInterval(() => this.tick(), CHECK_INTERVAL_MS);
-    // also run immediately
+
+    // Sync system schedules: seed missing, remove stale
+    if (this.scheduleStore) {
+      await this.syncSystemSchedules();
+    }
+
+    this.timer = setInterval(() => this.tick(), this.checkIntervalMs);
     this.tick();
   }
 
@@ -65,65 +135,147 @@ export class TaskScheduler {
     }
   }
 
-  getSchedules(): ScheduledTask[] {
-    return Array.from(this.schedules.values());
+  async getSchedules(): Promise<ScheduledTask[]> {
+    if (this.scheduleStore) {
+      const persisted = await this.scheduleStore.list();
+      return persisted.map((p) => ({
+        id: p.id,
+        schedule: p.pattern,
+        taskTemplate: p.taskTemplate,
+        lastRun: p.lastRun,
+        enabled: p.enabled,
+      }));
+    }
+    return Array.from(this.memorySchedules.values());
+  }
+
+  /**
+   * Sync system schedules with the canonical SYSTEM_SCHEDULES list.
+   * - Seeds missing schedules on first run
+   * - Removes stale system schedules that no longer exist in code
+   * - Preserves user-created and agent-created schedules untouched
+   */
+  private async syncSystemSchedules(): Promise<void> {
+    if (!this.scheduleStore) return;
+
+    const persisted = await this.scheduleStore.list();
+    const systemSchedules = persisted.filter((s) => s.source === 'system');
+    const expectedNames = new Set(SYSTEM_SCHEDULES.map((s) => s.name));
+
+    // Remove stale system schedules (e.g., "Inbox Check" was removed from code)
+    for (const existing of systemSchedules) {
+      if (!expectedNames.has(existing.name)) {
+        log.info(`Removing stale system schedule: "${existing.name}"`);
+        // Force-delete by filtering directly (bypass the "cannot delete system" guard)
+        await this.scheduleStore.forceDelete(existing.id);
+      }
+    }
+
+    // Seed any missing system schedules
+    const existingNames = new Set(systemSchedules.map((s) => s.name));
+    for (const def of SYSTEM_SCHEDULES) {
+      if (!existingNames.has(def.name)) {
+        log.info(`Seeding system schedule: "${def.name}"`);
+        await this.scheduleStore.create({
+          name: def.name,
+          pattern: def.pattern,
+          taskTemplate: def.taskTemplate,
+          enabled: def.enabled !== false,
+          lastRun: null,
+          source: 'system',
+        });
+      }
+    }
   }
 
   private async tick(): Promise<void> {
     const now = new Date();
 
-    for (const entry of this.schedules.values()) {
+    // Process persistent schedules
+    if (this.scheduleStore) {
+      const schedules = await this.scheduleStore.list();
+      for (const entry of schedules) {
+        if (!entry.enabled) continue;
+        if (!this.isPersistedDue(entry, now)) continue;
+
+        await this.scheduleStore.markRun(entry.id, now.toISOString());
+        await this.createTaskFromTemplate(entry.taskTemplate, now);
+      }
+    }
+
+    // Process in-memory schedules (backwards compat)
+    for (const entry of this.memorySchedules.values()) {
       if (!entry.enabled) continue;
-      if (!this.isDue(entry, now)) continue;
+      if (!this.isMemoryDue(entry, now)) continue;
 
       entry.lastRun = now.toISOString();
-
-      const task = await this.taskStore.create({
-        ...entry.taskTemplate,
-        status: 'pending',
-        createdAt: now.toISOString(),
-      });
-
-      this.eventBus.emit(Events.TASK_CREATED, { task });
+      await this.createTaskFromTemplate(entry.taskTemplate, now);
     }
   }
 
-  private isDue(entry: ScheduledTask, now: Date): boolean {
-    const { schedule, lastRun } = entry;
+  private async createTaskFromTemplate(
+    template: Omit<Task, 'id' | 'createdAt' | 'status'>,
+    now: Date,
+  ): Promise<void> {
+    const isSystemTask = template.source === 'system';
+    const task = await this.taskStore.create({
+      ...template,
+      status: isSystemTask ? 'assigned' : 'pending',
+      assignedTo: isSystemTask ? JAM_SYSTEM_AGENT_ID : template.assignedTo,
+      createdAt: now.toISOString(),
+    });
+    this.eventBus.emit(Events.TASK_CREATED, { task });
+  }
 
-    if (schedule.intervalMs) {
-      if (!lastRun) return true;
-      const elapsed = now.getTime() - new Date(lastRun).getTime();
-      return elapsed >= schedule.intervalMs;
+  private isPersistedDue(entry: PersistedSchedule, now: Date): boolean {
+    return this.checkPattern(entry.pattern, entry.lastRun, now);
+  }
+
+  private isMemoryDue(entry: ScheduledTask, now: Date): boolean {
+    return this.checkPattern(entry.schedule, entry.lastRun, now);
+  }
+
+  private checkPattern(
+    pattern: SchedulePattern,
+    lastRun: string | null,
+    now: Date,
+  ): boolean {
+    // Cron expression takes priority
+    if (pattern.cron) {
+      if (!isCronDue(pattern.cron, now)) return false;
+      return !this.ranThisMinute(lastRun, now);
     }
 
-    if (schedule.hour !== undefined && schedule.minute !== undefined) {
-      // Time-based schedule
-      if (schedule.dayOfWeek !== undefined && now.getDay() !== schedule.dayOfWeek) {
+    // Interval-based
+    if (pattern.intervalMs) {
+      if (!lastRun) return true;
+      const elapsed = now.getTime() - new Date(lastRun).getTime();
+      return elapsed >= pattern.intervalMs;
+    }
+
+    // Time-based (hour + minute)
+    if (pattern.hour !== undefined && pattern.minute !== undefined) {
+      if (pattern.dayOfWeek !== undefined && now.getDay() !== pattern.dayOfWeek) {
         return false;
       }
-
-      if (now.getHours() !== schedule.hour || now.getMinutes() !== schedule.minute) {
+      if (now.getHours() !== pattern.hour || now.getMinutes() !== pattern.minute) {
         return false;
       }
-
-      // Already ran this minute?
-      if (lastRun) {
-        const lastDate = new Date(lastRun);
-        if (
-          lastDate.getFullYear() === now.getFullYear() &&
-          lastDate.getMonth() === now.getMonth() &&
-          lastDate.getDate() === now.getDate() &&
-          lastDate.getHours() === now.getHours() &&
-          lastDate.getMinutes() === now.getMinutes()
-        ) {
-          return false;
-        }
-      }
-
-      return true;
+      return !this.ranThisMinute(lastRun, now);
     }
 
     return false;
+  }
+
+  private ranThisMinute(lastRun: string | null, now: Date): boolean {
+    if (!lastRun) return false;
+    const last = new Date(lastRun);
+    return (
+      last.getFullYear() === now.getFullYear() &&
+      last.getMonth() === now.getMonth() &&
+      last.getDate() === now.getDate() &&
+      last.getHours() === now.getHours() &&
+      last.getMinutes() === now.getMinutes()
+    );
   }
 }

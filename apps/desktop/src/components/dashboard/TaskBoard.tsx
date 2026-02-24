@@ -8,10 +8,15 @@ interface TaskBoardProps {
     priority: string;
     assignedTo?: string;
     createdAt: string;
+    startedAt?: string;
+    completedAt?: string;
     tags: string[];
   }>;
   agents: Record<string, { name: string; color: string }>;
   onUpdateStatus: (taskId: string, status: string) => void;
+  onDelete: (taskId: string) => void;
+  onBulkDelete: (taskIds: string[]) => void;
+  onCancel?: (taskId: string) => void;
 }
 
 const columns = [
@@ -22,11 +27,11 @@ const columns = [
 ] as const;
 
 function getColumn(status: string): string {
-  if (status === 'completed' || status === 'failed') return 'done';
+  if (status === 'completed' || status === 'failed' || status === 'cancelled') return 'done';
   return status;
 }
 
-export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus }: TaskBoardProps) {
+export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus, onDelete, onBulkDelete, onCancel }: TaskBoardProps) {
   const grouped = tasks.reduce<Record<string, typeof tasks>>((acc, task) => {
     const col = getColumn(task.status);
     if (!acc[col]) acc[col] = [];
@@ -34,9 +39,37 @@ export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus }: Ta
     return acc;
   }, {});
 
+  const doneTaskIds = (grouped['done'] ?? []).map((t) => t.id);
+
   return (
     <div className="p-4 h-full flex flex-col">
-      <h2 className="text-lg font-semibold text-white mb-4">Task Board</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-white">Task Board</h2>
+        <div className="flex items-center gap-2">
+          {doneTaskIds.length > 0 && (
+            <button
+              onClick={() => onBulkDelete(doneTaskIds)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              Clear Done ({doneTaskIds.length})
+            </button>
+          )}
+          {tasks.length > 0 && (
+            <button
+              onClick={() => onBulkDelete(tasks.map((t) => t.id))}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+              Clear All ({tasks.length})
+            </button>
+          )}
+        </div>
+      </div>
       <div className="flex-1 grid grid-cols-4 gap-4 min-h-0">
         {columns.map((col) => {
           const columnTasks = grouped[col.key] ?? [];
@@ -60,6 +93,8 @@ export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus }: Ta
                       task={task}
                       agentName={agent?.name}
                       agentColor={agent?.color}
+                      onDelete={onDelete}
+                      onCancel={onCancel}
                     />
                   );
                 })}

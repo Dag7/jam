@@ -4,7 +4,7 @@ import { TaskBoard } from '@/components/dashboard/TaskBoard';
 
 export function TaskBoardContainer() {
   const agents = useAppStore((s) => s.agents);
-  const { tasks, updateTask, isLoading } = useTasks();
+  const { tasks, updateTask, deleteTask, bulkDeleteTasks, isLoading } = useTasks();
 
   if (isLoading) {
     return (
@@ -25,11 +25,18 @@ export function TaskBoardContainer() {
     await updateTask(taskId, { status });
   };
 
+  const handleCancelTask = async (taskId: string) => {
+    await window.jam.tasks.cancel(taskId);
+  };
+
   return (
     <TaskBoard
       tasks={tasks}
       agents={agentMap}
       onUpdateStatus={handleUpdateStatus}
+      onDelete={deleteTask}
+      onBulkDelete={bulkDeleteTasks}
+      onCancel={handleCancelTask}
     />
   );
 }

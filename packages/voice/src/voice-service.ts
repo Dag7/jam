@@ -4,6 +4,7 @@ import type {
   IEventBus,
   AgentId,
   TranscriptionResult,
+  TTSOptions,
 } from '@jam/core';
 import { createLogger } from '@jam/core';
 import { CommandParser, type ParsedCommand } from './command-parser.js';
@@ -79,6 +80,7 @@ export class VoiceService {
     text: string,
     voiceId: string,
     agentId: AgentId,
+    options?: TTSOptions,
   ): Promise<string> {
     this.eventBus.emit('voice:stateChanged', { state: 'speaking' });
 
@@ -87,9 +89,10 @@ export class VoiceService {
       const { writeFile, mkdir, access } = await import('node:fs/promises');
       const { join } = await import('node:path');
 
-      // Check cache
+      // Include speed in cache key so different speeds produce separate files
+      const speed = options?.speed ?? 1.0;
       const hash = createHash('sha256')
-        .update(`${voiceId}:${text}`)
+        .update(`${voiceId}:${speed}:${text}`)
         .digest('hex')
         .slice(0, 16);
       const audioPath = join(this.audioCacheDir, `${hash}.mp3`);
@@ -103,8 +106,8 @@ export class VoiceService {
         // Cache miss - synthesize
       }
 
-      log.debug(`Synthesizing TTS for voice ${voiceId}`, undefined, agentId);
-      const audioBuffer = await this.ttsProvider.synthesize(text, voiceId);
+      log.debug(`Synthesizing TTS for voice ${voiceId} (speed=${speed})`, undefined, agentId);
+      const audioBuffer = await this.ttsProvider.synthesize(text, voiceId, options);
 
       await mkdir(this.audioCacheDir, { recursive: true });
       await writeFile(audioPath, audioBuffer);

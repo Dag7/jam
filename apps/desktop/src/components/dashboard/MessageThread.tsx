@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { Streamdown } from 'streamdown';
+import { code } from '@streamdown/code';
 
 interface MessageThreadProps {
   messages: Array<{
@@ -12,8 +14,28 @@ interface MessageThreadProps {
   isLoading: boolean;
 }
 
+const plugins = { code };
+
 export function MessageThread({ messages, agents, onSend, isLoading }: MessageThreadProps) {
   const [input, setInput] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (autoScroll) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, autoScroll]);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    // If user scrolled up more than 80px from bottom, disable auto-scroll
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    setAutoScroll(atBottom);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,12 +43,17 @@ export function MessageThread({ messages, agents, onSend, isLoading }: MessageTh
     if (!trimmed) return;
     onSend(trimmed);
     setInput('');
+    setAutoScroll(true);
   };
 
   return (
     <div className="flex flex-col h-full bg-zinc-900">
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto p-4 space-y-4"
+      >
         {messages.map((msg) => {
           const sender = agents[msg.senderId];
           return (
@@ -40,7 +67,7 @@ export function MessageThread({ messages, agents, onSend, isLoading }: MessageTh
               </div>
 
               {/* Content */}
-              <div className="min-w-0">
+              <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
                   <span
                     className="text-sm font-semibold"
@@ -55,9 +82,11 @@ export function MessageThread({ messages, agents, onSend, isLoading }: MessageTh
                     })}
                   </span>
                 </div>
-                <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap break-words">
-                  {msg.content}
-                </p>
+                <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 mt-0.5">
+                  <Streamdown mode="static" plugins={plugins}>
+                    {msg.content}
+                  </Streamdown>
+                </div>
               </div>
             </div>
           );
@@ -73,6 +102,8 @@ export function MessageThread({ messages, agents, onSend, isLoading }: MessageTh
             <span>Typing...</span>
           </div>
         )}
+
+        <div ref={bottomRef} />
       </div>
 
       {/* Input */}

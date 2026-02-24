@@ -11,6 +11,8 @@ export interface ConversationEntry {
   role: 'user' | 'agent';
   content: string;
   source?: 'text' | 'voice';
+  /** Hidden entries are persisted for agent context but excluded from chat history UI */
+  hidden?: boolean;
 }
 
 export interface SkillDefinition {
@@ -110,8 +112,8 @@ export class AgentContextBuilder {
         return 0;
       });
 
-      // Apply 'before' cursor
-      let filtered = allEntries;
+      // Exclude hidden entries (e.g. task trigger prompts) from UI history
+      let filtered = allEntries.filter(e => !e.hidden);
       if (options.before) {
         filtered = allEntries.filter(e => e.timestamp < options.before!);
       }

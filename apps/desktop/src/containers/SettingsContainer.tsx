@@ -10,17 +10,26 @@ import {
   VOICE_PROVIDERS,
 } from '@/constants/provider-catalog';
 
+interface ModelTierConfig {
+  creative: string;
+  analytical: string;
+  routine: string;
+}
+
 interface Config {
   sttProvider: STTProvider;
   ttsProvider: TTSProvider;
   sttModel: string;
   ttsVoice: string;
+  ttsSpeed: number;
   defaultModel: string;
   defaultRuntime: string;
   voiceSensitivity: VoiceSensitivity;
   minRecordingMs: number;
   noSpeechThreshold: number;
   noiseBlocklist: string[];
+  modelTiers: ModelTierConfig;
+  teamRuntime: string;
 }
 
 // Combobox-style select: dropdown with custom input option
@@ -81,8 +90,11 @@ export const SettingsContainer: React.FC<{
     ttsProvider: 'openai',
     sttModel: 'whisper-1',
     ttsVoice: 'alloy',
+    ttsSpeed: 1.25,
     defaultModel: 'claude-opus-4-6',
     defaultRuntime: 'claude-code',
+    modelTiers: { creative: 'claude-opus-4-6', analytical: 'sonnet', routine: 'haiku' },
+    teamRuntime: 'claude-code',
     voiceSensitivity: 'medium',
     minRecordingMs: 600,
     noSpeechThreshold: 0.6,
@@ -182,12 +194,24 @@ export const SettingsContainer: React.FC<{
     setStatus(`${service} key removed.`);
   };
 
-  // Suppress unused warning - onClose provided for interface consistency
-  void onClose;
-
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+    <div className="flex flex-col h-full bg-zinc-900">
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
+          {/* Header */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-md text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+              title="Back"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5" />
+                <polyline points="12 19 5 12 12 5" />
+              </svg>
+            </button>
+            <h1 className="text-xl font-semibold text-zinc-100">Settings</h1>
+          </div>
         {/* Voice Providers */}
         <section>
           <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
@@ -243,6 +267,29 @@ export const SettingsContainer: React.FC<{
                 onChange={(val) => setConfig({ ...config, ttsVoice: val })}
                 placeholder="Custom voice ID"
               />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">
+                Speech Speed <span className="text-zinc-600">({Math.round(config.ttsSpeed * 100)}%)</span>
+              </label>
+              <input
+                type="range"
+                min={0.5}
+                max={2.0}
+                step={0.05}
+                value={config.ttsSpeed}
+                onChange={(e) => setConfig({ ...config, ttsSpeed: Number(e.target.value) })}
+                className="w-full accent-blue-500"
+              />
+              <div className="flex justify-between text-[10px] text-zinc-600 mt-0.5">
+                <span>50%</span>
+                <span>100%</span>
+                <span>150%</span>
+                <span>200%</span>
+              </div>
+              <p className="text-xs text-zinc-600 mt-1">
+                Controls how fast agents speak. Default: 125%
+              </p>
             </div>
           </div>
         </section>
@@ -432,6 +479,57 @@ export const SettingsContainer: React.FC<{
             </div>
           </div>
         </section>
+        {/* Model Tiers */}
+        <section>
+          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+            Model Tiers
+          </h3>
+          <p className="text-xs text-zinc-500 mb-3">
+            Configure which models handle different team operations. Creative ops (soul evolution, code improvement) use the best model. Routine ops (summarization, parsing) use the cheapest.
+          </p>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Creative Tier (soul evolution, code improvement)</label>
+              <ComboSelect
+                value={config.modelTiers.creative}
+                options={AGENT_MODELS}
+                onChange={(val) => setConfig({ ...config, modelTiers: { ...config.modelTiers, creative: val } })}
+                placeholder="Model ID"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Analytical Tier (reflection, task analysis)</label>
+              <ComboSelect
+                value={config.modelTiers.analytical}
+                options={AGENT_MODELS}
+                onChange={(val) => setConfig({ ...config, modelTiers: { ...config.modelTiers, analytical: val } })}
+                placeholder="Model ID"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Routine Tier (summarization, parsing)</label>
+              <ComboSelect
+                value={config.modelTiers.routine}
+                options={AGENT_MODELS}
+                onChange={(val) => setConfig({ ...config, modelTiers: { ...config.modelTiers, routine: val } })}
+                placeholder="Model ID"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Team Runtime</label>
+              <select
+                value={config.teamRuntime}
+                onChange={(e) => setConfig({ ...config, teamRuntime: e.target.value })}
+                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
+              >
+                {runtimeOptions.map((r) => (
+                  <option key={r.id} value={r.id}>{r.displayName}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </section>
+
         {/* Re-run Setup */}
         {onRerunSetup && (
           <section>
@@ -449,22 +547,23 @@ export const SettingsContainer: React.FC<{
             </button>
           </section>
         )}
-      </div>
 
-      {/* Footer */}
-      <div className="p-3 border-t border-zinc-800 space-y-2">
-        {status && (
-          <p className={`text-xs ${status.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
-            {status}
-          </p>
-        )}
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded-lg transition-colors"
-        >
-          {saving ? 'Saving...' : 'Save Settings'}
-        </button>
+          {/* Save button */}
+          <div className="pt-2 pb-4 space-y-2">
+            {status && (
+              <p className={`text-xs ${status.startsWith('Error') ? 'text-red-400' : 'text-green-400'}`}>
+                {status}
+              </p>
+            )}
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {saving ? 'Saving...' : 'Save Settings'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

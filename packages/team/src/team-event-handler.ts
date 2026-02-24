@@ -1,6 +1,11 @@
-import type { IEventBus, IStatsStore, IRelationshipStore, ITaskStore } from '@jam/core';
-import { Events } from '@jam/core';
+import type { IEventBus, IStatsStore, IRelationshipStore, ITaskStore, ICommunicationHub } from '@jam/core';
+import { Events, createLogger } from '@jam/core';
 import type { ITaskAssigner } from './task-assigner.js';
+
+const log = createLogger('TeamEventHandler');
+
+/** Well-known channel name for automatic work broadcasts */
+const TEAM_FEED_CHANNEL = '#team-feed';
 
 /**
  * Wires existing events to team stores — listens for agent completions,
@@ -9,13 +14,17 @@ import type { ITaskAssigner } from './task-assigner.js';
 export class TeamEventHandler {
   private unsubscribers: Array<() => void> = [];
 
+  /** Lazily-resolved ID for the #team-feed broadcast channel */
+  private teamFeedChannelId: string | null = null;
+
   constructor(
     private readonly eventBus: IEventBus,
     private readonly statsStore: IStatsStore,
     private readonly relationshipStore: IRelationshipStore,
     private readonly taskStore: ITaskStore,
     private readonly taskAssigner: ITaskAssigner,
-    private readonly getAgentProfiles: () => Array<{ id: string; name: string; runtime: string; model?: string; color: string; voice: { ttsVoiceId: string } }>,
+    private readonly getAgentProfiles: () => Array<{ id: string; name: string; runtime: string; model?: string; color: string; voice: { ttsVoiceId: string }; isSystem?: boolean }>,
+    private readonly communicationHub?: ICommunicationHub,
   ) {}
 
   start(): void {
@@ -58,7 +67,7 @@ export class TeamEventHandler {
 
     // Auto-assign if no assignee
     if (!task.assignedTo) {
-      const agents = this.getAgentProfiles();
+      const agents = this.getAgentProfiles().filter(a => !a.isSystem);
       const runningCounts = new Map<string, number>();
 
       // Count running tasks per agent
@@ -72,20 +81,33 @@ export class TeamEventHandler {
       const fullTask = await this.taskStore.get(task.id);
       if (!fullTask) return;
 
+      // Gather real stats and relationships for balanced assignment
+      const statsMap = new Map<string, import('@jam/core').AgentStats>();
+      const relsMap = new Map<string, import('@jam/core').AgentRelationship[]>();
+      for (const agent of agents) {
+        const agentStats = await this.statsStore.get(agent.id);
+        if (agentStats) statsMap.set(agent.id, agentStats);
+        const agentRels = await this.relationshipStore.getAll(agent.id);
+        if (agentRels.length > 0) relsMap.set(agent.id, agentRels);
+      }
+
       const assignee = this.taskAssigner.assign(
         fullTask,
         agents as Parameters<typeof this.taskAssigner.assign>[1],
-        new Map(),
-        new Map(),
+        relsMap,
+        statsMap,
         new Map(),
         runningCounts,
       );
 
       if (assignee) {
-        await this.taskStore.update(task.id, {
+        const updated = await this.taskStore.update(task.id, {
           assignedTo: assignee,
           status: 'assigned',
         });
+        if (updated) {
+          this.eventBus.emit(Events.TASK_UPDATED, { task: updated });
+        }
       }
     }
   }
@@ -116,6 +138,46 @@ export class TeamEventHandler {
       );
 
       this.eventBus.emit(Events.TRUST_UPDATED, { relationship: rel });
+    }
+
+    // Broadcast completion to #team-feed so all agents and the UI can see it
+    if (task.assignedTo) {
+      const fullTask = await this.taskStore.get(task.id);
+      const agentName = this.getAgentProfiles().find(a => a.id === task.assignedTo)?.name ?? task.assignedTo;
+      const summary = fullTask?.result ?? fullTask?.title ?? 'Task';
+      const msg = success
+        ? `**${agentName}** completed: ${fullTask?.title ?? 'Task'}\n\n${summary}`
+        : `**${agentName}** failed: ${fullTask?.title ?? 'Task'}\n\n${fullTask?.error ?? 'Unknown error'}`;
+      this.broadcastToTeamFeed(task.assignedTo, msg).catch(() => {});
+    }
+  }
+
+  /** Post a message to the #team-feed broadcast channel (creates it lazily). */
+  private async broadcastToTeamFeed(senderId: string, content: string): Promise<void> {
+    if (!this.communicationHub) return;
+
+    try {
+      // Lazily resolve or create the team-feed channel
+      if (!this.teamFeedChannelId) {
+        const channels = await this.communicationHub.listChannels();
+        const existing = channels.find(c => c.name === TEAM_FEED_CHANNEL);
+        if (existing) {
+          this.teamFeedChannelId = existing.id;
+        } else {
+          const allAgentIds = this.getAgentProfiles().map(a => a.id);
+          const channel = await this.communicationHub.createChannel(
+            TEAM_FEED_CHANNEL,
+            'broadcast',
+            allAgentIds,
+          );
+          this.teamFeedChannelId = channel.id;
+          log.info(`Created ${TEAM_FEED_CHANNEL} broadcast channel`);
+        }
+      }
+
+      await this.communicationHub.sendMessage(this.teamFeedChannelId, senderId, content);
+    } catch (err) {
+      log.warn(`Failed to broadcast to team feed: ${String(err)}`);
     }
   }
 }

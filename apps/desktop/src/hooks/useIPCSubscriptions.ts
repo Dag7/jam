@@ -141,6 +141,10 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
 
     const unsubAcknowledged = window.jam.chat.onAgentAcknowledged(
       ({ agentId, agentName, agentRuntime, agentColor, ackText }) => {
+        // Suppress ack messages from system agents — they use system notifications instead
+        const agentEntry = useAppStore.getState().agents[agentId];
+        if (agentEntry?.profile.isSystem) return;
+
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'agent',
@@ -179,6 +183,10 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
 
     const unsubAgentResponse = window.jam.chat.onAgentResponse(
       ({ agentId, agentName, agentRuntime, agentColor, text, error }) => {
+        // Suppress response messages from system agents — they use system notifications
+        const agentEntry = useAppStore.getState().agents[agentId];
+        if (agentEntry?.profile.isSystem) return;
+
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'agent',
@@ -215,6 +223,10 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
 
     const unsubProgress = window.jam.chat.onAgentProgress(
       ({ agentId, agentName, agentRuntime, agentColor, summary }) => {
+        // Suppress progress messages from system agents
+        const agentEntry = useAppStore.getState().agents[agentId];
+        if (agentEntry?.profile.isSystem) return;
+
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'system',
@@ -249,6 +261,27 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       },
     );
 
+    const unsubSystemNotification = window.jam.chat.onSystemNotification(
+      ({ taskId, agentId, title, success, summary }) => {
+        const msg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'system',
+          agentId,
+          agentName: 'JAM',
+          agentRuntime: null,
+          agentColor: '#8b5cf6',
+          content: success ? `Completed: ${title}` : `Failed: ${title}`,
+          status: success ? 'complete' : 'error',
+          source: 'text',
+          timestamp: Date.now(),
+          taskResult: { taskId, title, success, summary },
+        };
+        const store = useAppStore.getState();
+        store.addMessage(msg);
+        store.setIsProcessing(false);
+      },
+    );
+
     // --- Team system event subscriptions ---
 
     // Load initial team data
@@ -278,6 +311,8 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
 
     const unsubSoulEvolved = window.jam.team.soul.onEvolved((data) => {
       setSoul(data.agentId, data.soul as unknown as SoulEntry);
+      // Clear reflecting state globally (persists across tab switches)
+      useAppStore.getState().setReflecting(data.agentId, false);
     });
 
     const unsubChannelMessage = window.jam.team.channels.onMessageReceived((data) => {
@@ -304,6 +339,7 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       unsubAppError();
       unsubProgress();
       unsubQueued();
+      unsubSystemNotification();
       unsubTaskCreated();
       unsubTaskUpdated();
       unsubTaskCompleted();

@@ -6,3 +6,5 @@ export * from './relationship.js';
 export * from './soul.js';
 export * from './communication.js';
 export * from './agent-stats.js';
+export * from './model-tier.js';
+export * from './code-improvement.js';

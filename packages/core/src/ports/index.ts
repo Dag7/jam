@@ -7,3 +7,5 @@ export * from './task-store.js';
 export * from './communication-hub.js';
 export * from './relationship-store.js';
 export * from './stats-store.js';
+export * from './model-resolver.js';
+export * from './code-improvement-engine.js';

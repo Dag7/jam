@@ -39,6 +39,8 @@ function sanitizeResultText(text: string): string {
 interface QueuedMessage {
   text: string;
   source: 'text' | 'voice';
+  /** If true, the user-side message is hidden from chat history UI (e.g. task triggers) */
+  hidden?: boolean;
   resolve: (result: { success: boolean; text?: string; error?: string }) => void;
 }
 
@@ -181,6 +183,28 @@ export class AgentManager {
     return { success: true, agentId: id };
   }
 
+  /** Bootstrap a system agent if not already present. Used by Orchestrator at startup. */
+  ensureSystemAgent(profile: AgentProfile): void {
+    if (this.agents.has(profile.id)) return;
+
+    // Default cwd for system agent
+    if (!profile.cwd) {
+      const sanitized = profile.name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+      profile = { ...profile, cwd: join(homedir(), '.jam', 'agents', sanitized) };
+    }
+    try {
+      mkdirSync(profile.cwd!, { recursive: true });
+    } catch (err) {
+      log.warn(`Could not create system agent directory: ${String(err)}`, undefined, profile.id);
+    }
+
+    const state: AgentState = { profile, status: 'stopped', visualState: 'offline' };
+    this.agents.set(profile.id, state);
+    this.store.saveProfile(profile);
+    this.eventBus.emit('agent:created', { agentId: profile.id, profile });
+    log.info(`Bootstrapped system agent "${profile.name}"`, undefined, profile.id);
+  }
+
   async start(
     agentId: AgentId,
   ): Promise<{ success: boolean; error?: string }> {
@@ -253,6 +277,7 @@ export class AgentManager {
   delete(agentId: AgentId): { success: boolean; error?: string } {
     const state = this.agents.get(agentId);
     if (!state) return { success: false, error: 'Agent not found' };
+    if (state.profile.isSystem) return { success: false, error: 'Cannot delete system agent' };
 
     if (state.status === 'running') {
       this.ptyManager.kill(agentId);
@@ -271,6 +296,7 @@ export class AgentManager {
   ): { success: boolean; error?: string } {
     const state = this.agents.get(agentId);
     if (!state) return { success: false, error: 'Agent not found' };
+    if (state.profile.isSystem) return { success: false, error: 'Cannot modify system agent' };
 
     state.profile = { ...state.profile, ...updates };
     this.store.saveProfile(state.profile);
@@ -300,7 +326,7 @@ export class AgentManager {
   /** Run a voice command via the runtime's execute() method (one-shot child process).
    *  Returns clean text — deterministic completion via process exit.
    *  Echoes the conversation into the terminal view and maintains session continuity. */
-  async voiceCommand(agentId: AgentId, text: string, source: 'text' | 'voice' = 'voice'): Promise<{ success: boolean; text?: string; error?: string }> {
+  async voiceCommand(agentId: AgentId, text: string, source: 'text' | 'voice' = 'voice', hidden?: boolean): Promise<{ success: boolean; text?: string; error?: string }> {
     const state = this.agents.get(agentId);
     if (!state) return { success: false, error: 'Agent not found' };
 
@@ -417,12 +443,12 @@ export class AgentManager {
     if (state.profile.cwd) {
       const userTs = new Date().toISOString();
       this.contextBuilder.recordConversation(state.profile.cwd, {
-        timestamp: userTs, role: 'user', content: text, source,
+        timestamp: userTs, role: 'user', content: text, source, ...(hidden && { hidden: true }),
       }).catch(() => {});
       if (result.text) {
         const agentTs = new Date(Date.now() + 1).toISOString();
         this.contextBuilder.recordConversation(state.profile.cwd, {
-          timestamp: agentTs, role: 'agent', content: result.text, source,
+          timestamp: agentTs, role: 'agent', content: result.text, source, ...(hidden && { hidden: true }),
         }).catch(() => {});
       }
     }
@@ -441,6 +467,83 @@ export class AgentManager {
     }
 
     return { success: true, text: result.text };
+  }
+
+  /** Execute a command independently — does NOT enter the message queue.
+   *  Used for task board execution so the agent stays responsive for user interaction.
+   *  Spawns an independent child process; multiple detached tasks can run concurrently. */
+  async executeDetached(agentId: AgentId, text: string): Promise<{ success: boolean; text?: string; error?: string }> {
+    const state = this.agents.get(agentId);
+    if (!state) return { success: false, error: 'Agent not found' };
+
+    const runtime = this.runtimeRegistry.get(state.profile.runtime);
+    if (!runtime) return { success: false, error: `Runtime not found: ${state.profile.runtime}` };
+
+    log.info(`Detached execution: "${text.slice(0, 60)}"`, undefined, agentId);
+
+    // Enrich profile (soul, skills, conversation history)
+    const enrichedProfile = await this.contextBuilder.buildContext(state.profile, text);
+
+    // Independent abort controller — keyed separately so it doesn't collide with queue-based execution
+    const abortController = new AbortController();
+    const detachedKey = `detached:${agentId}:${Date.now()}` as AgentId;
+    this.abortControllers.set(detachedKey, abortController);
+
+    const secrets = this.secretResolver?.(state.profile.secretBindings ?? []) ?? {};
+
+    // Stream output to the execute output channel (same as voiceCommand)
+    const onOutput: ExecutionOptions['onOutput'] = (data) => {
+      this.eventBus.emit('agent:executeOutput', { agentId, data: this.redact(data) });
+    };
+
+    const onProgress: ExecutionOptions['onProgress'] = (event) => {
+      this.eventBus.emit('agent:progress', {
+        agentId,
+        agentName: state.profile.name,
+        agentRuntime: state.profile.runtime,
+        agentColor: state.profile.color,
+        type: event.type,
+        summary: event.summary,
+      });
+    };
+
+    try {
+      const result = await runtime.execute(enrichedProfile, text, {
+        cwd: state.profile.cwd,
+        env: { JAM_AGENT_ID: agentId, ...secrets },
+        onProgress,
+        onOutput,
+        signal: abortController.signal,
+      });
+
+      result.text = sanitizeResultText(result.text);
+      result.text = this.redact(result.text);
+
+      // Store session ID for conversation continuity
+      if (result.sessionId) {
+        this.voiceSessions.set(agentId, result.sessionId);
+      }
+
+      // Record conversation as hidden (task-triggered, not user-initiated)
+      if (state.profile.cwd) {
+        const userTs = new Date().toISOString();
+        this.contextBuilder.recordConversation(state.profile.cwd, {
+          timestamp: userTs, role: 'user', content: text, source: 'text', hidden: true,
+        }).catch(() => {});
+        if (result.text) {
+          const agentTs = new Date(Date.now() + 1).toISOString();
+          this.contextBuilder.recordConversation(state.profile.cwd, {
+            timestamp: agentTs, role: 'agent', content: result.text, source: 'text', hidden: true,
+          }).catch(() => {});
+        }
+      }
+
+      return { success: result.success, text: result.text, error: result.error };
+    } catch (err) {
+      return { success: false, error: String(err) };
+    } finally {
+      this.abortControllers.delete(detachedKey);
+    }
   }
 
   /** Get the current task status for an agent (from in-memory tracker) */
@@ -476,7 +579,7 @@ export class AgentManager {
   /** Enqueue a command for an agent. If idle, runs immediately.
    *  If busy, queues the message and processes it when the current task finishes.
    *  Returns the number of messages ahead in the queue (0 = running now). */
-  enqueueCommand(agentId: AgentId, text: string, source: 'text' | 'voice' = 'voice'): {
+  enqueueCommand(agentId: AgentId, text: string, source: 'text' | 'voice' = 'voice', options?: { hidden?: boolean }): {
     promise: Promise<{ success: boolean; text?: string; error?: string }>;
     queuePosition: number;
   } {
@@ -490,7 +593,7 @@ export class AgentManager {
       resolve = r;
     });
 
-    queue.push({ text, source, resolve });
+    queue.push({ text, source, hidden: options?.hidden, resolve });
     const queuePosition = queue.length - 1;
 
     // Kick off processing if not already running
@@ -515,7 +618,7 @@ export class AgentManager {
     while (queue && queue.length > 0) {
       const msg = queue.shift()!;
       try {
-        const result = await this.voiceCommand(agentId, msg.text, msg.source);
+        const result = await this.voiceCommand(agentId, msg.text, msg.source, msg.hidden);
         msg.resolve(result);
       } catch (err) {
         msg.resolve({ success: false, error: String(err) });

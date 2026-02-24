@@ -2,6 +2,8 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { app } from 'electron';
 import { createLogger } from '@jam/core';
+import type { ModelTierConfig } from '@jam/core';
+import { DEFAULT_MODEL_TIERS } from '@jam/core';
 
 const log = createLogger('Config');
 
@@ -10,11 +12,27 @@ export type TTSProviderType = 'openai' | 'elevenlabs';
 
 export type VoiceSensitivity = 'low' | 'medium' | 'high';
 
+export interface CodeImprovementConfig {
+  /** Whether the self-improving code system is active (opt-in) */
+  enabled: boolean;
+  /** Git branch for improvements (agents work here, never on main) */
+  branch: string;
+  /** Command to verify improvements are safe */
+  testCommand: string;
+  /** Repository directory (auto-detected if empty) */
+  repoDir: string;
+  /** Rate limit: max improvements per day */
+  maxImprovementsPerDay: number;
+  /** Only these agents can propose improvements (empty = all) */
+  allowedAgentIds: string[];
+}
+
 export interface JamConfig {
   sttProvider: STTProviderType;
   ttsProvider: TTSProviderType;
   sttModel: string;
   ttsVoice: string;
+  ttsSpeed: number;
   defaultModel: string;
   defaultRuntime: string;
   theme: 'dark' | 'light';
@@ -23,6 +41,13 @@ export interface JamConfig {
   minRecordingMs: number;
   noSpeechThreshold: number;
   noiseBlocklist: string[];
+  // Model tier system
+  modelTiers: ModelTierConfig;
+  teamRuntime: string;
+  // Scheduling
+  scheduleCheckIntervalMs: number;
+  // Code improvement
+  codeImprovement: CodeImprovementConfig;
 }
 
 const DEFAULT_CONFIG: JamConfig = {
@@ -30,6 +55,7 @@ const DEFAULT_CONFIG: JamConfig = {
   ttsProvider: 'openai',
   sttModel: 'whisper-1',
   ttsVoice: 'alloy',
+  ttsSpeed: 1.25,
   defaultModel: 'claude-opus-4-6',
   defaultRuntime: 'claude-code',
   theme: 'dark',
@@ -60,6 +86,20 @@ const DEFAULT_CONFIG: JamConfig = {
     'i',
     'it',
   ],
+  // Model tier defaults: best cost/performance balance
+  modelTiers: { ...DEFAULT_MODEL_TIERS },
+  teamRuntime: 'claude-code',
+  // Scheduling
+  scheduleCheckIntervalMs: 60_000,
+  // Code improvement (opt-in, disabled by default)
+  codeImprovement: {
+    enabled: false,
+    branch: 'jam/auto-improve',
+    testCommand: 'yarn typecheck && yarn test',
+    repoDir: '',
+    maxImprovementsPerDay: 5,
+    allowedAgentIds: [],
+  },
 };
 
 export function loadConfig(): JamConfig {
@@ -99,7 +139,15 @@ export function loadConfig(): JamConfig {
     envOverrides.defaultModel = process.env.JAM_DEFAULT_MODEL;
   }
 
-  const merged = { ...DEFAULT_CONFIG, ...fileConfig, ...envOverrides };
+  // Deep merge nested objects so partial overrides don't erase defaults
+  const merged: JamConfig = {
+    ...DEFAULT_CONFIG,
+    ...fileConfig,
+    ...envOverrides,
+    modelTiers: { ...DEFAULT_CONFIG.modelTiers, ...fileConfig.modelTiers },
+    codeImprovement: { ...DEFAULT_CONFIG.codeImprovement, ...fileConfig.codeImprovement },
+  };
+
   log.info(`Config resolved: stt=${merged.sttProvider}, tts=${merged.ttsProvider}, runtime=${merged.defaultRuntime}, theme=${merged.theme}`);
   return merged;
 }

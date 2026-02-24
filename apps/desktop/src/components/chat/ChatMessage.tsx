@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 import type { ChatMessage } from '@/store/chatSlice';
@@ -19,6 +19,51 @@ function formatTime(ts: number): string {
 }
 
 export const ChatMessageView: React.FC<ChatMessageProps> = ({ message, onViewOutput, isThreadOpen }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  // System task notification — compact with expandable output
+  if (message.role === 'system' && message.taskResult) {
+    const { title, success, summary } = message.taskResult;
+    return (
+      <div className="flex items-start gap-2 mb-3 px-2">
+        <div
+          className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5"
+          style={{ backgroundColor: '#8b5cf620', color: '#8b5cf6' }}
+        >
+          J
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-medium ${success ? 'text-zinc-400' : 'text-red-400'}`}>
+              {success ? 'Completed' : 'Failed'}: {title}
+            </span>
+            <span className="text-[10px] text-zinc-600">{formatTime(message.timestamp)}</span>
+          </div>
+          {summary && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="mt-0.5 flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              <svg
+                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round"
+                className={`transition-transform ${expanded ? 'rotate-90' : ''}`}
+              >
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              {expanded ? 'Hide output' : 'View output'}
+            </button>
+          )}
+          {expanded && summary && (
+            <div className="mt-1.5 bg-zinc-800/50 border border-zinc-700/40 rounded-lg px-3 py-2 text-xs text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
+              {summary}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (message.role === 'system') {
     return (
       <div className="flex justify-center mb-4">

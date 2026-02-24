@@ -27,6 +27,7 @@ export interface RelationshipEntry {
 
 export interface SoulEntry {
   persona: string;
+  role: string;
   traits: Record<string, number>;
   goals: string[];
   strengths: string[];
@@ -60,6 +61,8 @@ export interface TeamSlice {
   channels: ChannelEntry[];
   activeChannelId: string | null;
   channelMessages: Record<string, ChannelMessageEntry[]>;
+  /** Agents currently undergoing reflection — persists across tab switches */
+  reflectingAgents: Set<string>;
 
   setStats: (agentId: string, stats: StatsEntry) => void;
   setAllStats: (stats: Record<string, StatsEntry>) => void;
@@ -70,6 +73,7 @@ export interface TeamSlice {
   setActiveChannel: (channelId: string | null) => void;
   addChannelMessage: (channelId: string, message: ChannelMessageEntry) => void;
   prependChannelMessages: (channelId: string, channelMessages: ChannelMessageEntry[]) => void;
+  setReflecting: (agentId: string, reflecting: boolean) => void;
 }
 
 export const createTeamSlice: StateCreator<
@@ -84,6 +88,7 @@ export const createTeamSlice: StateCreator<
   channels: [],
   activeChannelId: null,
   channelMessages: {},
+  reflectingAgents: new Set<string>(),
 
   setStats: (agentId, stats) =>
     set((state) => ({
@@ -130,4 +135,12 @@ export const createTeamSlice: StateCreator<
         [channelId]: [...msgs, ...(state.channelMessages[channelId] ?? [])],
       },
     })),
+
+  setReflecting: (agentId, reflecting) =>
+    set((state) => {
+      const next = new Set(state.reflectingAgents);
+      if (reflecting) next.add(agentId);
+      else next.delete(agentId);
+      return { reflectingAgents: next };
+    }),
 });

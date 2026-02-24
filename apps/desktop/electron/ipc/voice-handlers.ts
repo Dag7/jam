@@ -218,7 +218,8 @@ export function registerVoiceHandlers(
         const voiceId = (agent.profile.voice.ttsVoiceId && agent.profile.voice.ttsVoiceId !== 'default')
           ? agent.profile.voice.ttsVoiceId
           : config.ttsVoice;
-        const audioPath = await voiceService.synthesize(text, voiceId, agentId);
+        const speed = agent.profile.voice.speed ?? config.ttsSpeed ?? 1.0;
+        const audioPath = await voiceService.synthesize(text, voiceId, agentId, { speed });
         return { success: true, audioPath };
       } catch (error) {
         return { success: false, error: String(error) };

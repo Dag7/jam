@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { EventBus } from '@jam/eventbus';
 import {
@@ -25,7 +25,7 @@ import {
   OpenAITTSProvider,
 } from '@jam/voice';
 import type { ISTTProvider, ITTSProvider, AgentState } from '@jam/core';
-import { createLogger } from '@jam/core';
+import { createLogger, JAM_SYSTEM_PROFILE } from '@jam/core';
 import { FileMemoryStore } from '@jam/memory';
 import {
   FileTaskStore,
@@ -38,7 +38,14 @@ import {
   SelfImprovementEngine,
   InboxWatcher,
   TeamEventHandler,
+  ModelResolver,
+  TeamExecutor,
+  FileScheduleStore,
+  FileImprovementStore,
+  CodeImprovementEngine,
+  TaskExecutor,
 } from '@jam/team';
+import type { ITeamExecutor } from '@jam/team';
 import { AppStore } from './storage/store';
 import { loadConfig, type JamConfig, type STTProviderType, type TTSProviderType } from './config';
 
@@ -78,11 +85,18 @@ export class Orchestrator {
   readonly relationshipStore: FileRelationshipStore;
   readonly statsStore: FileStatsStore;
   readonly soulManager: SoulManager;
+  readonly scheduleStore: FileScheduleStore;
   readonly taskScheduler: TaskScheduler;
   readonly taskAssigner: SmartTaskAssigner;
   readonly selfImprovement: SelfImprovementEngine;
   readonly inboxWatcher: InboxWatcher;
   readonly teamEventHandler: TeamEventHandler;
+  readonly modelResolver: ModelResolver;
+  readonly teamExecutor: ITeamExecutor;
+  readonly improvementStore: FileImprovementStore;
+  readonly codeImprovement: CodeImprovementEngine | null = null;
+  private readonly sharedSkillsDir: string;
+  readonly taskExecutor: TaskExecutor;
 
   private mainWindow: BrowserWindow | null = null;
 
@@ -102,7 +116,8 @@ export class Orchestrator {
     this.runtimeRegistry.register(new CursorRuntime());
 
     // Shared skills directory — injected into every agent's context
-    const sharedSkillsDir = join(homedir(), '.jam', 'shared-skills');
+    this.sharedSkillsDir = join(homedir(), '.jam', 'shared-skills');
+    const sharedSkillsDir = this.sharedSkillsDir;
 
     // Create agent manager with injected dependencies
     const contextBuilder = new AgentContextBuilder();
@@ -120,6 +135,9 @@ export class Orchestrator {
       sharedSkillsDir,
     );
 
+    // Bootstrap JAM system agent (creates if not already persisted)
+    this.agentManager.ensureSystemAgent(JAM_SYSTEM_PROFILE);
+
     // Create memory store
     const agentsDir = join(app.getPath('userData'), 'agents');
     this.memoryStore = new FileMemoryStore(agentsDir);
@@ -132,14 +150,101 @@ export class Orchestrator {
     this.statsStore = new FileStatsStore(teamDir);
     this.soulManager = new SoulManager(agentsDir, this.eventBus);
     this.taskAssigner = new SmartTaskAssigner();
-    this.taskScheduler = new TaskScheduler(this.taskStore, this.eventBus);
+    this.scheduleStore = new FileScheduleStore(teamDir);
+    this.taskScheduler = new TaskScheduler(
+      this.taskStore,
+      this.eventBus,
+      this.scheduleStore,
+      this.config.scheduleCheckIntervalMs,
+    );
     this.selfImprovement = new SelfImprovementEngine(
       this.taskStore,
       this.statsStore,
       this.soulManager,
       this.eventBus,
     );
-    this.inboxWatcher = new InboxWatcher(agentsDir, this.taskStore, this.eventBus);
+
+    // Model tier system — resolves operations → tier → model string
+    this.modelResolver = new ModelResolver(this.config.modelTiers, this.config.teamRuntime);
+    this.teamExecutor = new TeamExecutor(
+      this.modelResolver,
+      (runtimeId, model, prompt, cwd) => this.executeOnTeamRuntime(runtimeId, model, prompt, cwd),
+      this.eventBus,
+    );
+    this.selfImprovement.setTeamExecutor(this.teamExecutor);
+    this.selfImprovement.setConversationLoader(async (agentId, limit) => {
+      const result = await this.agentManager.loadConversationHistory({ agentId, limit });
+      return result.messages.map((m) => ({
+        timestamp: m.timestamp,
+        role: m.role,
+        content: m.content,
+      }));
+    });
+
+    this.selfImprovement.setWorkspaceScanner(async (agentId) => {
+      const agent = this.agentManager.get(agentId);
+      const cwd = agent?.profile.cwd;
+      if (!cwd || !existsSync(cwd)) return null;
+
+      // Scan top-level entries (skip hidden dirs except .services.json)
+      const dirEntries = await readdir(cwd, { withFileTypes: true });
+      const entries: Array<{ name: string; type: 'file' | 'dir' }> = [];
+      const SKIP = new Set(['node_modules', '.git', 'conversations', '__pycache__']);
+
+      for (const entry of dirEntries) {
+        if (entry.name.startsWith('.') && entry.name !== '.services.json') continue;
+        if (SKIP.has(entry.name)) continue;
+        entries.push({ name: entry.name, type: entry.isDirectory() ? 'dir' : 'file' });
+      }
+
+      // Use ServiceRegistry for consistent, deduplicated service data
+      const tracked = await this.serviceRegistry.scan(agentId, cwd);
+      const services = tracked.map(s => ({
+        name: s.name,
+        port: s.port,
+        alive: s.alive ?? false,
+      }));
+
+      // Read notable files (READMEs, status docs — truncated)
+      const NOTABLE = /^(readme|status|guide|plan|todo).*\.(md|txt)$/i;
+      const notableFiles: Array<{ name: string; content: string }> = [];
+      for (const entry of entries) {
+        if (entry.type === 'file' && NOTABLE.test(entry.name)) {
+          try {
+            const fileStat = await stat(join(cwd, entry.name));
+            if (fileStat.size > 50_000) continue; // skip huge files
+            let content = await readFile(join(cwd, entry.name), 'utf-8');
+            if (content.length > 1000) content = content.slice(0, 1000) + '\n...(truncated)';
+            notableFiles.push({ name: entry.name, content });
+          } catch { /* skip unreadable */ }
+        }
+      }
+
+      return { entries, services, notableFiles };
+    });
+
+    // Code improvement system (opt-in)
+    this.improvementStore = new FileImprovementStore(teamDir);
+    if (this.config.codeImprovement.enabled) {
+      const repoDir = this.config.codeImprovement.repoDir || process.cwd();
+      this.codeImprovement = new CodeImprovementEngine(
+        repoDir,
+        this.config.codeImprovement.branch,
+        this.teamExecutor,
+        this.improvementStore,
+        this.eventBus,
+        (_agentId, prompt, cwd) => this.executeOnTeamRuntime(
+          this.config.teamRuntime,
+          this.config.modelTiers.creative,
+          prompt,
+          cwd,
+        ),
+        this.config.codeImprovement.testCommand,
+        this.config.codeImprovement.maxImprovementsPerDay,
+      );
+    }
+
+    this.inboxWatcher = new InboxWatcher(this.taskStore, this.eventBus);
     this.teamEventHandler = new TeamEventHandler(
       this.eventBus,
       this.statsStore,
@@ -147,7 +252,17 @@ export class Orchestrator {
       this.taskStore,
       this.taskAssigner,
       () => this.agentManager.list().map((a) => a.profile),
+      this.communicationHub,
     );
+
+    this.taskExecutor = new TaskExecutor({
+      taskStore: this.taskStore,
+      eventBus: this.eventBus,
+      executeOnAgent: (agentId, prompt) =>
+        this.agentManager.executeDetached(agentId, prompt),
+      isAgentAvailable: (agentId) => !!this.agentManager.get(agentId),
+      abortAgent: (agentId) => this.agentManager.abortTask(agentId),
+    });
 
     // Bootstrap shared skills (creates directory + default skills if missing)
     this.bootstrapSharedSkills(sharedSkillsDir).catch(err =>
@@ -155,15 +270,77 @@ export class Orchestrator {
     );
   }
 
-  /** Create shared skills directory and default skill files if they don't exist */
+  /** Create shared skills directory and update default skill files */
   private async bootstrapSharedSkills(dir: string): Promise<void> {
     await mkdir(dir, { recursive: true });
 
+    // Always overwrite — ensures agents get the latest skill instructions
     const processSkillPath = join(dir, 'process-management.md');
-    if (!existsSync(processSkillPath)) {
-      await writeFile(processSkillPath, PROCESS_MANAGEMENT_SKILL, 'utf-8');
-      log.info(`Created shared skill: ${processSkillPath}`);
+    await writeFile(processSkillPath, PROCESS_MANAGEMENT_SKILL, 'utf-8');
+
+    // Secrets handling skill
+    const secretsSkillPath = join(dir, 'secrets-handling.md');
+    await writeFile(secretsSkillPath, SECRETS_HANDLING_SKILL, 'utf-8');
+
+    // Team communication skill — build dynamically with current agent roster
+    const teamSkillPath = join(dir, 'team-communication.md');
+    const teamSkill = this.buildTeamCommunicationSkill();
+    await writeFile(teamSkillPath, teamSkill, 'utf-8');
+  }
+
+  /** Rebuild the team communication skill file when agents change */
+  private refreshTeamSkill(): void {
+    const teamSkillPath = join(this.sharedSkillsDir, 'team-communication.md');
+    writeFile(teamSkillPath, this.buildTeamCommunicationSkill(), 'utf-8').catch(() => {});
+  }
+
+  /** Build the team communication skill with the current agent roster */
+  private buildTeamCommunicationSkill(): string {
+    const agents = this.agentManager.list();
+    const roster = agents
+      .filter(a => !a.profile.isSystem)
+      .map(a => `- **${a.profile.name}** (ID: ${a.profile.id}) — workspace: ${a.profile.cwd ?? 'unknown'}`)
+      .join('\n');
+
+    // Resolve the JAM system agent's inbox path for work-sharing updates
+    const systemAgent = agents.find(a => a.profile.isSystem);
+    const systemInbox = systemAgent?.profile.cwd
+      ? `${systemAgent.profile.cwd}/inbox.jsonl`
+      : '~/.jam/agents/jam-system/inbox.jsonl';
+
+    return TEAM_COMMUNICATION_SKILL
+      .replace('{{AGENT_ROSTER}}', roster || '- No other agents yet')
+      .replace('{{JAM_SYSTEM_INBOX}}', systemInbox);
+  }
+
+  /** Execute a prompt on a team runtime (used by TeamExecutor for autonomous ops) */
+  private async executeOnTeamRuntime(
+    runtimeId: string,
+    model: string,
+    prompt: string,
+    cwd?: string,
+  ): Promise<string> {
+    const runtime = this.runtimeRegistry.get(runtimeId);
+    if (!runtime) {
+      throw new Error(`Team runtime '${runtimeId}' not found`);
     }
+
+    const teamProfile: import('@jam/core').AgentProfile = {
+      id: `team-executor-${Date.now()}`,
+      name: 'Team Executor',
+      runtime: runtimeId,
+      model,
+      color: '#6366f1',
+      voice: { ttsVoiceId: 'default' },
+      allowFullAccess: true,
+      cwd: cwd ?? process.cwd(),
+    };
+
+    const result = await runtime.execute(teamProfile, prompt, { cwd });
+    if (!result.success) {
+      throw new Error(result.error ?? 'Team runtime execution failed');
+    }
+    return result.text;
   }
 
   /** Safely send IPC to renderer — guards against destroyed window during HMR */
@@ -194,14 +371,21 @@ export class Orchestrator {
       }
     });
 
-    this.eventBus.on('agent:created', (data) => {
+    this.eventBus.on('agent:created', (data: { agentId: string; profile: { cwd?: string } }) => {
       this.sendToRenderer('agents:created', data);
       this.syncAgentNames();
+      // Watch new agent's inbox + refresh team skill roster
+      if (data.profile.cwd) {
+        this.inboxWatcher.watchAgent(data.agentId, data.profile.cwd);
+      }
+      this.refreshTeamSkill();
     });
 
-    this.eventBus.on('agent:deleted', (data) => {
+    this.eventBus.on('agent:deleted', (data: { agentId: string }) => {
       this.sendToRenderer('agents:deleted', data);
       this.syncAgentNames();
+      this.inboxWatcher.unwatchAgent(data.agentId);
+      this.refreshTeamSkill();
     });
 
     this.eventBus.on('agent:updated', (data) => {
@@ -302,6 +486,39 @@ export class Orchestrator {
     this.eventBus.on('trust:updated', (data) => {
       this.sendToRenderer('trust:updated', data);
     });
+
+    // Task execution results → quiet system notification (no voice, no full chat message)
+    this.eventBus.on('task:resultReady', (data: {
+      taskId: string;
+      agentId: string;
+      title: string;
+      text: string;
+      success: boolean;
+    }) => {
+      this.sendToRenderer('chat:systemNotification', {
+        taskId: data.taskId,
+        agentId: data.agentId,
+        title: data.title,
+        success: data.success,
+        summary: data.success
+          ? data.text.slice(0, 200)
+          : data.text,
+      });
+    });
+
+    // Code improvement events
+    this.eventBus.on('code:proposed', (data) => {
+      this.sendToRenderer('code:proposed', data);
+    });
+    this.eventBus.on('code:improved', (data) => {
+      this.sendToRenderer('code:improved', data);
+    });
+    this.eventBus.on('code:failed', (data) => {
+      this.sendToRenderer('code:failed', data);
+    });
+    this.eventBus.on('code:rolledback', (data) => {
+      this.sendToRenderer('code:rolledback', data);
+    });
   }
 
   initVoice(): void {
@@ -392,9 +609,13 @@ export class Orchestrator {
     const agent = this.agentManager.get(agentId);
     if (!agent) return;
 
+    // System agents don't speak — their results are shown as text notifications
+    if (agent.profile.isSystem) return;
+
     try {
       const voiceId = this.resolveVoiceId(agent);
-      const audioPath = await this.voiceService.synthesize(text, voiceId, agentId);
+      const speed = agent.profile.voice.speed ?? this.config.ttsSpeed ?? 1.0;
+      const audioPath = await this.voiceService.synthesize(text, voiceId, agentId, { speed });
       const audioBuffer = await readFile(audioPath);
       this.sendToRenderer('voice:ttsAudio', {
         agentId,
@@ -496,25 +717,31 @@ export class Orchestrator {
 
     // Start team services
     this.teamEventHandler.start();
-    this.taskScheduler.start();
+    this.taskExecutor.start();
+    await this.taskScheduler.start();
     for (const agent of agents) {
-      this.inboxWatcher.watchAgent(agent.profile.id);
+      if (agent.profile.cwd) {
+        this.inboxWatcher.watchAgent(agent.profile.id, agent.profile.cwd);
+      }
     }
     log.info('Team services started');
   }
 
   /** Scan all agent workspaces for .services.json and update the registry */
-  scanServices(): void {
+  async scanServices(): Promise<void> {
     const agents = this.agentManager.list().map(a => ({
       id: a.profile.id,
       cwd: a.profile.cwd,
     }));
-    this.serviceRegistry.scanAll(agents).catch(err =>
-      log.warn(`Service scan failed: ${String(err)}`),
-    );
+    try {
+      await this.serviceRegistry.scanAll(agents);
+    } catch (err) {
+      log.warn(`Service scan failed: ${String(err)}`);
+    }
   }
 
   shutdown(): void {
+    this.taskExecutor.stop();
     this.teamEventHandler.stop();
     this.taskScheduler.stop();
     this.inboxWatcher.stopAll();
@@ -571,11 +798,15 @@ const PROCESS_MANAGEMENT_SKILL = [
   '',
   '## Register the Service (REQUIRED)',
   '',
-  'After starting a background process, write a JSON line to `.services.json` in your workspace directory so Jam can track it:',
+  'After starting a background process, write a JSON line to `.services.json` in your workspace directory so Jam can track and restart it.',
+  'You MUST include `command` and `cwd` so the user can restart the service from the Jam UI:',
   '',
   '```bash',
-  'echo \'{"pid":\'$SERVER_PID\',"port":3000,"name":"dev-server","logFile":"logs/server.log","startedAt":"\'$(date -u +%FT%TZ)\'"}\' >> .services.json',
+  'echo \'{"pid":\'$SERVER_PID\',"port":3000,"name":"dev-server","command":"npm run dev","cwd":"\'$(pwd)\'","logFile":"logs/server.log","startedAt":"\'$(date -u +%FT%TZ)\'"}\' >> .services.json',
   '```',
+  '',
+  'Required fields: `pid`, `name`, `command`, `cwd`, `startedAt`',
+  'Optional fields: `port`, `logFile`',
   '',
   '## How to Check if a Process is Running',
   '',
@@ -608,4 +839,111 @@ const PROCESS_MANAGEMENT_SKILL = [
   '- Do NOT open a browser automatically unless asked',
   '- If the user says "check logs" or "show logs", use `tail -50` (bounded), never `tail -f`',
   '- If something fails, show the last 20 lines of the log file to diagnose',
+].join('\n');
+
+const TEAM_COMMUNICATION_SKILL = [
+  '---',
+  'name: team-communication',
+  'description: How to send tasks, delegate work, and share updates with other agents',
+  'triggers: ask, tell, send, delegate, message, request, assign, inbox, agent, team, teammate, share, update, broadcast, sync, publish, done, finished, completed',
+  '---',
+  '',
+  '# Team Communication',
+  '',
+  'You are part of a team of AI agents managed by Jam.',
+  '',
+  '## Your Teammates',
+  '{{AGENT_ROSTER}}',
+  '',
+  '## Delegating Tasks',
+  '',
+  'To send a task to another agent, write a JSON line to their `inbox.jsonl`:',
+  '',
+  '```bash',
+  'echo \'{"title":"Check Google stock price","description":"Look up the current GOOG stock price and report back","from":"\'$JAM_AGENT_ID\'"}\' >> /path/to/target-agent-workspace/inbox.jsonl',
+  '```',
+  '',
+  'Fields: `title` (required), `description` (required), `from` (required — use `$JAM_AGENT_ID`),',
+  '`priority` (optional: low/normal/high/critical), `tags` (optional: string array)',
+  '',
+  '## Sharing Work Updates',
+  '',
+  'When you finish significant work (built a feature, deployed a service, fixed a bug),',
+  'write a **brief** 1-2 sentence summary to the JAM system agent\'s inbox so the team stays informed:',
+  '',
+  '```bash',
+  'echo \'{"title":"Work update","description":"Built and deployed the marketing dashboard on port 8085. API runs on port 3001.","from":"\'$JAM_AGENT_ID\'"}\' >> {{JAM_SYSTEM_INBOX}}',
+  '```',
+  '',
+  'Keep updates short and factual. Include: what you did, relevant URLs/ports, any blockers.',
+  'Jam automatically broadcasts task completions to the team feed. Only share manual updates',
+  'for work that teammates would benefit from knowing about (new services, shared resources, API changes).',
+  '',
+  '## Rules',
+  '- Use the target agent\'s **workspace directory** path from the roster above',
+  '- Your agent ID is available as the `JAM_AGENT_ID` environment variable',
+  '- The inbox file is processed automatically — do NOT wait for a response',
+  '- Keep task descriptions clear and actionable',
+  '- After writing to the inbox, tell the user you\'ve delegated the task',
+].join('\n');
+
+const SECRETS_HANDLING_SKILL = [
+  '---',
+  'name: secrets-handling',
+  'description: How to handle API keys, tokens, passwords, and other secrets safely',
+  'triggers: api, key, token, secret, password, credential, auth, env, environment, .env, config, database, connection, stripe, openai, firebase, supabase, aws, gcp, azure, mongodb, redis, postgres, mysql',
+  '---',
+  '',
+  '# Secrets Handling — CRITICAL SECURITY RULES',
+  '',
+  '## NEVER Hardcode Secrets',
+  '',
+  'You MUST NEVER write API keys, tokens, passwords, or any secret values directly into source code, config files, or scripts.',
+  '',
+  'Bad (NEVER do this):',
+  '```',
+  'const API_KEY = "sk-abc123..."',
+  'OPENAI_API_KEY=sk-abc123',
+  'password: "mypassword"',
+  '```',
+  '',
+  '## How Secrets Work in Jam',
+  '',
+  'The user can bind secrets to you through the Jam UI (Agent Settings → Secrets).',
+  'These secrets are injected into your process as **environment variables** at startup.',
+  '',
+  '## How to Use Secrets',
+  '',
+  '1. **Always read secrets from environment variables:**',
+  '```javascript',
+  'const apiKey = process.env.OPENAI_API_KEY;',
+  'const dbUrl = process.env.DATABASE_URL;',
+  '```',
+  '',
+  '2. **For .env files, use placeholders and tell the user:**',
+  '```bash',
+  '# Create .env with placeholder values',
+  'cat > .env << \'EOF\'',
+  'OPENAI_API_KEY=${OPENAI_API_KEY}',
+  'DATABASE_URL=${DATABASE_URL}',
+  'EOF',
+  '```',
+  'Then tell the user: "I\'ve created .env with placeholders. Please add your actual keys through the Jam Secrets Manager (Agent Settings → Secrets) and bind them as environment variables."',
+  '',
+  '3. **For config files that need secrets, use environment variable references:**',
+  '```javascript',
+  '// config.js',
+  'module.exports = {',
+  '  apiKey: process.env.API_KEY,',
+  '  dbConnection: process.env.DATABASE_URL,',
+  '};',
+  '```',
+  '',
+  '## Rules',
+  '- NEVER write actual secret values into any file — not even temporarily',
+  '- NEVER echo, log, or print secret values',
+  '- NEVER commit .env files with real values to git',
+  '- Always add `.env` to `.gitignore`',
+  '- When a project needs an API key, use `process.env.VAR_NAME` and tell the user to configure the secret in Jam',
+  '- If you see hardcoded secrets in existing code, flag it to the user immediately',
 ].join('\n');
