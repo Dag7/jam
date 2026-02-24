@@ -1,6 +1,6 @@
 import type { Task, ITaskStore, IEventBus } from '@jam/core';
 import { Events, createLogger, JAM_SYSTEM_AGENT_ID } from '@jam/core';
-import { isCronDue } from './cron-parser.js';
+import { nextCronRun } from './cron-parser.js';
 import type { FileScheduleStore, PersistedSchedule } from './stores/file-schedule-store.js';
 
 const log = createLogger('TaskScheduler');
@@ -34,10 +34,10 @@ const SYSTEM_SCHEDULES: Array<{
   enabled?: boolean;
 }> = [
   {
-    name: 'Daily Self-Reflection',
-    pattern: { cron: '0 2 * * *' },
+    name: 'Self-Reflection',
+    pattern: { cron: '0 */3 * * *' },
     taskTemplate: {
-      title: 'Daily Self-Reflection',
+      title: 'Self-Reflection',
       description: 'Analyze recent performance, extract learnings, adjust traits and goals.',
       priority: 'normal',
       source: 'system',
@@ -242,8 +242,11 @@ export class TaskScheduler {
   ): boolean {
     // Cron expression takes priority
     if (pattern.cron) {
-      if (!isCronDue(pattern.cron, now)) return false;
-      return !this.ranThisMinute(lastRun, now);
+      if (!lastRun) return true; // Never run — fire immediately
+      // Check if there was a scheduled run between lastRun and now that we missed
+      const from = new Date(lastRun);
+      const next = nextCronRun(pattern.cron, from);
+      return next !== null && next.getTime() <= now.getTime();
     }
 
     // Interval-based
@@ -253,29 +256,16 @@ export class TaskScheduler {
       return elapsed >= pattern.intervalMs;
     }
 
-    // Time-based (hour + minute)
+    // Time-based (hour + minute) — build an equivalent cron and use the same logic
     if (pattern.hour !== undefined && pattern.minute !== undefined) {
-      if (pattern.dayOfWeek !== undefined && now.getDay() !== pattern.dayOfWeek) {
-        return false;
-      }
-      if (now.getHours() !== pattern.hour || now.getMinutes() !== pattern.minute) {
-        return false;
-      }
-      return !this.ranThisMinute(lastRun, now);
+      const dow = pattern.dayOfWeek !== undefined ? String(pattern.dayOfWeek) : '*';
+      const cron = `${pattern.minute} ${pattern.hour} * * ${dow}`;
+      if (!lastRun) return true;
+      const from = new Date(lastRun);
+      const next = nextCronRun(cron, from);
+      return next !== null && next.getTime() <= now.getTime();
     }
 
     return false;
-  }
-
-  private ranThisMinute(lastRun: string | null, now: Date): boolean {
-    if (!lastRun) return false;
-    const last = new Date(lastRun);
-    return (
-      last.getFullYear() === now.getFullYear() &&
-      last.getMonth() === now.getMonth() &&
-      last.getDate() === now.getDate() &&
-      last.getHours() === now.getHours() &&
-      last.getMinutes() === now.getMinutes()
-    );
   }
 }
