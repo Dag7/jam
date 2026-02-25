@@ -93,10 +93,15 @@ export class CursorRuntime extends BaseAgentRuntime {
 
   protected parseExecutionOutput(stdout: string, stderr: string, code: number): ExecutionResult {
     if (code !== 0) {
+      // If the JSONL stream has a valid result, trust it over the exit code
+      const parsed = parseJsonlResult(stdout);
+      if (parsed.text && parsed.text.length > 0) {
+        return parsed;
+      }
+
       const lastLine = stripAnsiSimple(stdout).trim().split('\n').pop()?.trim();
       const errMsg = (stderr.trim() || lastLine || `Exit code ${code}`).slice(0, 500);
-      const partial = parseJsonlResult(stdout);
-      return { success: false, text: '', error: errMsg, usage: partial.usage };
+      return { success: false, text: '', error: errMsg, usage: parsed.usage };
     }
 
     return parseJsonlResult(stdout);

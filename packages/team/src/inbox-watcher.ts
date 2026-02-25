@@ -65,13 +65,25 @@ export class InboxWatcher {
       for (const line of lines) {
         try {
           const request = JSON.parse(line) as {
-            title: string;
-            description: string;
+            title?: string;
+            description?: string;
             priority?: string;
             assignedTo?: string;
             from?: string;
             tags?: string[];
           };
+
+          const description = request.description || '';
+
+          // Derive title: use explicit title, or extract first line of description
+          let title = request.title;
+          if (!title || title === 'undefined') {
+            const firstLine = description.split('\n')[0]?.trim() ?? '';
+            title = firstLine.length > 0
+              ? firstLine.slice(0, 100)
+              : 'Untitled task';
+            log.warn(`Inbox entry missing title, derived: "${title}"`);
+          }
 
           // `from` is the sender agent ID; falls back to inbox owner
           const sender = request.from || agentId;
@@ -79,8 +91,8 @@ export class InboxWatcher {
           // assignedTo defaults to inbox owner — always 'assigned' so TaskExecutor picks it up
           const assignee = request.assignedTo || agentId;
           const task = await this.taskStore.create({
-            title: request.title,
-            description: request.description || '',
+            title,
+            description,
             status: 'assigned',
             priority: (request.priority as 'low' | 'normal' | 'high' | 'critical') ?? 'normal',
             source: 'agent',
@@ -93,12 +105,12 @@ export class InboxWatcher {
           this.eventBus.emit(Events.TASK_CREATED, { task });
 
           // Notify UI about the inbox message
-          log.info(`Inbox task from ${sender} → ${agentId}: "${request.title}"`);
+          log.info(`Inbox task from ${sender} → ${agentId}: "${title}"`);
           this.eventBus.emit('task:resultReady', {
             taskId: task.id,
             agentId: sender,
-            title: request.title,
-            text: `Delegated task to ${agentId}: "${request.title}"`,
+            title,
+            text: `Delegated task to ${agentId}: "${title}"`,
             success: true,
           });
         } catch {

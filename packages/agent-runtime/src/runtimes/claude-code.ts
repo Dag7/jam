@@ -127,12 +127,18 @@ export class ClaudeCodeRuntime extends BaseAgentRuntime {
 
   protected parseExecutionOutput(stdout: string, stderr: string, code: number): ExecutionResult {
     if (code !== 0) {
+      // Check if the JSONL stream has a valid result despite non-zero exit.
+      // Claude Code can exit 1 even after producing valid output (e.g., hook failures,
+      // non-critical post-execution errors). The `result` event is authoritative.
+      const parsed = parseJsonlResult(stdout);
+      if (parsed.text && parsed.text.length > 0) {
+        return parsed; // Agent produced output — treat as success
+      }
+
       const stdoutErr = this.extractErrorFromOutput(stdout);
       const stderrErr = stderr.trim();
       const errMsg = (stdoutErr || stderrErr || `Exit code ${code}`).slice(0, 500);
-      // Still extract usage from failed runs — tokens were consumed
-      const partial = parseJsonlResult(stdout);
-      return { success: false, text: '', error: errMsg, usage: partial.usage };
+      return { success: false, text: '', error: errMsg, usage: parsed.usage };
     }
 
     return parseJsonlResult(stdout);
