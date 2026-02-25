@@ -20,6 +20,9 @@ export interface NotificationSlice {
   clearAllNotifications: () => void;
 }
 
+/** Max notifications kept in store (oldest pruned on add) */
+const MAX_NOTIFICATIONS = 200;
+
 export const createNotificationSlice: StateCreator<
   AppStore,
   [],
@@ -29,9 +32,13 @@ export const createNotificationSlice: StateCreator<
   notifications: [],
 
   addNotification: (n) =>
-    set((state) => ({
-      notifications: [n, ...state.notifications],
-    })),
+    set((state) => {
+      const updated = [n, ...state.notifications];
+      if (updated.length > MAX_NOTIFICATIONS) {
+        updated.length = MAX_NOTIFICATIONS;
+      }
+      return { notifications: updated };
+    }),
 
   markNotificationRead: (id) =>
     set((state) => ({

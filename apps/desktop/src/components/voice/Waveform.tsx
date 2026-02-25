@@ -1,41 +1,55 @@
-import React from 'react';
-import { motion } from 'motion/react';
+import React, { useEffect, useRef } from 'react';
 
 interface WaveformProps {
   isActive: boolean;
-  audioLevel?: number;
+  audioLevelRef: React.RefObject<number>;
 }
 
 const BAR_COUNT = 5;
+const BASE_HEIGHT = 4;
+const MAX_HEIGHT = 24;
 
-export const Waveform: React.FC<WaveformProps> = ({ isActive, audioLevel = 0 }) => {
+export const Waveform: React.FC<WaveformProps> = React.memo(({ isActive, audioLevelRef }) => {
+  const barsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const rafRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!isActive) return;
+
+    const animate = () => {
+      const level = audioLevelRef.current ?? 0;
+      const scaledLevel = Math.min(level * 500, 1);
+      const levelHeight = BASE_HEIGHT + scaledLevel * (MAX_HEIGHT - BASE_HEIGHT);
+
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const bar = barsRef.current[i];
+        if (!bar) continue;
+        const barVariation = 0.6 + Math.sin(i * 1.2) * 0.4;
+        const barHeight = Math.max(BASE_HEIGHT, levelHeight * barVariation);
+        bar.style.height = `${barHeight}px`;
+      }
+
+      rafRef.current = requestAnimationFrame(animate);
+    };
+
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [isActive, audioLevelRef]);
+
   if (!isActive) return null;
-
-  // Scale audio level (0-1 range) to pixel heights
-  const baseHeight = 4;
-  const maxHeight = 24;
-  const scaledLevel = Math.min(audioLevel * 500, 1); // normalize RMS to 0-1
-  const levelHeight = baseHeight + scaledLevel * (maxHeight - baseHeight);
 
   return (
     <div className="flex items-center gap-0.5 h-6">
-      {Array.from({ length: BAR_COUNT }).map((_, i) => {
-        // Offset each bar slightly for a wave effect
-        const barVariation = 0.6 + Math.sin(i * 1.2) * 0.4;
-        const barHeight = Math.max(baseHeight, levelHeight * barVariation);
-
-        return (
-          <motion.div
-            key={i}
-            className="w-1 bg-red-400 rounded-full"
-            animate={{ height: barHeight }}
-            transition={{
-              duration: 0.08,
-              ease: 'easeOut',
-            }}
-          />
-        );
-      })}
+      {Array.from({ length: BAR_COUNT }).map((_, i) => (
+        <div
+          key={i}
+          ref={(el) => { barsRef.current[i] = el; }}
+          className="w-1 bg-red-400 rounded-full transition-none"
+          style={{ height: `${BASE_HEIGHT}px` }}
+        />
+      ))}
     </div>
   );
-};
+});
+
+Waveform.displayName = 'Waveform';

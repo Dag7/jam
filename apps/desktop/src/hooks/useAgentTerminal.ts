@@ -9,7 +9,7 @@ export function useAgentTerminal(agentId: string) {
   const fitAddonRef = useRef<FitAddon | null>(null);
 
   const pendingData = useAppStore(
-    (s) => s.terminalBuffers[agentId]?.pendingData ?? [],
+    (s) => s.terminalBuffers[agentId]?.pendingData,
   );
   const flushTerminalData = useAppStore((s) => s.flushTerminalData);
 
@@ -56,13 +56,11 @@ export function useAgentTerminal(agentId: string) {
     };
   }, [agentId]);
 
-  // Write pending data
+  // Write pending data — join into single write to avoid layout thrashing
   useEffect(() => {
-    if (!terminalRef.current || pendingData.length === 0) return;
+    if (!terminalRef.current || !pendingData?.length) return;
 
-    for (const data of pendingData) {
-      terminalRef.current.write(data);
-    }
+    terminalRef.current.write(pendingData.join(''));
     flushTerminalData(agentId);
   }, [agentId, pendingData, flushTerminalData]);
 

@@ -145,12 +145,19 @@ export class Orchestrator {
         const imageManager = new ImageManager(docker, AGENT_DOCKERFILE);
         // Use content-hash versioned tag so Dockerfile changes trigger automatic rebuild
         this.config.sandbox.imageName = imageManager.resolveTag(this.config.sandbox.imageName);
+        // Throttle build progress to max 2 updates/sec — prevents flooding the renderer
+        let lastProgressAt = 0;
+        let pendingLine = '';
         this.imageReady = imageManager.ensureImage(this.config.sandbox.imageName, (line) => {
-          // Forward Docker build output as progress to the renderer
-          this.sendToRenderer('sandbox:progress', {
-            status: 'building-image',
-            message: line,
-          });
+          pendingLine = line;
+          const now = Date.now();
+          if (now - lastProgressAt >= 500) {
+            lastProgressAt = now;
+            this.sendToRenderer('sandbox:progress', {
+              status: 'building-image',
+              message: pendingLine,
+            });
+          }
         }).then(() => {
           this.sendToRenderer('sandbox:progress', {
             status: 'starting-containers',

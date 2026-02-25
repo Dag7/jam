@@ -128,10 +128,17 @@ export function useScrollToBottom(): UseScrollToBottomReturn {
     const end = endRef.current;
     if (!container || !end) return;
 
+    let rafPending = false;
     const onContentChange = () => {
       if (userInteractingRef.current) return;
       if (!shouldAutoScrollRef.current) return;
-      end.scrollIntoView({ behavior: 'instant' });
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        if (!shouldAutoScrollRef.current || userInteractingRef.current) return;
+        end.scrollIntoView({ behavior: 'instant' });
+      });
     };
 
     const mo = new MutationObserver(onContentChange);

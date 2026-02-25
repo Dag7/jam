@@ -16,7 +16,7 @@ interface AgentCardProps {
   isRunning: boolean;
 }
 
-export const AgentCard: React.FC<AgentCardProps> = ({
+export const AgentCard: React.FC<AgentCardProps> = React.memo(({
   name,
   runtime,
   color,
@@ -117,4 +117,6 @@ export const AgentCard: React.FC<AgentCardProps> = ({
       </div>
     </div>
   );
-};
+});
+
+AgentCard.displayName = 'AgentCard';

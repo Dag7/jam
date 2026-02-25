@@ -18,7 +18,7 @@ const voiceColors: Record<string, string> = {
   speaking: 'text-green-400',
 };
 
-export const HeaderBar: React.FC<HeaderBarProps> = ({
+export const HeaderBar: React.FC<HeaderBarProps> = React.memo(({
   agents,
   voiceState,
   notificationCount,
@@ -149,4 +149,5 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
       </div>
     </div>
   );
-};
+});
+HeaderBar.displayName = 'HeaderBar';

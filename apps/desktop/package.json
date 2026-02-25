@@ -33,6 +33,7 @@
     "motion": "^12.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-virtuoso": "^4.18.1",
     "streamdown": "^2.2.0",
     "zustand": "^4.5.0"
   },

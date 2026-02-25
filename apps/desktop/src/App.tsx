@@ -1,5 +1,6 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useAppStore } from '@/store';
+import { useShallow } from 'zustand/react/shallow';
 import { AppShell } from '@/components/layout/AppShell';
 import { HeaderBar } from '@/components/layout/TitleBar';
 import { IconRail, type NavTab } from '@/components/layout/Sidebar';
@@ -19,6 +20,14 @@ import { useIPCSubscriptions } from '@/hooks/useIPCSubscriptions';
 import { NotificationPanel } from '@/components/NotificationPanel';
 import { SandboxLoadingOverlay } from '@/components/SandboxLoadingOverlay';
 
+// Named selector — returns primitive (number). No array allocation.
+// Zustand's Object.is comparison prevents re-renders unless count changes.
+const selectUnreadCount = (s: ReturnType<typeof useAppStore.getState>) => {
+  let count = 0;
+  for (const n of s.notifications) if (!n.read) count++;
+  return count;
+};
+
 export default function App() {
   const navExpanded = useAppStore((s) => s.navExpanded);
   const setNavExpanded = useAppStore((s) => s.setNavExpanded);
@@ -29,22 +38,23 @@ export default function App() {
   const setThreadAgent = useAppStore((s) => s.setThreadAgent);
   const [activeTab, setActiveTab] = useState<NavTab>('chat');
   const [notificationOpen, setNotificationOpen] = useState(false);
-  const unreadCount = useAppStore((s) => s.notifications.filter((n) => !n.read).length);
+  const unreadCount = useAppStore(selectUnreadCount);
   const voiceState = useAppStore((s) => s.voiceState);
-  const agents = useAppStore((s) => s.agents);
   const sandboxStatus = useAppStore((s) => s.sandboxStatus);
   const sandboxMessage = useAppStore((s) => s.sandboxMessage);
 
-  const headerAgents = useMemo(() =>
-    Object.values(agents)
-      .filter((a) => !a.profile.isSystem && a.status === 'running')
-      .map((a) => ({
-        id: a.profile.id,
-        name: a.profile.name,
-        color: a.profile.color,
-        visualState: a.visualState,
-      })),
-    [agents],
+  // Narrow selector — only extracts what HeaderBar needs, shallow-compared
+  const headerAgents = useAppStore(
+    useShallow((s) => {
+      const result: Array<{ id: string; name: string; color: string; visualState: string }> = [];
+      for (const id in s.agents) {
+        const a = s.agents[id];
+        if (!a.profile.isSystem && a.status === 'running') {
+          result.push({ id: a.profile.id, name: a.profile.name, color: a.profile.color, visualState: a.visualState });
+        }
+      }
+      return result;
+    }),
   );
 
   // Onboarding gate
@@ -58,6 +68,12 @@ export default function App() {
     });
   }, []);
 
+  // Remove HTML splash once React is mounted
+  useEffect(() => {
+    const splash = document.getElementById('splash');
+    if (splash) splash.remove();
+  }, []);
+
   // TTS audio queue (sequential playback, interrupt support)
   const { enqueueTTS } = useTTSQueue();
 
@@ -68,6 +84,12 @@ export default function App() {
   useEffect(() => {
     window.jam.window.setCompact(viewMode === 'compact');
   }, [viewMode]);
+
+  // Stable callbacks — read current state imperatively so deps are only stable setters
+  const toggleNotifications = useCallback(() => setNotificationOpen((v) => !v), []);
+  const toggleLogs = useCallback(() => setLogsDrawerOpen(!useAppStore.getState().logsDrawerOpen), [setLogsDrawerOpen]);
+  const toggleNav = useCallback(() => setNavExpanded(!useAppStore.getState().navExpanded), [setNavExpanded]);
+  const closeThread = useCallback(() => setThreadAgent(null), [setThreadAgent]);
 
   // Show loading overlay while sandbox is initializing (image build / container startup)
   const sandboxLoading = sandboxStatus === 'building-image' || sandboxStatus === 'starting-containers';
@@ -114,15 +136,15 @@ export default function App() {
         notificationCount={unreadCount}
         notificationOpen={notificationOpen}
         logsOpen={logsDrawerOpen}
-        onToggleNotifications={() => setNotificationOpen(!notificationOpen)}
-        onToggleLogs={() => setLogsDrawerOpen(!logsDrawerOpen)}
+        onToggleNotifications={toggleNotifications}
+        onToggleLogs={toggleLogs}
       />
 
       <div className="flex flex-1 min-h-0">
         <IconRail
           expanded={navExpanded}
           activeTab={activeTab}
-          onToggleExpanded={() => setNavExpanded(!navExpanded)}
+          onToggleExpanded={toggleNav}
           onTabChange={setActiveTab}
         />
 
@@ -141,7 +163,7 @@ export default function App() {
             {threadAgentId && (
               <ThreadDrawer
                 agentId={threadAgentId}
-                onClose={() => setThreadAgent(null)}
+                onClose={closeThread}
               />
             )}
 

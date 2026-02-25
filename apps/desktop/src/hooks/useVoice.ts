@@ -17,7 +17,7 @@ export function useVoice() {
 
   const [isRecording, setIsRecording] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [audioLevel, setAudioLevel] = useState(0);
+  const audioLevelRef = useRef(0);
   const [micError, setMicError] = useState<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -176,7 +176,7 @@ export function useVoice() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
 
-    setAudioLevel(0);
+    audioLevelRef.current = 0;
   }, [endRecording]);
 
   // --- Push-to-Talk ---
@@ -188,7 +188,7 @@ export function useVoice() {
 
       // Poll audio level for waveform visualization during PTT
       vadIntervalRef.current = window.setInterval(() => {
-        setAudioLevel(getAudioLevel());
+        audioLevelRef.current = getAudioLevel();
       }, VAD_CHECK_INTERVAL_MS);
     } catch (error) {
       console.error('Failed to start audio capture:', error);
@@ -219,7 +219,7 @@ export function useVoice() {
       // Start VAD polling
       vadIntervalRef.current = window.setInterval(() => {
         const level = getAudioLevel();
-        setAudioLevel(level);
+        audioLevelRef.current = level;
 
         if (level > vadThresholdRef.current) {
           // Voice detected — start recording if not already
@@ -288,7 +288,7 @@ export function useVoice() {
     transcript,
     isRecording,
     isListening,
-    audioLevel,
+    audioLevelRef,
     micError,
     setVoiceMode,
     // Push-to-talk

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useAppStore } from '@/store';
 import type { Notification } from '@/store/notificationSlice';
 import { formatTimeAgo } from '@/utils/format';
@@ -75,7 +76,7 @@ export function NotificationPanel({ onClose }: { onClose: () => void }) {
   const clearAllNotifications = useAppStore((s) => s.clearAllNotifications);
   const agents = useAppStore((s) => s.agents);
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
+  const unreadCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
 
   return (
     <div className="fixed inset-0 z-40" onClick={onClose}>

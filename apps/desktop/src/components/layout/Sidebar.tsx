@@ -56,7 +56,7 @@ const TABS: Array<{ id: NavTab; label: string; icon: React.ReactNode }> = [
   },
 ];
 
-export const IconRail: React.FC<IconRailProps> = ({
+export const IconRail: React.FC<IconRailProps> = React.memo(({
   expanded,
   activeTab,
   onToggleExpanded,
@@ -64,11 +64,8 @@ export const IconRail: React.FC<IconRailProps> = ({
 }) => {
   return (
     <aside
-      className={`
-        shrink-0 border-r border-zinc-800 bg-surface-raised
-        transition-[width] duration-200 ease-out flex flex-col
-        ${expanded ? 'w-52' : 'w-12'}
-      `}
+      style={{ width: expanded ? 208 : 48 }}
+      className="shrink-0 border-r border-zinc-800 bg-surface-raised flex flex-col overflow-hidden"
     >
       {/* Hamburger toggle at top */}
       <div className="shrink-0 p-1.5">
@@ -81,14 +78,12 @@ export const IconRail: React.FC<IconRailProps> = ({
           `}
           aria-label={expanded ? 'Collapse navigation' : 'Expand navigation'}
         >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
             <line x1="3" y1="6" x2="21" y2="6" />
             <line x1="3" y1="12" x2="21" y2="12" />
             <line x1="3" y1="18" x2="21" y2="18" />
           </svg>
-          {expanded && (
-            <span className="text-xs font-medium">Menu</span>
-          )}
+          {expanded && <span className="text-xs font-medium">Menu</span>}
         </button>
       </div>
 
@@ -114,17 +109,22 @@ export const IconRail: React.FC<IconRailProps> = ({
               {isActive && (
                 <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-blue-500 rounded-r" />
               )}
-              {tab.icon}
-              {expanded && (
-                <span className="text-xs font-medium whitespace-nowrap">{tab.label}</span>
-              )}
+              <span className="shrink-0">{tab.icon}</span>
+              {expanded && <span className="text-xs font-medium whitespace-nowrap">{tab.label}</span>}
             </button>
           );
         })}
       </nav>
 
-      {/* Services panel — below nav with divider */}
-      {expanded && <ServicePanel />}
+      {/* Services panel — always mounted, hidden via opacity+height when collapsed */}
+      <div
+        className={`transition-none ${
+          expanded ? 'opacity-100 flex-1 min-h-0' : 'opacity-0 h-0 overflow-hidden pointer-events-none'
+        }`}
+      >
+        <ServicePanel />
+      </div>
     </aside>
   );
-};
+});
+IconRail.displayName = 'IconRail';

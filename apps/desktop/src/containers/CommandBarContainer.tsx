@@ -6,6 +6,17 @@ import { MicButton } from '@/components/voice/MicButton';
 import { Waveform } from '@/components/voice/Waveform';
 import { TranscriptOverlay } from '@/components/voice/TranscriptOverlay';
 
+// Named selector — returns primitive (string|null) so Zustand's Object.is comparison
+// prevents re-renders when the value hasn't changed.
+const selectWorkingAgentId = (s: ReturnType<typeof useAppStore.getState>): string | null => {
+  if (s.processingAgentId) return s.processingAgentId;
+  const agents = s.agents;
+  for (const id in agents) {
+    if (agents[id].visualState === 'thinking') return id;
+  }
+  return null;
+};
+
 export const CommandBarContainer: React.FC = () => {
   const {
     voiceState,
@@ -13,7 +24,7 @@ export const CommandBarContainer: React.FC = () => {
     transcript,
     isRecording,
     isListening,
-    audioLevel,
+    audioLevelRef,
     micError,
     setVoiceMode,
     startCapture,
@@ -26,15 +37,7 @@ export const CommandBarContainer: React.FC = () => {
   const setViewMode = useAppStore((s) => s.setViewMode);
   const [textInput, setTextInput] = useState('');
 
-  // Derive working agent from visual state — more reliable than processingAgentId alone
-  // processingAgentId only covers text commands; visualState covers voice + text
-  const workingAgentId = useAppStore((s) => {
-    if (s.processingAgentId) return s.processingAgentId;
-    for (const [id, agent] of Object.entries(s.agents)) {
-      if (agent.visualState === 'thinking') return id;
-    }
-    return null;
-  });
+  const workingAgentId = useAppStore(selectWorkingAgentId);
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +92,7 @@ export const CommandBarContainer: React.FC = () => {
           onToggleListening={toggleListening}
         />
 
-        <Waveform isActive={isVoiceActive} audioLevel={audioLevel} />
+        <Waveform isActive={isVoiceActive} audioLevelRef={audioLevelRef} />
 
         <form onSubmit={handleTextSubmit} className="flex-1">
           <input

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/store';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
 import { AgentCard } from '@/components/agent/AgentCard';
@@ -8,8 +8,10 @@ import type { AgentVisualState } from '@/store/agentSlice';
 type FormMode = { type: 'closed' } | { type: 'create' } | { type: 'edit'; agentId: string };
 
 export const AgentPanelContainer: React.FC = () => {
-  const agents = useAppStore((s) => Object.values(s.agents));
-  const { selectedAgentId, selectAgent, startAgent, stopAgent, deleteAgent, createAgent, updateAgent } =
+  const agentsMap = useAppStore((s) => s.agents);
+  const agents = useMemo(() => Object.values(agentsMap), [agentsMap]);
+  const selectedAgentId = useAppStore((s) => s.selectedAgentId);
+  const { selectAgent, startAgent, stopAgent, deleteAgent, createAgent, updateAgent } =
     useOrchestrator();
   const [formMode, setFormMode] = useState<FormMode>({ type: 'closed' });
   const [runtimes, setRuntimes] = useState<RuntimeMetadataInfo[]>([]);
@@ -35,6 +37,17 @@ export const AgentPanelContainer: React.FC = () => {
       setFormMode({ type: 'closed' });
     }
   };
+
+  const handleSelect = useCallback((agentId: string) => {
+    selectAgent(useAppStore.getState().selectedAgentId === agentId ? null : agentId);
+  }, [selectAgent]);
+
+  const handleStart = useCallback((agentId: string) => startAgent(agentId), [startAgent]);
+  const handleStop = useCallback((agentId: string) => stopAgent(agentId), [stopAgent]);
+  const handleDelete = useCallback((agentId: string) => deleteAgent(agentId), [deleteAgent]);
+  const handleConfigure = useCallback((agentId: string) => {
+    setFormMode({ type: 'edit', agentId });
+  }, []);
 
   const editingAgent = formMode.type === 'edit'
     ? agents.find((a) => a.profile.id === formMode.agentId)
@@ -78,11 +91,11 @@ export const AgentPanelContainer: React.FC = () => {
                 visualState={agent.visualState as AgentVisualState}
                 isSelected={agent.profile.id === selectedAgentId}
                 isRunning={agent.status === 'running'}
-                onClick={() => selectAgent(agent.profile.id === selectedAgentId ? null : agent.profile.id)}
-                onStart={() => startAgent(agent.profile.id)}
-                onStop={() => stopAgent(agent.profile.id)}
-                onDelete={() => deleteAgent(agent.profile.id)}
-                onConfigure={() => setFormMode({ type: 'edit', agentId: agent.profile.id })}
+                onClick={() => handleSelect(agent.profile.id)}
+                onStart={() => handleStart(agent.profile.id)}
+                onStop={() => handleStop(agent.profile.id)}
+                onDelete={() => handleDelete(agent.profile.id)}
+                onConfigure={() => handleConfigure(agent.profile.id)}
               />
             ))}
           </div>

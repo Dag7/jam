@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy"
       content="default-src 'self';
-        script-src 'self' blob:;
+        script-src 'self' blob: 'wasm-unsafe-eval';
         worker-src 'self' blob:;
         style-src 'self' 'unsafe-inline';
         img-src 'self' data: blob:;
@@ -13,8 +13,36 @@
         connect-src 'self' https://* wss://*;
         font-src 'self' data:;">
     <title>Jam</title>
+    <style>
+      /* Inline splash — visible instantly before React/CSS load */
+      #splash {
+        position: fixed; inset: 0; z-index: 9999;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        background: #09090b;
+        -webkit-app-region: drag;
+      }
+      #splash .logo-text {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 18px; font-weight: 700; letter-spacing: 0.05em;
+        color: #a1a1aa;
+        margin-bottom: 16px;
+      }
+      #splash .spinner {
+        width: 28px; height: 28px;
+        border: 2px solid #27272a; border-top-color: #3b82f6;
+        border-radius: 50%;
+        animation: splash-spin 0.8s linear infinite;
+      }
+      @keyframes splash-spin { to { transform: rotate(360deg); } }
+    </style>
   </head>
   <body>
+    <!-- Instant splash — removed by React on mount -->
+    <div id="splash">
+      <div class="logo-text">JAM</div>
+      <div class="spinner"></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

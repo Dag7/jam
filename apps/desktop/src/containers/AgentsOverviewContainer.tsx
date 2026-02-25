@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/store';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
 import { AgentConfigForm, type AgentFormValues, type RuntimeMetadataInfo } from '@/components/agent/AgentConfigForm';
@@ -17,7 +17,8 @@ const VISUAL_STATE_LABELS: Record<AgentVisualState, { label: string; color: stri
 };
 
 export const AgentsOverviewContainer: React.FC = () => {
-  const agents = useAppStore((s) => Object.values(s.agents));
+  const agentsMap = useAppStore((s) => s.agents);
+  const agents = useMemo(() => Object.values(agentsMap), [agentsMap]);
   const souls = useAppStore((s) => s.souls);
   const { startAgent, stopAgent, deleteAgent, createAgent, updateAgent } = useOrchestrator();
   const [formMode, setFormMode] = useState<FormMode>({ type: 'closed' });
@@ -57,6 +58,13 @@ export const AgentsOverviewContainer: React.FC = () => {
       setFormMode({ type: 'closed' });
     }
   };
+
+  const handleStart = useCallback((agentId: string) => startAgent(agentId), [startAgent]);
+  const handleStop = useCallback((agentId: string) => stopAgent(agentId), [stopAgent]);
+  const handleDelete = useCallback((agentId: string) => deleteAgent(agentId), [deleteAgent]);
+  const handleConfigure = useCallback((agentId: string) => {
+    setFormMode({ type: 'edit', agentId });
+  }, []);
 
   const editingAgent = formMode.type === 'edit'
     ? agents.find((a) => a.profile.id === formMode.agentId)
@@ -198,14 +206,14 @@ export const AgentsOverviewContainer: React.FC = () => {
                   <div className="flex items-center gap-2 border-t border-zinc-800 pt-3">
                     {isRunning ? (
                       <button
-                        onClick={() => stopAgent(agent.profile.id)}
+                        onClick={() => handleStop(agent.profile.id)}
                         className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
                       >
                         Stop
                       </button>
                     ) : (
                       <button
-                        onClick={() => startAgent(agent.profile.id)}
+                        onClick={() => handleStart(agent.profile.id)}
                         className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
                       >
                         Start
@@ -213,7 +221,7 @@ export const AgentsOverviewContainer: React.FC = () => {
                     )}
                     {!agent.profile.isSystem && (
                       <button
-                        onClick={() => setFormMode({ type: 'edit', agentId: agent.profile.id })}
+                        onClick={() => handleConfigure(agent.profile.id)}
                         className="px-3 py-1.5 text-xs font-medium rounded-md bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 transition-colors"
                       >
                         Configure
@@ -221,7 +229,7 @@ export const AgentsOverviewContainer: React.FC = () => {
                     )}
                     {!agent.profile.isSystem && (
                       <button
-                        onClick={() => deleteAgent(agent.profile.id)}
+                        onClick={() => handleDelete(agent.profile.id)}
                         className="p-1.5 rounded-md text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
                         title="Delete agent"
                       >

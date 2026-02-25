@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 import { useAppStore } from '@/store';
+import { useShallow } from 'zustand/react/shallow';
 
 interface ThreadDrawerProps {
   agentId: string;
@@ -10,23 +11,32 @@ interface ThreadDrawerProps {
 
 const plugins = { code };
 
-export const ThreadDrawer: React.FC<ThreadDrawerProps> = ({ agentId, onClose }) => {
+export const ThreadDrawer: React.FC<ThreadDrawerProps> = React.memo(({ agentId, onClose }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Look up agent info from agent map
-  const agent = useAppStore((s) => s.agents[agentId]);
-  const agentName = (agent?.profile.name as string) ?? 'Agent';
-  const agentColor = (agent?.profile.color as string) ?? '#6b7280';
-  const visualState = agent?.visualState ?? 'offline';
-  const isWorking = visualState === 'thinking' || visualState === 'listening';
+  // Narrow selectors — only re-render when these specific values change
+  const { agentName, agentColor, isWorking } = useAppStore(
+    useShallow((s) => {
+      const agent = s.agents[agentId];
+      const vs = agent?.visualState ?? 'offline';
+      return {
+        agentName: (agent?.profile.name as string) ?? 'Agent',
+        agentColor: (agent?.profile.color as string) ?? '#6b7280',
+        isWorking: vs === 'thinking' || vs === 'listening',
+      };
+    }),
+  );
 
   // Execute output — streamed markdown from the agent's command execution
   const content = useAppStore((s) => s.executeOutput[agentId] ?? '');
 
-  // Auto-scroll to bottom when new content arrives
+  // Auto-scroll to bottom when new content arrives — only if already near bottom
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom < 100) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [content]);
 
@@ -95,4 +105,6 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = ({ agentId, onClose }) 
       </div>
     </div>
   );
-};
+});
+
+ThreadDrawer.displayName = 'ThreadDrawer';

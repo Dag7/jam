@@ -1,4 +1,4 @@
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { useAppStore } from '@/store';
 import { ChatView } from '@/components/chat/ChatView';
 import type { ChatMessage } from '@/store/chatSlice';
@@ -6,7 +6,9 @@ import type { ChatMessage } from '@/store/chatSlice';
 const HISTORY_PAGE_SIZE = 50;
 
 export const ChatContainer: React.FC = () => {
-  const messages = useAppStore((s) => s.messages);
+  // Subscribe to the ID list (changes only on add/delete/prepend) and the map
+  const messageIds = useAppStore((s) => s.messageIds);
+  const messagesById = useAppStore((s) => s.messagesById);
   const isLoadingHistory = useAppStore((s) => s.isLoadingHistory);
   const hasMoreHistory = useAppStore((s) => s.hasMoreHistory);
   const threadAgentId = useAppStore((s) => s.threadAgentId);
@@ -14,14 +16,21 @@ export const ChatContainer: React.FC = () => {
   const deleteMessage = useAppStore((s) => s.deleteMessage);
   const loadingRef = useRef(false);
 
+  // Derive ordered array — only recomputes when IDs or map changes
+  const messages = useMemo(
+    () => messageIds.map((id) => messagesById[id]).filter(Boolean) as ChatMessage[],
+    [messageIds, messagesById],
+  );
+
   const handleLoadMore = useCallback(async () => {
     if (!useAppStore.getState().hasMoreHistory || loadingRef.current) return;
     loadingRef.current = true;
 
-    const { prependMessages, setIsLoadingHistory, setHasMoreHistory } =
+    const { prependMessages, setIsLoadingHistory, setHasMoreHistory, messageIds: ids, messagesById: byId } =
       useAppStore.getState();
 
-    const oldest = useAppStore.getState().messages[0];
+    const oldestId = ids[0];
+    const oldest = oldestId ? byId[oldestId] : undefined;
     if (!oldest) { loadingRef.current = false; return; }
 
     setIsLoadingHistory(true);
@@ -58,7 +67,6 @@ export const ChatContainer: React.FC = () => {
   }, []);
 
   const handleViewOutput = useCallback((agentId: string) => {
-    // Toggle: if same agent's thread is already open, close it
     const current = useAppStore.getState().threadAgentId;
     setThreadAgent(current === agentId ? null : agentId);
   }, [setThreadAgent]);

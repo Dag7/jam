@@ -3,8 +3,6 @@ import { useAppStore } from '@/store';
 import type { ChatMessage } from '@/store/chatSlice';
 
 export function useOrchestrator() {
-  const activeAgentIds = useAppStore((s) => s.activeAgentIds);
-  const selectedAgentId = useAppStore((s) => s.selectedAgentId);
   const setSelectedAgent = useAppStore((s) => s.setSelectedAgent);
 
   const createAgent = useCallback(
@@ -144,8 +142,6 @@ export function useOrchestrator() {
   );
 
   return {
-    activeAgentIds,
-    selectedAgentId,
     createAgent,
     updateAgent,
     startAgent,

@@ -127,9 +127,14 @@ export const createAgentSlice: StateCreator<
     set({ selectedAgentId: agentId }),
 
   setAgentActive: (agentId, active) =>
-    set((state) => ({
-      activeAgentIds: active
-        ? [...new Set([...state.activeAgentIds, agentId])]
-        : state.activeAgentIds.filter((id) => id !== agentId),
-    })),
+    set((state) => {
+      const has = state.activeAgentIds.includes(agentId);
+      if (active && has) return state;
+      if (!active && !has) return state;
+      return {
+        activeAgentIds: active
+          ? [...state.activeAgentIds, agentId]
+          : state.activeAgentIds.filter((id) => id !== agentId),
+      };
+    }),
 });

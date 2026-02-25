@@ -46,25 +46,24 @@ export const ServicePanel: React.FC = () => {
     });
   }, [services, search, agents]);
 
-  if (services.length === 0) return null;
-
-  const handleStop = async (port: number) => {
+  const handleStop = useCallback(async (port: number) => {
     await window.jam.services.stop(port);
     refresh();
-  };
+  }, [refresh]);
 
-  const handleRestart = async (serviceName: string) => {
+  const handleRestart = useCallback(async (serviceName: string) => {
     await window.jam.services.restart(serviceName);
-    // Refresh quickly for immediate feedback, then again for slower services
     setTimeout(refresh, 500);
     setTimeout(refresh, 3000);
-  };
+  }, [refresh]);
 
-  const handleOpen = (port: number) => {
+  const handleOpen = useCallback((port: number) => {
     window.jam.services.openUrl(port);
-  };
+  }, []);
 
-  const aliveCount = services.filter((s) => s.alive !== false).length;
+  const aliveCount = useMemo(() => services.filter((s) => s.alive !== false).length, [services]);
+
+  if (services.length === 0) return null;
 
   return (
     <div className="border-t border-zinc-800">

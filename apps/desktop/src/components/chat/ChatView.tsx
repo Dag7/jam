@@ -1,6 +1,6 @@
-import React, { useCallback, useRef, useEffect } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { Virtuoso, type VirtuosoHandle, type Components } from 'react-virtuoso';
 import { ChatMessageView } from './ChatMessage';
-import { useScrollToBottom } from '@/hooks/useScrollToBottom';
 import type { ChatMessage } from '@/store/chatSlice';
 
 interface ChatViewProps {
@@ -13,7 +13,9 @@ interface ChatViewProps {
   threadAgentId?: string | null;
 }
 
-export const ChatView: React.FC<ChatViewProps> = ({
+const VirtuosoFooter = () => <div className="h-4" />;
+
+export const ChatView: React.FC<ChatViewProps> = React.memo(({
   messages,
   isLoadingHistory,
   hasMoreHistory,
@@ -22,71 +24,64 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onDeleteMessage,
   threadAgentId,
 }) => {
-  const {
-    containerRef,
-    containerNode,
-    endRef,
-    showScrollButton,
-    scrollToBottom,
-    reset,
-    onContainerPointerDown,
-  } = useScrollToBottom();
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [atBottom, setAtBottom] = useState(true);
 
-  const prevScrollHeightRef = useRef(0);
-  const wasLoadingRef = useRef(false);
-  const initialScrollDoneRef = useRef(false);
-
-  // Scroll to bottom on initial message load
-  useEffect(() => {
-    if (messages.length > 0 && !initialScrollDoneRef.current) {
-      initialScrollDoneRef.current = true;
-      scrollToBottom('instant');
-    }
-  }, [messages.length, scrollToBottom]);
-
-  // Reset when messages are cleared
-  useEffect(() => {
-    if (messages.length === 0) {
-      initialScrollDoneRef.current = false;
-      prevScrollHeightRef.current = 0;
-      reset();
-    }
-  }, [messages.length, reset]);
-
-  // Save scroll height when starting to load older messages
-  useEffect(() => {
-    if (isLoadingHistory && !wasLoadingRef.current) {
-      const el = containerNode.current;
-      if (el) {
-        prevScrollHeightRef.current = el.scrollHeight;
-      }
-    }
-    wasLoadingRef.current = !!isLoadingHistory;
-  }, [isLoadingHistory, containerNode]);
-
-  // Preserve scroll position after older messages are loaded
-  useEffect(() => {
-    const el = containerNode.current;
-    if (!el) return;
-    if (prevScrollHeightRef.current > 0 && !isLoadingHistory) {
-      const newScrollHeight = el.scrollHeight;
-      const scrollDiff = newScrollHeight - prevScrollHeightRef.current;
-      if (scrollDiff > 0) {
-        el.scrollTop = scrollDiff;
-      }
-      prevScrollHeightRef.current = 0;
-    }
-  }, [messages, isLoadingHistory, containerNode]);
-
-  // Detect scroll near top for infinite scroll
-  const handleScroll = useCallback(() => {
-    const el = containerNode.current;
-    if (!el || !onLoadMore || !hasMoreHistory || isLoadingHistory) return;
-    if (el.scrollTop < 200) {
-      prevScrollHeightRef.current = el.scrollHeight;
+  // Load older messages when scrolling near the top
+  const handleStartReached = useCallback(() => {
+    if (hasMoreHistory && !isLoadingHistory && onLoadMore) {
       onLoadMore();
     }
-  }, [onLoadMore, hasMoreHistory, isLoadingHistory, containerNode]);
+  }, [hasMoreHistory, isLoadingHistory, onLoadMore]);
+
+  const scrollToBottom = useCallback(() => {
+    virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'auto' });
+  }, []);
+
+  // Stable key function — uses message ID so Virtuoso preserves height cache across prepends
+  const computeItemKey = useCallback(
+    (_index: number, msg: ChatMessage) => msg.id,
+    [],
+  );
+
+  // Render each message row — padding applied here, not on Virtuoso container
+  const itemContent = useCallback(
+    (_index: number, msg: ChatMessage) => (
+      <div className="px-4 overflow-hidden">
+        <ChatMessageView
+          key={msg.id}
+          message={msg}
+          onViewOutput={onViewOutput}
+          isThreadOpen={!!msg.agentId && msg.agentId === threadAgentId}
+          onDelete={onDeleteMessage}
+        />
+      </div>
+    ),
+    [onViewOutput, onDeleteMessage, threadAgentId],
+  );
+
+  // Stable components object — prevents Virtuoso from remounting internals
+  const components = useMemo<Components<ChatMessage>>(
+    () => ({
+      Header: () =>
+        isLoadingHistory ? (
+          <div className="flex justify-center py-3">
+            <div className="flex items-center gap-2 text-xs text-zinc-500">
+              <div className="w-3 h-3 border border-zinc-500 border-t-transparent rounded-full animate-spin" />
+              Loading older messages...
+            </div>
+          </div>
+        ) : !hasMoreHistory && messages.length > 0 ? (
+          <div className="flex justify-center py-3 mb-2">
+            <span className="text-[10px] text-zinc-600 bg-zinc-800/50 px-3 py-1 rounded-full">
+              Beginning of conversation history
+            </span>
+          </div>
+        ) : null,
+      Footer: VirtuosoFooter,
+    }),
+    [isLoadingHistory, hasMoreHistory, messages.length],
+  );
 
   if (messages.length === 0 && !isLoadingHistory) {
     return (
@@ -116,50 +111,27 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
   return (
     <div className="flex-1 min-h-0 relative">
-      <div
-        ref={containerRef}
-        className="h-full overflow-y-auto px-4 py-4"
-        onScroll={handleScroll}
-        onPointerDown={onContainerPointerDown}
-      >
-        {/* Loading indicator at top */}
-        {isLoadingHistory && (
-          <div className="flex justify-center py-3">
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
-              <div className="w-3 h-3 border border-zinc-500 border-t-transparent rounded-full animate-spin" />
-              Loading older messages...
-            </div>
-          </div>
-        )}
-
-        {/* "Beginning of history" marker */}
-        {!hasMoreHistory && messages.length > 0 && (
-          <div className="flex justify-center py-3 mb-2">
-            <span className="text-[10px] text-zinc-600 bg-zinc-800/50 px-3 py-1 rounded-full">
-              Beginning of conversation history
-            </span>
-          </div>
-        )}
-
-        {messages.map((msg) => (
-          <ChatMessageView
-            key={msg.id}
-            message={msg}
-            onViewOutput={onViewOutput}
-            isThreadOpen={!!msg.agentId && msg.agentId === threadAgentId}
-            onDelete={onDeleteMessage}
-          />
-        ))}
-
-        {/* Scroll anchor */}
-        <div ref={endRef} className="min-h-[1px] shrink-0" />
-      </div>
+      <Virtuoso
+        ref={virtuosoRef}
+        data={messages}
+        computeItemKey={computeItemKey}
+        defaultItemHeight={120}
+        itemContent={itemContent}
+        className="h-full"
+        followOutput="auto"
+        atBottomStateChange={setAtBottom}
+        startReached={handleStartReached}
+        initialTopMostItemIndex={messages.length - 1}
+        increaseViewportBy={{ top: 1500, bottom: 800 }}
+        firstItemIndex={Math.max(0, 1000000 - messages.length)}
+        components={components}
+      />
 
       {/* Scroll to bottom button */}
-      {showScrollButton && (
+      {!atBottom && (
         <button
           type="button"
-          onClick={() => scrollToBottom('instant')}
+          onClick={scrollToBottom}
           className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-1.5 bg-zinc-700 text-zinc-200 rounded-full shadow-lg hover:bg-zinc-600 transition-all text-xs font-medium"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -171,4 +143,6 @@ export const ChatView: React.FC<ChatViewProps> = ({
       )}
     </div>
   );
-};
+});
+
+ChatView.displayName = 'ChatView';

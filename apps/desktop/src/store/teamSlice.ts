@@ -138,6 +138,9 @@ export const createTeamSlice: StateCreator<
 
   setReflecting: (agentId, reflecting) =>
     set((state) => {
+      const has = state.reflectingAgents.has(agentId);
+      if (reflecting && has) return state;
+      if (!reflecting && !has) return state;
       const next = new Set(state.reflectingAgents);
       if (reflecting) next.add(agentId);
       else next.delete(agentId);

@@ -1,7 +1,7 @@
-import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useMemo, useState } from 'react';
+import { Virtuoso, type VirtuosoHandle, type Components } from 'react-virtuoso';
 import { useAppStore } from '@/store';
 import { ChatMessageView } from '@/components/chat/ChatMessage';
-import { useScrollToBottom } from '@/hooks/useScrollToBottom';
 import type { ChatMessage } from '@/store/chatSlice';
 
 const PAGE_SIZE = 30;
@@ -10,82 +10,39 @@ interface AgentChatContainerProps {
   agentId: string;
 }
 
+const VirtuosoFooter = () => <div className="h-3" />;
+
 export const AgentChatContainer: React.FC<AgentChatContainerProps> = ({
   agentId,
 }) => {
-  const messages = useAppStore((s) => s.messages);
+  // Use the pre-indexed per-agent ID list — O(1) lookup, no filtering
+  const agentMessageIds = useAppStore((s) => s.messageIdsByAgent[agentId]);
+  const messagesById = useAppStore((s) => s.messagesById);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
-  const prevScrollHeightRef = useRef(0);
-  const wasLoadingRef = useRef(false);
+
+  // Derive ordered messages — only recomputes when this agent's IDs or the map changes
+  const agentMessages = useMemo(() => {
+    if (!agentMessageIds || agentMessageIds.length === 0) return [];
+    return agentMessageIds.map((id) => messagesById[id]).filter(Boolean) as ChatMessage[];
+  }, [agentMessageIds, messagesById]);
+
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const loadingRef = useRef(false);
-  const initialScrollDoneRef = useRef(false);
   const [isLoading, setIsLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-
-  const {
-    containerRef,
-    containerNode,
-    endRef,
-    showScrollButton,
-    scrollToBottom,
-    reset,
-    onContainerPointerDown,
-  } = useScrollToBottom();
-
-  const agentMessages = useMemo(
-    () => messages.filter((m) => m.agentId === agentId),
-    [messages, agentId],
-  );
-
-  // Scroll to bottom on initial load
-  useEffect(() => {
-    if (agentMessages.length > 0 && !initialScrollDoneRef.current) {
-      initialScrollDoneRef.current = true;
-      scrollToBottom('instant');
-    }
-  }, [agentMessages.length, scrollToBottom]);
-
-  // Reset on agent change
-  useEffect(() => {
-    initialScrollDoneRef.current = false;
-    prevScrollHeightRef.current = 0;
-    setHasMore(true);
-    reset();
-  }, [agentId, reset]);
-
-  // Save scroll height when starting to load older messages
-  useEffect(() => {
-    if (isLoading && !wasLoadingRef.current) {
-      const el = containerNode.current;
-      if (el) {
-        prevScrollHeightRef.current = el.scrollHeight;
-      }
-    }
-    wasLoadingRef.current = isLoading;
-  }, [isLoading, containerNode]);
-
-  // Preserve scroll position after older messages are loaded
-  useEffect(() => {
-    const el = containerNode.current;
-    if (!el) return;
-    if (prevScrollHeightRef.current > 0 && !isLoading) {
-      const newScrollHeight = el.scrollHeight;
-      const scrollDiff = newScrollHeight - prevScrollHeightRef.current;
-      if (scrollDiff > 0) {
-        el.scrollTop = scrollDiff;
-      }
-      prevScrollHeightRef.current = 0;
-    }
-  }, [agentMessages, isLoading, containerNode]);
+  const [atBottom, setAtBottom] = useState(true);
 
   // Load older messages for this agent
-  const loadMore = useCallback(async () => {
+  const handleStartReached = useCallback(async () => {
     if (loadingRef.current || !hasMore) return;
     loadingRef.current = true;
     setIsLoading(true);
 
     try {
-      const oldest = agentMessages[0];
+      const state = useAppStore.getState();
+      const ids = state.messageIdsByAgent[agentId];
+      const oldestId = ids?.[0];
+      const oldest = oldestId ? state.messagesById[oldestId] : undefined;
       const before = oldest
         ? new Date(oldest.timestamp).toISOString()
         : undefined;
@@ -110,7 +67,6 @@ export const AgentChatContainer: React.FC<AgentChatContainerProps> = ({
           timestamp: new Date(m.timestamp).getTime(),
         }));
 
-        prevScrollHeightRef.current = containerNode.current?.scrollHeight ?? 0;
         useAppStore.getState().prependMessages(chatMessages);
       }
 
@@ -121,16 +77,48 @@ export const AgentChatContainer: React.FC<AgentChatContainerProps> = ({
       setIsLoading(false);
       loadingRef.current = false;
     }
-  }, [agentId, agentMessages, hasMore, containerNode]);
+  }, [agentId, hasMore]);
 
-  // Detect scroll near top
-  const handleScroll = useCallback(() => {
-    const el = containerNode.current;
-    if (!el || isLoading || !hasMore) return;
-    if (el.scrollTop < 150) {
-      loadMore();
-    }
-  }, [isLoading, hasMore, loadMore, containerNode]);
+  const scrollToBottom = useCallback(() => {
+    virtuosoRef.current?.scrollToIndex({ index: 'LAST', behavior: 'auto' });
+  }, []);
+
+  const computeItemKey = useCallback(
+    (_index: number, msg: ChatMessage) => msg.id,
+    [],
+  );
+
+  const itemContent = useCallback(
+    (_index: number, msg: ChatMessage) => (
+      <div className="px-3 overflow-hidden">
+        <ChatMessageView key={msg.id} message={msg} onDelete={deleteMessage} />
+      </div>
+    ),
+    [deleteMessage],
+  );
+
+  // Stable components object
+  const components = useMemo<Components<ChatMessage>>(
+    () => ({
+      Header: () =>
+        isLoading ? (
+          <div className="flex justify-center py-2">
+            <div className="flex items-center gap-2 text-[10px] text-zinc-500">
+              <div className="w-2.5 h-2.5 border border-zinc-500 border-t-transparent rounded-full animate-spin" />
+              Loading...
+            </div>
+          </div>
+        ) : !hasMore && agentMessages.length > 0 ? (
+          <div className="flex justify-center py-2 mb-1">
+            <span className="text-[9px] text-zinc-600 bg-zinc-800/50 px-2 py-0.5 rounded-full">
+              Start of history
+            </span>
+          </div>
+        ) : null,
+      Footer: VirtuosoFooter,
+    }),
+    [isLoading, hasMore, agentMessages.length],
+  );
 
   if (agentMessages.length === 0 && !isLoading) {
     return (
@@ -142,40 +130,27 @@ export const AgentChatContainer: React.FC<AgentChatContainerProps> = ({
 
   return (
     <div className="h-full min-h-0 relative">
-      <div
-        ref={containerRef}
-        className="h-full overflow-y-auto px-3 py-3"
-        onScroll={handleScroll}
-        onPointerDown={onContainerPointerDown}
-      >
-        {isLoading && (
-          <div className="flex justify-center py-2">
-            <div className="flex items-center gap-2 text-[10px] text-zinc-500">
-              <div className="w-2.5 h-2.5 border border-zinc-500 border-t-transparent rounded-full animate-spin" />
-              Loading...
-            </div>
-          </div>
-        )}
-        {!hasMore && agentMessages.length > 0 && (
-          <div className="flex justify-center py-2 mb-1">
-            <span className="text-[9px] text-zinc-600 bg-zinc-800/50 px-2 py-0.5 rounded-full">
-              Start of history
-            </span>
-          </div>
-        )}
-        {agentMessages.map((msg) => (
-          <ChatMessageView key={msg.id} message={msg} onDelete={deleteMessage} />
-        ))}
-
-        {/* Scroll anchor */}
-        <div ref={endRef} className="min-h-[1px] shrink-0" />
-      </div>
+      <Virtuoso
+        ref={virtuosoRef}
+        data={agentMessages}
+        computeItemKey={computeItemKey}
+        defaultItemHeight={120}
+        itemContent={itemContent}
+        className="h-full"
+        followOutput="auto"
+        atBottomStateChange={setAtBottom}
+        startReached={handleStartReached}
+        initialTopMostItemIndex={agentMessages.length - 1}
+        increaseViewportBy={{ top: 1500, bottom: 800 }}
+        firstItemIndex={Math.max(0, 1000000 - agentMessages.length)}
+        components={components}
+      />
 
       {/* Scroll to bottom button */}
-      {showScrollButton && (
+      {!atBottom && (
         <button
           type="button"
-          onClick={() => scrollToBottom('instant')}
+          onClick={scrollToBottom}
           className="absolute bottom-3 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 px-2.5 py-1 bg-zinc-700 text-zinc-200 rounded-full shadow-lg hover:bg-zinc-600 transition-all text-[10px] font-medium"
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

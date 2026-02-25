@@ -15,6 +15,15 @@ interface ChatMessageProps {
 
 const plugins = { code };
 
+/** Memoized wrapper — avoids re-parsing markdown when content hasn't changed */
+const MemoizedStreamdown: React.FC<{ content: string }> = React.memo(({ content }) => (
+  <Streamdown mode="static" plugins={plugins}>
+    {content}
+  </Streamdown>
+));
+MemoizedStreamdown.displayName = 'MemoizedStreamdown';
+
+
 const DeleteButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
   <button
     onClick={onClick}
@@ -170,12 +179,7 @@ export const ChatMessageView: React.FC<ChatMessageProps> = React.memo(({ message
             <p className="text-sm text-red-400">{message.error ?? message.content}</p>
           ) : (
             <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-              <Streamdown
-                mode="static"
-                plugins={plugins}
-              >
-                {message.content}
-              </Streamdown>
+              <MemoizedStreamdown content={message.content} />
             </div>
           )}
         </div>

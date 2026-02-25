@@ -13,7 +13,7 @@ interface AgentAvatarProps {
 
 const sizeMap = { sm: 48, md: 80, lg: 120 } as const;
 
-export const AgentAvatar: React.FC<AgentAvatarProps> = ({
+export const AgentAvatar: React.FC<AgentAvatarProps> = React.memo(({
   visualState,
   name,
   color,
@@ -61,4 +61,6 @@ export const AgentAvatar: React.FC<AgentAvatarProps> = ({
       )}
     </motion.div>
   );
-};
+});
+
+AgentAvatar.displayName = 'AgentAvatar';

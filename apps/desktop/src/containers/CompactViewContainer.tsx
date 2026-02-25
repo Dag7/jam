@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { useAppStore } from '@/store';
 import { useVoice } from '@/hooks/useVoice';
 import { AgentStatusBadge } from '@/components/agent/AgentStatusBadge';
@@ -6,20 +6,36 @@ import { MicButton } from '@/components/voice/MicButton';
 import type { AgentVisualState } from '@/store/agentSlice';
 
 export const CompactViewContainer: React.FC = () => {
-  const agents = useAppStore((s) => s.agents);
+  const agentsMap = useAppStore((s) => s.agents);
   const setViewMode = useAppStore((s) => s.setViewMode);
   const {
     voiceMode,
     isRecording,
     isListening,
-    audioLevel,
+    audioLevelRef,
     startCapture,
     stopCapture,
     toggleListening,
   } = useVoice();
 
-  const agentList = Object.values(agents);
+  const agentList = useMemo(() => Object.values(agentsMap), [agentsMap]);
   const isVoiceActive = isRecording || isListening;
+  const audioBarRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number>(0);
+
+  // Self-animate the tiny audio level bar via rAF — no React re-renders
+  useEffect(() => {
+    if (!isVoiceActive) return;
+    const animate = () => {
+      if (audioBarRef.current) {
+        const level = audioLevelRef.current ?? 0;
+        audioBarRef.current.style.width = `${Math.min(level * 500, 100)}%`;
+      }
+      rafRef.current = requestAnimationFrame(animate);
+    };
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [isVoiceActive, audioLevelRef]);
 
   return (
     <div className="flex items-center gap-2 px-3 py-2 min-h-0 select-none titlebar-drag">
@@ -68,8 +84,9 @@ export const CompactViewContainer: React.FC = () => {
       {isVoiceActive && (
         <div className="w-8 h-3 bg-zinc-800 rounded-full overflow-hidden shrink-0">
           <div
-            className="h-full bg-green-500/60 rounded-full transition-all duration-75"
-            style={{ width: `${Math.min(audioLevel * 500, 100)}%` }}
+            ref={audioBarRef}
+            className="h-full bg-green-500/60 rounded-full"
+            style={{ width: '0%' }}
           />
         </div>
       )}
