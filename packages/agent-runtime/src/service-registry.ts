@@ -160,15 +160,20 @@ export class ServiceRegistry {
     return this.services.get(agentId) ?? [];
   }
 
-  /** Stop a specific service by PID — marks as dead in cache */
-  stopService(pid: number): boolean {
+  /** Stop a service by port — resolves the actual PID via lsof and kills it */
+  async stopService(port: number): Promise<boolean> {
+    const pid = await findPidByPort(port);
+    if (!pid) {
+      log.warn(`No process found on port ${port}`);
+      return false;
+    }
     try {
       process.kill(pid, 'SIGTERM');
-      log.info(`Stopped service PID ${pid}`);
+      log.info(`Stopped process PID ${pid} on port ${port}`);
       // Mark as dead in cache (keep the entry for restart)
       for (const [, services] of this.services) {
         for (const svc of services) {
-          if (svc.pid === pid) {
+          if (svc.port === port) {
             svc.alive = false;
             const key = `${svc.agentId}:${svc.name}`;
             this.failureCounts.delete(key);
@@ -352,4 +357,16 @@ function isPortAlive(port: number, timeoutMs = 2000): Promise<boolean> {
     socket.on('timeout', () => { socket.destroy(); resolve(false); });
     socket.on('error', () => { resolve(false); });
   });
+}
+
+/** Find the PID listening on a given port using lsof */
+function findPidByPort(port: number): Promise<number | null> {
+  const { execSync } = require('node:child_process') as typeof import('node:child_process');
+  try {
+    const output = execSync(`lsof -ti :${port}`, { encoding: 'utf-8', timeout: 3000 });
+    const pid = parseInt(output.trim().split('\n')[0], 10);
+    return Promise.resolve(Number.isFinite(pid) ? pid : null);
+  } catch {
+    return Promise.resolve(null);
+  }
 }

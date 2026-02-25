@@ -49,8 +49,8 @@ export const ServicePanel: React.FC = () => {
 
   if (services.length === 0) return null;
 
-  const handleStop = async (pid: number) => {
-    await window.jam.services.stop(pid);
+  const handleStop = async (port: number) => {
+    await window.jam.services.stop(port);
     refresh();
   };
 
@@ -187,9 +187,9 @@ export const ServicePanel: React.FC = () => {
                         </svg>
                       </button>
                     )}
-                    {isAlive && (
+                    {isAlive && svc.port && (
                       <button
-                        onClick={() => handleStop(svc.pid)}
+                        onClick={() => handleStop(svc.port!)}
                         className="p-0.5 text-zinc-500 hover:text-red-400 transition-colors"
                         title="Stop service"
                       >

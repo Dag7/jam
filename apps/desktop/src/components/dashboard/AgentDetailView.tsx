@@ -60,7 +60,7 @@ interface AgentDetailViewProps {
   agents: Record<string, { name: string; color: string }>;
   onTriggerReflection: () => void;
   onCancelTask: (taskId: string) => void;
-  onStopService: (pid: number) => void;
+  onStopService: (port: number) => void;
   onRestartService: (serviceName: string) => void;
   onOpenService: (port: number) => void;
   isReflecting?: boolean;
@@ -318,9 +318,9 @@ export function AgentDetailView({
                         </button>
                       )}
                       {/* Stop — only when alive */}
-                      {isAlive && (
+                      {isAlive && svc.port && (
                         <button
-                          onClick={() => onStopService(svc.pid)}
+                          onClick={() => onStopService(svc.port!)}
                           className="p-1.5 text-zinc-500 hover:text-red-400 transition-colors rounded hover:bg-zinc-700"
                           title="Stop service"
                         >

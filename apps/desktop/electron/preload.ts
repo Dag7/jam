@@ -501,7 +501,7 @@ contextBridge.exposeInMainWorld('jam', {
   services: {
     list: () => ipcRenderer.invoke('services:list'),
     listForAgent: (agentId) => ipcRenderer.invoke('services:listForAgent', agentId),
-    stop: (pid) => ipcRenderer.invoke('services:stop', pid),
+    stop: (port) => ipcRenderer.invoke('services:stop', port),
     restart: (serviceName) => ipcRenderer.invoke('services:restart', serviceName),
     openUrl: (port) => ipcRenderer.invoke('services:openUrl', port),
   },

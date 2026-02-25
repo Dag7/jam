@@ -223,7 +223,7 @@ export interface JamAPI {
       command?: string;
       cwd?: string;
     }>>;
-    stop: (pid: number) => Promise<{ success: boolean }>;
+    stop: (port: number) => Promise<{ success: boolean }>;
     restart: (serviceName: string) => Promise<{ success: boolean; pid?: number; error?: string }>;
     openUrl: (port: number) => Promise<{ success: boolean }>;
   };

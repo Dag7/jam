@@ -20,8 +20,8 @@ export function registerServiceHandlers(deps: ServiceHandlerDeps): void {
     return serviceRegistry.listForAgent(agentId);
   });
 
-  ipcMain.handle('services:stop', async (_, pid: number) => {
-    const success = serviceRegistry.stopService(pid);
+  ipcMain.handle('services:stop', async (_, port: number) => {
+    const success = await serviceRegistry.stopService(port);
     return { success };
   });
 

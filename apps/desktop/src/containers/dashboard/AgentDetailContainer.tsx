@@ -41,8 +41,8 @@ export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {
     return () => clearInterval(interval);
   }, [refreshServices]);
 
-  const handleStopService = useCallback(async (pid: number) => {
-    await window.jam.services.stop(pid);
+  const handleStopService = useCallback(async (port: number) => {
+    await window.jam.services.stop(port);
     refreshServices();
   }, [refreshServices]);
 
