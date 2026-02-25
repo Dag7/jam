@@ -69,25 +69,14 @@ const SYSTEM_SCHEDULES: Array<{
       tags: ['code-improvement'],
     },
   },
-  {
-    name: 'Inbox Check',
-    pattern: { cron: '0 */3 * * *' },
-    taskTemplate: {
-      title: 'Inbox Check',
-      description: 'Scan agent inboxes for new commands or messages and process them.',
-      priority: 'low',
-      source: 'system',
-      createdBy: 'system',
-      tags: ['inbox'],
-    },
-    enabled: false,
-  },
 ];
 
 export class TaskScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   /** In-memory fallback for backwards compatibility (used when no store provided) */
   private readonly memorySchedules: Map<string, ScheduledTask> = new Map();
+  /** Handlers for system schedules — matched by task tag, called instead of creating a generic task */
+  private readonly systemHandlers = new Map<string, () => Promise<void>>();
 
   constructor(
     private readonly taskStore: ITaskStore,
@@ -95,6 +84,13 @@ export class TaskScheduler {
     private readonly scheduleStore?: FileScheduleStore,
     private readonly checkIntervalMs: number = 60_000,
   ) {}
+
+  /** Register a handler for system schedules with a matching tag.
+   *  When a schedule fires and its task template has a matching tag,
+   *  the handler is called instead of creating a generic task. */
+  registerSystemHandler(tag: string, handler: () => Promise<void>): void {
+    this.systemHandlers.set(tag, handler);
+  }
 
   /** Register an in-memory schedule (legacy API, used when no persistent store) */
   register(
@@ -199,6 +195,16 @@ export class TaskScheduler {
         if (!this.isPersistedDue(entry, now)) continue;
 
         await this.scheduleStore.markRun(entry.id, now.toISOString());
+
+        // Check for a registered handler (matched by task tag)
+        const handlerTag = entry.taskTemplate.tags?.find((t) => this.systemHandlers.has(t));
+        if (handlerTag) {
+          const handler = this.systemHandlers.get(handlerTag)!;
+          log.info(`Dispatching system handler for "${entry.name}" (tag: ${handlerTag})`);
+          handler().catch((err) => log.error(`System handler "${handlerTag}" failed: ${String(err)}`));
+          continue;
+        }
+
         await this.createTaskFromTemplate(entry.taskTemplate, now);
       }
     }

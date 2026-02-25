@@ -300,6 +300,17 @@ export class TaskExecutor {
   }
 
   private buildPrompt(task: Task): string {
+    // Task result notifications are informational — short acknowledgment, no full execution
+    if (task.tags.includes('task-result')) {
+      return [
+        'You received a task completion notification from a teammate.',
+        'Acknowledge this briefly. If relevant to your current work, note it.',
+        '',
+        task.title,
+        task.description,
+      ].join('\n');
+    }
+
     const parts = [
       'You have been assigned a task. Complete it and provide a summary of what you did.',
       '',

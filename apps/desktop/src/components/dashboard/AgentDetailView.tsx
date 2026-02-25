@@ -32,7 +32,11 @@ interface AgentDetailViewProps {
     averageResponseMs: number;
     streaks: { current: number; best: number };
   } | null;
-  tasks: Array<{ id: string; title: string; status: string; priority: string; startedAt?: string }>;
+  tasks: Array<{
+    id: string; title: string; description: string; status: string; priority: string;
+    source: string; createdBy: string; assignedTo?: string;
+    startedAt?: string; completedAt?: string; result?: string; error?: string; tags: string[];
+  }>;
   services: ServiceEntry[];
 
   relationships: Array<{
@@ -57,7 +61,7 @@ interface AgentDetailViewProps {
   isReflecting?: boolean;
 }
 
-const tabs = ['Soul', 'Stats', 'Tasks', 'Activity', 'Services', 'Relationships'] as const;
+const tabs = ['Soul', 'Stats', 'Tasks', 'Inbox', 'Activity', 'Services', 'Relationships'] as const;
 type Tab = (typeof tabs)[number];
 
 export function AgentDetailView({
@@ -109,6 +113,16 @@ export function AgentDetailView({
             }`}
           >
             {tab}
+            {tab === 'Inbox' && (() => {
+              const count = tasks.filter(
+                t => t.source === 'agent' && (t.assignedTo === agent.id || (t.createdBy === agent.id && t.assignedTo !== agent.id)),
+              ).length;
+              return count > 0 ? (
+                <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-purple-900/50 text-purple-400">
+                  {count}
+                </span>
+              ) : null;
+            })()}
             {tab === 'Activity' && activity.length > 0 && (
               <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-blue-900/50 text-blue-400">
                 {activity.length}
@@ -179,6 +193,10 @@ export function AgentDetailView({
 
         {activeTab === 'Tasks' && (
           <TaskList tasks={tasks} onCancelTask={onCancelTask} />
+        )}
+
+        {activeTab === 'Inbox' && (
+          <InboxList tasks={tasks} agentId={agent.id} agents={agents} />
         )}
 
         {activeTab === 'Activity' && (
@@ -478,6 +496,119 @@ function StatBlock({
     <div className="bg-zinc-800 rounded-lg p-3 border border-zinc-700">
       <div className={`text-xl font-semibold ${color}`}>{value}</div>
       <div className="text-xs text-zinc-400 mt-1">{label}</div>
+    </div>
+  );
+}
+
+type InboxTask = {
+  id: string; title: string; description: string; status: string; priority: string;
+  source: string; createdBy: string; assignedTo?: string;
+  completedAt?: string; result?: string; error?: string; tags: string[];
+};
+
+function InboxList({ tasks, agentId, agents }: {
+  tasks: InboxTask[];
+  agentId: string;
+  agents: Record<string, { name: string; color: string }>;
+}) {
+  const inboxTasks = tasks.filter(
+    t => t.source === 'agent' && (t.assignedTo === agentId || (t.createdBy === agentId && t.assignedTo !== agentId)),
+  );
+
+  const received = inboxTasks
+    .filter(t => t.assignedTo === agentId)
+    .sort((a, b) => (b.completedAt ?? b.id).localeCompare(a.completedAt ?? a.id));
+
+  const sent = inboxTasks
+    .filter(t => t.createdBy === agentId && t.assignedTo !== agentId)
+    .sort((a, b) => (b.completedAt ?? b.id).localeCompare(a.completedAt ?? a.id));
+
+  if (inboxTasks.length === 0) {
+    return <p className="text-sm text-zinc-500 italic">No inbox messages.</p>;
+  }
+
+  return (
+    <div className="space-y-5">
+      {received.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+            Received ({received.length})
+          </h4>
+          <div className="space-y-2">
+            {received.map(t => (
+              <InboxItem key={t.id} task={t} direction="received" agents={agents} />
+            ))}
+          </div>
+        </div>
+      )}
+      {sent.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+            Sent ({sent.length})
+          </h4>
+          <div className="space-y-2">
+            {sent.map(t => (
+              <InboxItem key={t.id} task={t} direction="sent" agents={agents} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InboxItem({ task, direction, agents }: {
+  task: InboxTask;
+  direction: 'received' | 'sent';
+  agents: Record<string, { name: string; color: string }>;
+}) {
+  const counterpartId = direction === 'received' ? task.createdBy : task.assignedTo;
+  const counterpart = counterpartId ? agents[counterpartId] : null;
+  const isReply = task.tags.includes('task-result');
+
+  const statusClass = task.status === 'completed' ? 'bg-green-900/50 text-green-400'
+    : task.status === 'failed' ? 'bg-red-900/50 text-red-400'
+    : task.status === 'running' ? 'bg-blue-900/50 text-blue-400'
+    : 'bg-zinc-700 text-zinc-400';
+
+  return (
+    <div className="bg-zinc-800 rounded-lg p-3 border border-zinc-700">
+      <div className="flex items-start gap-2">
+        <span className={`text-sm font-mono shrink-0 mt-0.5 ${direction === 'received' ? 'text-amber-400' : 'text-blue-400'}`}>
+          {direction === 'received' ? '\u2190' : '\u2192'}
+        </span>
+        {counterpart && (
+          <div
+            className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white shrink-0 mt-0.5"
+            style={{ backgroundColor: counterpart.color }}
+          >
+            {counterpart.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-white font-medium truncate">{task.title}</span>
+            {isReply && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-900/40 text-violet-400 font-medium shrink-0">
+                Reply
+              </span>
+            )}
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${statusClass}`}>
+              {task.status}
+            </span>
+          </div>
+          {task.description && (
+            <p className="text-xs text-zinc-400 mt-0.5 line-clamp-2">{task.description}</p>
+          )}
+          {task.result && task.status === 'completed' && !isReply && (
+            <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2 italic">{task.result}</p>
+          )}
+          <div className="flex items-center gap-2 mt-1 text-xs text-zinc-500">
+            {counterpart && <span>{counterpart.name}</span>}
+            {task.completedAt && <span>{new Date(task.completedAt).toLocaleString()}</span>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

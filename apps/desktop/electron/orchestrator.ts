@@ -223,6 +223,23 @@ export class Orchestrator {
       return { entries, services, notableFiles };
     });
 
+    // Register system schedule handlers
+    this.taskScheduler.registerSystemHandler('self-improvement', async () => {
+      const agents = this.agentManager.list();
+      if (agents.length === 0) return;
+
+      log.info(`Scheduled self-reflection for ${agents.length} agent(s)`);
+      await Promise.allSettled(
+        agents.map((a) =>
+          this.selfImprovement.triggerReflection(a.profile.id)
+            .then((result) => {
+              if (result) log.info(`Reflection complete for "${a.profile.name}"`);
+            })
+            .catch((err) => log.error(`Reflection failed for "${a.profile.name}": ${String(err)}`)),
+        ),
+      );
+    });
+
     // Code improvement system (opt-in)
     this.improvementStore = new FileImprovementStore(teamDir);
     if (this.config.codeImprovement.enabled) {
@@ -609,8 +626,8 @@ export class Orchestrator {
     const agent = this.agentManager.get(agentId);
     if (!agent) return;
 
-    // System agents don't speak — their results are shown as text notifications
-    if (agent.profile.isSystem) return;
+    // System agent speaks normally for direct interaction — background tasks
+    // (executeDetached) never emit responseComplete/acknowledged, so they stay silent.
 
     try {
       const voiceId = this.resolveVoiceId(agent);

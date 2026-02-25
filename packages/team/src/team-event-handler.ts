@@ -23,7 +23,7 @@ export class TeamEventHandler {
     private readonly relationshipStore: IRelationshipStore,
     private readonly taskStore: ITaskStore,
     private readonly taskAssigner: ITaskAssigner,
-    private readonly getAgentProfiles: () => Array<{ id: string; name: string; runtime: string; model?: string; color: string; voice: { ttsVoiceId: string }; isSystem?: boolean }>,
+    private readonly getAgentProfiles: () => Array<{ id: string; name: string; runtime: string; model?: string; color: string; voice: { ttsVoiceId: string }; isSystem?: boolean; cwd?: string }>,
     private readonly communicationHub?: ICommunicationHub,
   ) {}
 
@@ -129,6 +129,9 @@ export class TeamEventHandler {
       });
     }
 
+    // Load full task once for trust, broadcast, and reply-back
+    const fullTask = task.assignedTo ? await this.taskStore.get(task.id) : null;
+
     // Update trust if this was a delegated task
     if (task.assignedTo && task.createdBy !== task.assignedTo) {
       const rel = await this.relationshipStore.updateTrust(
@@ -142,7 +145,6 @@ export class TeamEventHandler {
 
     // Broadcast completion to #team-feed so all agents and the UI can see it
     if (task.assignedTo) {
-      const fullTask = await this.taskStore.get(task.id);
       const agentName = this.getAgentProfiles().find(a => a.id === task.assignedTo)?.name ?? task.assignedTo;
       const summary = fullTask?.result ?? fullTask?.title ?? 'Task';
       const msg = success
@@ -150,6 +152,42 @@ export class TeamEventHandler {
         : `**${agentName}** failed: ${fullTask?.title ?? 'Task'}\n\n${fullTask?.error ?? 'Unknown error'}`;
       this.broadcastToTeamFeed(task.assignedTo, msg).catch(() => {});
     }
+
+    // Reply result to sender's inbox (agent-delegated tasks only, not result notifications)
+    if (
+      task.assignedTo &&
+      task.createdBy !== task.assignedTo &&
+      task.createdBy !== 'system' &&
+      task.createdBy !== 'user' &&
+      fullTask && !fullTask.tags.includes('task-result')
+    ) {
+      const senderProfile = this.getAgentProfiles().find(a => a.id === task.createdBy);
+      if (senderProfile?.cwd) {
+        this.writeInboxReply(senderProfile.cwd, task.assignedTo, fullTask, success)
+          .catch(err => log.warn(`Failed to write inbox reply: ${String(err)}`));
+      }
+    }
+  }
+
+  /** Write a task completion reply to the sender agent's inbox. */
+  private async writeInboxReply(
+    senderCwd: string,
+    executorId: string,
+    task: { title: string; result?: string; error?: string },
+    success: boolean,
+  ): Promise<void> {
+    const { appendFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const status = success ? 'Completed' : 'Failed';
+    const summary = (success ? task.result : task.error) ?? '';
+    const line = JSON.stringify({
+      title: `[${status}] ${task.title}`,
+      description: summary.slice(0, 500),
+      from: executorId,
+      tags: ['task-result'],
+    });
+    await appendFile(join(senderCwd, 'inbox.jsonl'), line + '\n', 'utf-8');
+    log.info(`Reply sent to sender inbox: [${status}] ${task.title}`);
   }
 
   /** Post a message to the #team-feed broadcast channel (creates it lazily). */
