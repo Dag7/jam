@@ -25,6 +25,10 @@ export function TaskBoardContainer() {
     await updateTask(taskId, { status });
   };
 
+  const handleAssign = async (taskId: string, agentId: string) => {
+    await updateTask(taskId, { assignedTo: agentId, status: 'assigned' });
+  };
+
   const handleCancelTask = async (taskId: string) => {
     await window.jam.tasks.cancel(taskId);
   };
@@ -34,6 +38,7 @@ export function TaskBoardContainer() {
       tasks={tasks}
       agents={agentMap}
       onUpdateStatus={handleUpdateStatus}
+      onAssign={handleAssign}
       onDelete={deleteTask}
       onBulkDelete={bulkDeleteTasks}
       onCancel={handleCancelTask}

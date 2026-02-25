@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface TaskCardProps {
   task: {
@@ -14,8 +14,10 @@ interface TaskCardProps {
   };
   agentName?: string;
   agentColor?: string;
+  agents?: Record<string, { name: string; color: string }>;
   onDelete?: (taskId: string) => void;
   onCancel?: (taskId: string) => void;
+  onAssign?: (taskId: string, agentId: string) => void;
 }
 
 function formatTime(iso: string): string {
@@ -55,9 +57,12 @@ const statusStyles: Record<string, string> = {
   cancelled: 'bg-zinc-700 text-zinc-400',
 };
 
-export function TaskCard({ task, agentName, agentColor, onDelete, onCancel }: TaskCardProps) {
+export function TaskCard({ task, agentName, agentColor, agents, onDelete, onCancel, onAssign }: TaskCardProps) {
   const isRunning = task.status === 'running';
+  const isDone = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
   const [, setTick] = useState(0);
+  const [showAssign, setShowAssign] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Re-render every second while running to update elapsed time
   useEffect(() => {
@@ -66,21 +71,93 @@ export function TaskCard({ task, agentName, agentColor, onDelete, onCancel }: Ta
     return () => clearInterval(id);
   }, [isRunning]);
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!showAssign) return;
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowAssign(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showAssign]);
+
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('text/plain', task.id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
   return (
-    <div className={`group bg-zinc-800 rounded-lg p-3 border transition-colors relative ${
-      isRunning ? 'border-blue-700/50' : 'border-zinc-700 hover:border-zinc-600'
-    }`}>
-      {/* Delete button — visible on hover, hidden for running tasks */}
-      {onDelete && !isRunning && (
-        <button
-          onClick={() => onDelete(task.id)}
-          className="absolute top-2 right-2 p-1 rounded text-zinc-600 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all"
-          title="Delete task"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+    <div
+      draggable={!isRunning}
+      onDragStart={handleDragStart}
+      className={`group bg-zinc-800 rounded-lg p-3 border transition-colors relative ${
+        isRunning ? 'border-blue-700/50' : 'border-zinc-700 hover:border-zinc-600 cursor-grab active:cursor-grabbing'
+      }`}
+    >
+      {/* Action buttons — visible on hover */}
+      {!isRunning && (
+        <div className="absolute top-2 right-2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
+          {/* Assign button */}
+          {onAssign && agents && !isDone && (
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setShowAssign(!showAssign)}
+                className="p-1 rounded text-zinc-600 hover:text-blue-400 hover:bg-blue-500/10 transition-colors"
+                title="Assign agent"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="8.5" cy="7" r="4" />
+                  <line x1="20" y1="8" x2="20" y2="14" />
+                  <line x1="23" y1="11" x2="17" y2="11" />
+                </svg>
+              </button>
+              {showAssign && (
+                <div className="absolute right-0 top-7 z-50 bg-zinc-800 border border-zinc-600 rounded-lg shadow-xl py-1 min-w-[140px]">
+                  {Object.entries(agents).map(([id, agent]) => (
+                    <button
+                      key={id}
+                      onClick={() => {
+                        onAssign(task.id, id);
+                        setShowAssign(false);
+                      }}
+                      className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-zinc-700 transition-colors ${
+                        task.assignedTo === id ? 'text-blue-400' : 'text-zinc-300'
+                      }`}
+                    >
+                      <div
+                        className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white shrink-0"
+                        style={{ backgroundColor: agent.color }}
+                      >
+                        {agent.name.charAt(0).toUpperCase()}
+                      </div>
+                      <span className="truncate">{agent.name}</span>
+                      {task.assignedTo === id && (
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="ml-auto shrink-0">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {/* Delete button */}
+          {onDelete && (
+            <button
+              onClick={() => onDelete(task.id)}
+              className="p-1 rounded text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+              title="Delete task"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
+        </div>
       )}
 
       {/* Title */}

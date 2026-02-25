@@ -129,6 +129,15 @@ export class TaskExecutor {
         }
       }
 
+      // Recover pending tasks that already have an assignee (InboxWatcher bug left them stuck)
+      const pending = await this.deps.taskStore.list({ status: 'pending' });
+      for (const task of pending) {
+        if (task.assignedTo) {
+          log.warn(`Recovering stuck task "${task.title}" (pending with assignee) — setting to assigned`);
+          await this.deps.taskStore.update(task.id, { status: 'assigned' });
+        }
+      }
+
       const assigned = await this.deps.taskStore.list({ status: 'assigned' });
       for (const task of assigned) {
         if (task.assignedTo) {

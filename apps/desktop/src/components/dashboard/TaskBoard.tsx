@@ -1,3 +1,4 @@
+import { useState, useCallback } from 'react';
 import { TaskCard } from '@/components/dashboard/TaskCard';
 
 interface TaskBoardProps {
@@ -14,24 +15,34 @@ interface TaskBoardProps {
   }>;
   agents: Record<string, { name: string; color: string }>;
   onUpdateStatus: (taskId: string, status: string) => void;
+  onAssign: (taskId: string, agentId: string) => void;
   onDelete: (taskId: string) => void;
   onBulkDelete: (taskIds: string[]) => void;
   onCancel?: (taskId: string) => void;
 }
 
 const columns = [
-  { key: 'pending', label: 'Pending' },
-  { key: 'assigned', label: 'Assigned' },
-  { key: 'running', label: 'Running' },
-  { key: 'done', label: 'Done' },
+  { key: 'pending', label: 'Pending', droppable: true },
+  { key: 'assigned', label: 'Assigned', droppable: true },
+  { key: 'running', label: 'Running', droppable: false },
+  { key: 'done', label: 'Done', droppable: true },
 ] as const;
 
+/** Map task status → column key */
 function getColumn(status: string): string {
   if (status === 'completed' || status === 'failed' || status === 'cancelled') return 'done';
   return status;
 }
 
-export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus, onDelete, onBulkDelete, onCancel }: TaskBoardProps) {
+/** Map column key → task status for drops */
+function columnToStatus(colKey: string): string {
+  if (colKey === 'done') return 'completed';
+  return colKey;
+}
+
+export function TaskBoard({ tasks, agents, onUpdateStatus, onAssign, onDelete, onBulkDelete, onCancel }: TaskBoardProps) {
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
+
   const grouped = tasks.reduce<Record<string, typeof tasks>>((acc, task) => {
     const col = getColumn(task.status);
     if (!acc[col]) acc[col] = [];
@@ -40,6 +51,33 @@ export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus, onDe
   }, {});
 
   const doneTaskIds = (grouped['done'] ?? []).map((t) => t.id);
+
+  const handleDragOver = useCallback((e: React.DragEvent, colKey: string, droppable: boolean) => {
+    if (!droppable) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverCol(colKey);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverCol(null);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent, colKey: string) => {
+    e.preventDefault();
+    setDragOverCol(null);
+    const taskId = e.dataTransfer.getData('text/plain');
+    if (!taskId) return;
+
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    // Already in this column
+    if (getColumn(task.status) === colKey) return;
+
+    const newStatus = columnToStatus(colKey);
+    onUpdateStatus(taskId, newStatus);
+  }, [tasks, onUpdateStatus]);
 
   return (
     <div className="p-4 h-full flex flex-col">
@@ -73,8 +111,15 @@ export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus, onDe
       <div className="flex-1 grid grid-cols-4 gap-4 min-h-0">
         {columns.map((col) => {
           const columnTasks = grouped[col.key] ?? [];
+          const isOver = dragOverCol === col.key && col.droppable;
           return (
-            <div key={col.key} className="flex flex-col min-h-0">
+            <div
+              key={col.key}
+              className="flex flex-col min-h-0"
+              onDragOver={(e) => handleDragOver(e, col.key, col.droppable)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => col.droppable ? handleDrop(e, col.key) : undefined}
+            >
               {/* Column header */}
               <div className="flex items-center gap-2 mb-3">
                 <h3 className="text-sm font-medium text-zinc-300">{col.label}</h3>
@@ -83,8 +128,10 @@ export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus, onDe
                 </span>
               </div>
 
-              {/* Column body */}
-              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+              {/* Column body — drop zone */}
+              <div className={`flex-1 overflow-y-auto space-y-2 pr-1 rounded-lg transition-colors ${
+                isOver ? 'bg-blue-500/10 ring-2 ring-blue-500/30' : ''
+              }`}>
                 {columnTasks.map((task) => {
                   const agent = task.assignedTo ? agents[task.assignedTo] : undefined;
                   return (
@@ -93,14 +140,18 @@ export function TaskBoard({ tasks, agents, onUpdateStatus: _onUpdateStatus, onDe
                       task={task}
                       agentName={agent?.name}
                       agentColor={agent?.color}
+                      agents={agents}
                       onDelete={onDelete}
                       onCancel={onCancel}
+                      onAssign={onAssign}
                     />
                   );
                 })}
                 {columnTasks.length === 0 && (
-                  <div className="text-xs text-zinc-600 text-center py-8 border border-dashed border-zinc-700 rounded-lg">
-                    No tasks
+                  <div className={`text-xs text-center py-8 border border-dashed rounded-lg ${
+                    isOver ? 'border-blue-500/50 text-blue-400' : 'border-zinc-700 text-zinc-600'
+                  }`}>
+                    {isOver ? 'Drop here' : 'No tasks'}
                   </div>
                 )}
               </div>
