@@ -1,5 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Streamdown } from 'streamdown';
+import { code } from '@streamdown/code';
 import { SoulView } from '@/components/dashboard/SoulView';
+
+const mdPlugins = { code };
 
 interface ServiceEntry {
   port: number;
@@ -687,9 +691,25 @@ function InboxList({ tasks, agentId, agents }: {
   agentId: string;
   agents: Record<string, { name: string; color: string }>;
 }) {
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+
   const inboxTasks = tasks.filter(
     t => t.source === 'agent' && (t.assignedTo === agentId || (t.createdBy === agentId && t.assignedTo !== agentId)),
   );
+
+  const selectedTask = selectedTaskId ? inboxTasks.find(t => t.id === selectedTaskId) : null;
+
+  if (selectedTask) {
+    return (
+      <InboxConversation
+        task={selectedTask}
+        allTasks={inboxTasks}
+        agentId={agentId}
+        agents={agents}
+        onBack={() => setSelectedTaskId(null)}
+      />
+    );
+  }
 
   const received = inboxTasks
     .filter(t => t.assignedTo === agentId)
@@ -712,7 +732,7 @@ function InboxList({ tasks, agentId, agents }: {
           </h4>
           <div className="space-y-2">
             {received.map(t => (
-              <InboxItem key={t.id} task={t} direction="received" agents={agents} />
+              <InboxItem key={t.id} task={t} direction="received" agents={agents} onClick={() => setSelectedTaskId(t.id)} />
             ))}
           </div>
         </div>
@@ -724,7 +744,7 @@ function InboxList({ tasks, agentId, agents }: {
           </h4>
           <div className="space-y-2">
             {sent.map(t => (
-              <InboxItem key={t.id} task={t} direction="sent" agents={agents} />
+              <InboxItem key={t.id} task={t} direction="sent" agents={agents} onClick={() => setSelectedTaskId(t.id)} />
             ))}
           </div>
         </div>
@@ -733,10 +753,11 @@ function InboxList({ tasks, agentId, agents }: {
   );
 }
 
-function InboxItem({ task, direction, agents }: {
+function InboxItem({ task, direction, agents, onClick }: {
   task: InboxTask;
   direction: 'received' | 'sent';
   agents: Record<string, { name: string; color: string }>;
+  onClick: () => void;
 }) {
   const counterpartId = direction === 'received' ? task.createdBy : task.assignedTo;
   const counterpart = counterpartId ? agents[counterpartId] : null;
@@ -748,7 +769,10 @@ function InboxItem({ task, direction, agents }: {
     : 'bg-zinc-700 text-zinc-400';
 
   return (
-    <div className="bg-zinc-800 rounded-lg p-3 border border-zinc-700">
+    <div
+      className="bg-zinc-800 rounded-lg p-3 border border-zinc-700 cursor-pointer hover:border-zinc-500 hover:bg-zinc-750 transition-colors"
+      onClick={onClick}
+    >
       <div className="flex items-start gap-2">
         <span className={`text-sm font-mono shrink-0 mt-0.5 ${direction === 'received' ? 'text-amber-400' : 'text-blue-400'}`}>
           {direction === 'received' ? '\u2190' : '\u2192'}
@@ -784,6 +808,213 @@ function InboxItem({ task, direction, agents }: {
             {task.completedAt && <span>{new Date(task.completedAt).toLocaleString()}</span>}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Chat-style view of an inbox interaction (request + reply). */
+function InboxConversation({ task, allTasks, agentId, agents, onBack }: {
+  task: InboxTask;
+  allTasks: InboxTask[];
+  agentId: string;
+  agents: Record<string, { name: string; color: string }>;
+  onBack: () => void;
+}) {
+  // Build the conversation messages from the task chain
+  const messages = useMemo(() => {
+    const msgs: Array<{
+      id: string;
+      senderId: string;
+      content: string;
+      timestamp: string;
+      status?: string;
+      isReply?: boolean;
+    }> = [];
+
+    const isReply = task.tags.includes('task-result');
+
+    if (isReply) {
+      // This is a reply task — find the original request
+      // Reply titles are "[Completed] Original Title" or "[Failed] Original Title"
+      const originalTitle = task.title.replace(/^\[(Completed|Failed)\]\s*/, '');
+      const original = allTasks.find(
+        t => !t.tags.includes('task-result') &&
+          t.title === originalTitle &&
+          t.assignedTo === task.createdBy,
+      );
+
+      if (original) {
+        msgs.push({
+          id: original.id,
+          senderId: original.createdBy,
+          content: `**${original.title}**\n\n${original.description}`,
+          timestamp: original.completedAt ?? original.id,
+        });
+      }
+
+      // The reply itself
+      msgs.push({
+        id: task.id,
+        senderId: task.createdBy,
+        content: task.description || task.title,
+        timestamp: task.completedAt ?? task.id,
+        status: task.title.startsWith('[Failed]') ? 'failed' : 'completed',
+        isReply: true,
+      });
+    } else {
+      // This is an original task — show it as the first message
+      msgs.push({
+        id: task.id,
+        senderId: task.createdBy,
+        content: `**${task.title}**\n\n${task.description}`,
+        timestamp: task.completedAt ?? task.id,
+      });
+
+      // If it has a result, show the executor's response
+      if (task.result && task.assignedTo) {
+        msgs.push({
+          id: `${task.id}-result`,
+          senderId: task.assignedTo,
+          content: task.result,
+          timestamp: task.completedAt ?? task.id,
+          status: task.status,
+          isReply: true,
+        });
+      } else if (task.error && task.assignedTo) {
+        msgs.push({
+          id: `${task.id}-error`,
+          senderId: task.assignedTo,
+          content: task.error,
+          timestamp: task.completedAt ?? task.id,
+          status: 'failed',
+          isReply: true,
+        });
+      }
+
+      // Also look for a separate reply task
+      const reply = allTasks.find(
+        t => t.tags.includes('task-result') &&
+          t.createdBy === task.assignedTo &&
+          (t.title.includes(task.title) || t.title.replace(/^\[(Completed|Failed)\]\s*/, '') === task.title),
+      );
+
+      if (reply && !task.result && !task.error) {
+        msgs.push({
+          id: reply.id,
+          senderId: reply.createdBy,
+          content: reply.description || reply.title,
+          timestamp: reply.completedAt ?? reply.id,
+          status: reply.title.startsWith('[Failed]') ? 'failed' : 'completed',
+          isReply: true,
+        });
+      }
+    }
+
+    return msgs;
+  }, [task, allTasks]);
+
+  // Determine the counterpart for the header
+  const counterpartId = task.createdBy === agentId ? task.assignedTo : task.createdBy;
+  const counterpart = counterpartId ? agents[counterpartId] : null;
+  const self = agents[agentId];
+
+  return (
+    <div className="flex flex-col h-full -m-4">
+      {/* Header with back button */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-700">
+        <button
+          onClick={onBack}
+          className="p-1 rounded text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        {counterpart && (
+          <div
+            className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+            style={{ backgroundColor: counterpart.color }}
+          >
+            {counterpart.name.charAt(0).toUpperCase()}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium text-white">
+            {counterpart?.name ?? 'Unknown Agent'}
+          </span>
+          <span className="text-xs text-zinc-500 ml-2">
+            {task.tags.includes('task-result') ? task.title.replace(/^\[(Completed|Failed)\]\s*/, '') : task.title}
+          </span>
+        </div>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {messages.map((msg) => {
+          const sender = agents[msg.senderId];
+          const isSelf = msg.senderId === agentId;
+          return (
+            <div key={msg.id} className="flex gap-3">
+              {/* Avatar */}
+              <div
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 mt-0.5"
+                style={{ backgroundColor: sender?.color ?? (isSelf ? self?.color : '#6b7280') ?? '#6b7280' }}
+              >
+                {(sender?.name ?? (isSelf ? self?.name : '?') ?? '?').charAt(0).toUpperCase()}
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className="text-sm font-semibold"
+                    style={{ color: sender?.color ?? '#9ca3af' }}
+                  >
+                    {sender?.name ?? 'Unknown'}
+                  </span>
+                  {msg.isReply && msg.status && (
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                      msg.status === 'completed' ? 'bg-green-900/50 text-green-400'
+                      : msg.status === 'failed' ? 'bg-red-900/50 text-red-400'
+                      : 'bg-zinc-700 text-zinc-400'
+                    }`}>
+                      {msg.status}
+                    </span>
+                  )}
+                  {msg.timestamp && msg.timestamp.includes('T') && (
+                    <span className="text-[10px] text-zinc-500">
+                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                </div>
+                <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 mt-1">
+                  <Streamdown mode="static" plugins={mdPlugins}>
+                    {msg.content}
+                  </Streamdown>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {messages.length === 0 && (
+          <p className="text-sm text-zinc-500 italic text-center py-8">No messages in this interaction.</p>
+        )}
+
+        {/* Status footer for pending/running tasks */}
+        {!task.tags.includes('task-result') && (task.status === 'running' || task.status === 'pending' || task.status === 'assigned') && (
+          <div className="flex items-center gap-2 text-zinc-500 text-sm">
+            <div className="flex gap-1">
+              <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" />
+              <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.15s]" />
+              <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.3s]" />
+            </div>
+            <span>
+              {task.status === 'running' ? 'Working on it...' : 'Waiting to start...'}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );
