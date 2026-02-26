@@ -6,43 +6,43 @@ export function useChannels() {
   const channels = useAppStore((s) => s.channels);
   const activeChannelId = useAppStore((s) => s.activeChannelId);
   const channelMessages = useAppStore((s) => s.channelMessages);
-  const setChannels = useAppStore((s) => s.setChannels);
   const setActiveChannel = useAppStore((s) => s.setActiveChannel);
-  const addChannelMessage = useAppStore((s) => s.addChannelMessage);
-  const prependChannelMessages = useAppStore((s) => s.prependChannelMessages);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    const store = () => useAppStore.getState();
+
     window.jam.team.channels.list().then((result: unknown) => {
-      setChannels(result as ChannelEntry[]);
+      store().setChannels(result as ChannelEntry[]);
       setIsLoading(false);
     });
 
     const cleanup = window.jam.team.channels.onMessageReceived((data) => {
-      addChannelMessage(
+      store().addChannelMessage(
         (data.channel as unknown as ChannelEntry).id,
         data.message as unknown as ChannelMessageEntry,
       );
     });
 
     return cleanup;
-  }, [setChannels, addChannelMessage]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load messages when active channel changes
   useEffect(() => {
     if (!activeChannelId) return;
-    if (channelMessages[activeChannelId]?.length) return; // already loaded
+    const existing = useAppStore.getState().channelMessages[activeChannelId];
+    if (existing?.length) return; // already loaded
 
     window.jam.team.channels
       .getMessages(activeChannelId, 50)
       .then((result: unknown) => {
-        prependChannelMessages(
+        useAppStore.getState().prependChannelMessages(
           activeChannelId,
           (result as ChannelMessageEntry[]).reverse(),
         );
       });
-  // channelMessages excluded: early return on line 34 guards against refetch
-  }, [activeChannelId, prependChannelMessages]);
+  }, [activeChannelId]);
 
   const sendMessage = useCallback(
     async (content: string, senderId: string) => {
@@ -58,7 +58,6 @@ export function useChannels() {
 
   const loadMore = useCallback(async () => {
     if (!activeChannelId) return;
-    // Read from store directly to avoid dependency on the full channelMessages object
     const existing = useAppStore.getState().channelMessages[activeChannelId] ?? [];
     const oldest = existing[0];
     if (!oldest) return;
@@ -68,11 +67,11 @@ export function useChannels() {
       50,
       oldest.id,
     );
-    prependChannelMessages(
+    useAppStore.getState().prependChannelMessages(
       activeChannelId,
       (older as unknown as ChannelMessageEntry[]).reverse(),
     );
-  }, [activeChannelId, prependChannelMessages]);
+  }, [activeChannelId]);
 
   const activeChannel = channels.find((c) => c.id === activeChannelId) ?? null;
   const activeMessages = activeChannelId

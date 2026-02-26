@@ -13,13 +13,40 @@ export interface ConfigHandlerDeps {
   initVoice: () => void;
 }
 
+/** Allowed top-level config keys — prevents renderer from injecting arbitrary properties */
+const ALLOWED_CONFIG_KEYS = new Set<string>([
+  'sttProvider', 'ttsProvider', 'sttModel', 'ttsVoice', 'ttsSpeed',
+  'defaultModel', 'defaultRuntime', 'theme', 'voiceSensitivity',
+  'minRecordingMs', 'noSpeechThreshold', 'noiseBlocklist',
+  'modelTiers', 'teamRuntime', 'scheduleCheckIntervalMs',
+  'codeImprovement', 'sandbox',
+]);
+
 export function registerConfigHandlers(deps: ConfigHandlerDeps): void {
   const { config, appStore, agentManager, memoryStore, initVoice } = deps;
 
   // Config
   ipcMain.handle('config:get', () => config);
   ipcMain.handle('config:set', (_, updates) => {
-    Object.assign(config, updates);
+    // Only allow known config keys to prevent prototype pollution or arbitrary injection
+    const sanitized: Record<string, unknown> = {};
+    for (const key of Object.keys(updates)) {
+      if (ALLOWED_CONFIG_KEYS.has(key)) {
+        sanitized[key] = updates[key];
+      }
+    }
+    // Deep merge nested objects to preserve unset fields
+    for (const key of Object.keys(sanitized)) {
+      const val = sanitized[key];
+      if (val && typeof val === 'object' && !Array.isArray(val) && key in config) {
+        const existing = (config as Record<string, unknown>)[key];
+        if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
+          (config as Record<string, unknown>)[key] = { ...existing, ...val };
+          continue;
+        }
+      }
+      (config as Record<string, unknown>)[key] = val;
+    }
     saveConfig(config);
     initVoice();
     return { success: true };

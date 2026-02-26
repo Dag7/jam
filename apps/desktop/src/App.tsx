@@ -49,7 +49,7 @@ export default function App() {
       const result: Array<{ id: string; name: string; color: string; visualState: string }> = [];
       for (const id in s.agents) {
         const a = s.agents[id];
-        if (!a.profile.isSystem && a.status === 'running') {
+        if (!a.profile.isSystem && (a.status === 'running' || a.status === 'starting')) {
           result.push({ id: a.profile.id, name: a.profile.name, color: a.profile.color, visualState: a.visualState });
         }
       }

@@ -36,29 +36,44 @@ let isQuitting = false;
 
 // --- HMR cleanup ---
 if (process.env.VITE_DEV_SERVER_URL) {
-  const hmrCleanup = () => {
+  const hmrCleanup = async () => {
     try {
-      if (orchestrator) orchestrator.shutdown(true);
+      if (orchestrator) await orchestrator.shutdown(true);
     } catch {
       // Best-effort cleanup during HMR
     }
   };
-  process.on('exit', hmrCleanup);
+  process.on('exit', () => {
+    // Sync context — can't await, best-effort only
+    try { if (orchestrator) orchestrator.shutdown(true); } catch { /* ignore */ }
+  });
   process.on('SIGHUP', () => {
-    hmrCleanup();
-    process.exit(0);
+    hmrCleanup().finally(() => process.exit(0));
   });
 }
 
-// --- Log Buffer & IPC Transport ---
+// --- Log Buffer & IPC Transport (batched) ---
 const LOG_BUFFER_SIZE = 500;
 const logBuffer: LogEntry[] = [];
+const LOG_IPC_BATCH_MS = 200;
+let logIpcPending: LogEntry[] = [];
+let logIpcTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushLogIpc(): void {
+  logIpcTimer = null;
+  if (logIpcPending.length === 0) return;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('logs:batch', logIpcPending);
+  }
+  logIpcPending = [];
+}
 
 addLogTransport((entry: LogEntry) => {
   logBuffer.push(entry);
   if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('logs:entry', entry);
+  logIpcPending.push(entry);
+  if (!logIpcTimer) {
+    logIpcTimer = setTimeout(flushLogIpc, LOG_IPC_BATCH_MS);
   }
 });
 
@@ -281,11 +296,21 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', () => {
+let shutdownComplete = false;
+
+app.on('before-quit', (event) => {
   isQuitting = true;
   if (tray) {
     tray.destroy();
     tray = null;
   }
-  orchestrator.shutdown();
+
+  if (!shutdownComplete) {
+    // Prevent quit until async store flushes complete
+    event.preventDefault();
+    orchestrator.shutdown().finally(() => {
+      shutdownComplete = true;
+      app.quit();
+    });
+  }
 });

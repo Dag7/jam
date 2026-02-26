@@ -52,6 +52,8 @@ export interface ChatSlice {
   setHistoryLoaded: (v: boolean) => void;
 }
 
+const MAX_MESSAGES = 2000;
+
 export const createChatSlice: StateCreator<
   AppStore,
   [],
@@ -70,16 +72,32 @@ export const createChatSlice: StateCreator<
 
   addMessage: (msg) =>
     set((state) => {
-      const messagesById = { ...state.messagesById, [msg.id]: msg };
-      const messageIds = [...state.messageIds, msg.id];
-
+      let messagesById = { ...state.messagesById, [msg.id]: msg };
+      let messageIds = [...state.messageIds, msg.id];
       let messageIdsByAgent = state.messageIdsByAgent;
+
       if (msg.agentId) {
         const agentIds = messageIdsByAgent[msg.agentId];
         messageIdsByAgent = {
           ...messageIdsByAgent,
           [msg.agentId]: agentIds ? [...agentIds, msg.id] : [msg.id],
         };
+      }
+
+      // Prune oldest messages when exceeding limit
+      if (messageIds.length > MAX_MESSAGES) {
+        const excess = messageIds.length - MAX_MESSAGES;
+        const removed = messageIds.slice(0, excess);
+        messageIds = messageIds.slice(excess);
+        messagesById = { ...messagesById };
+        for (const id of removed) {
+          const m = messagesById[id];
+          delete messagesById[id];
+          if (m?.agentId && messageIdsByAgent[m.agentId]) {
+            messageIdsByAgent = { ...messageIdsByAgent };
+            messageIdsByAgent[m.agentId] = messageIdsByAgent[m.agentId].filter((mid) => mid !== id);
+          }
+        }
       }
 
       return { messageIds, messagesById, messageIdsByAgent };
@@ -94,12 +112,16 @@ export const createChatSlice: StateCreator<
       const agentUpdates: Record<string, string[]> = {};
 
       for (const msg of msgs) {
+        // Skip duplicates already in the store
+        if (messagesById[msg.id]) continue;
         messagesById[msg.id] = msg;
         newIds.push(msg.id);
         if (msg.agentId) {
           (agentUpdates[msg.agentId] ??= []).push(msg.id);
         }
       }
+
+      if (newIds.length === 0) return state;
 
       const messageIds = [...newIds, ...state.messageIds];
 

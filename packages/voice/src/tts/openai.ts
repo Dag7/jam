@@ -36,6 +36,7 @@ export class OpenAITTSProvider implements ITTSProvider {
         speed: options?.speed ?? 1.0,
         response_format: 'mp3',
       }),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) {

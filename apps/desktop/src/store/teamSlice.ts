@@ -1,6 +1,9 @@
 import type { StateCreator } from 'zustand';
 import type { AppStore } from './index';
 
+/** Maximum channel messages kept in memory per channel */
+const MAX_CHANNEL_MESSAGES = 500;
+
 export interface StatsEntry {
   agentId: string;
   tasksCompleted: number;
@@ -121,20 +124,29 @@ export const createTeamSlice: StateCreator<
   setActiveChannel: (channelId) => set({ activeChannelId: channelId }),
 
   addChannelMessage: (channelId, message) =>
-    set((state) => ({
-      channelMessages: {
-        ...state.channelMessages,
-        [channelId]: [...(state.channelMessages[channelId] ?? []), message],
-      },
-    })),
+    set((state) => {
+      const existing = state.channelMessages[channelId] ?? [];
+      let updated = [...existing, message];
+      // Cap to prevent unbounded memory growth
+      if (updated.length > MAX_CHANNEL_MESSAGES) {
+        updated = updated.slice(-MAX_CHANNEL_MESSAGES);
+      }
+      return {
+        channelMessages: { ...state.channelMessages, [channelId]: updated },
+      };
+    }),
 
   prependChannelMessages: (channelId, msgs) =>
-    set((state) => ({
-      channelMessages: {
-        ...state.channelMessages,
-        [channelId]: [...msgs, ...(state.channelMessages[channelId] ?? [])],
-      },
-    })),
+    set((state) => {
+      const existing = state.channelMessages[channelId] ?? [];
+      let updated = [...msgs, ...existing];
+      if (updated.length > MAX_CHANNEL_MESSAGES) {
+        updated = updated.slice(-MAX_CHANNEL_MESSAGES);
+      }
+      return {
+        channelMessages: { ...state.channelMessages, [channelId]: updated },
+      };
+    }),
 
   setReflecting: (agentId, reflecting) =>
     set((state) => {

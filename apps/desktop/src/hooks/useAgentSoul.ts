@@ -4,39 +4,39 @@ import type { SoulEntry } from '@/store/teamSlice';
 
 export function useAgentSoul(agentId: string) {
   const soul = useAppStore((s) => s.souls[agentId]);
-  const setSoul = useAppStore((s) => s.setSoul);
   const isReflecting = useAppStore((s) => s.reflectingAgents.has(agentId));
-  const setReflecting = useAppStore((s) => s.setReflecting);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     if (!agentId) return;
+    const store = () => useAppStore.getState();
 
     window.jam.team.soul.get(agentId).then((result) => {
-      setSoul(agentId, result as unknown as SoulEntry);
+      store().setSoul(agentId, result as unknown as SoulEntry);
       setIsLoading(false);
     });
 
     const cleanup = window.jam.team.soul.onEvolved((data) => {
       if (data.agentId === agentId) {
-        setSoul(agentId, data.soul as unknown as SoulEntry);
-        setReflecting(agentId, false);
+        store().setSoul(agentId, data.soul as unknown as SoulEntry);
+        store().setReflecting(agentId, false);
       }
     });
 
     return cleanup;
-  }, [agentId, setSoul, setReflecting]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId]);
 
   const triggerReflection = useCallback(async () => {
-    setReflecting(agentId, true);
+    useAppStore.getState().setReflecting(agentId, true);
     try {
       const result = await window.jam.team.soul.evolve(agentId);
-      if (!result.success) setReflecting(agentId, false);
+      if (!result.success) useAppStore.getState().setReflecting(agentId, false);
       return result;
     } catch {
-      setReflecting(agentId, false);
+      useAppStore.getState().setReflecting(agentId, false);
     }
-  }, [agentId, setReflecting]);
+  }, [agentId]);
 
   return {
     soul: soul ?? null,

@@ -1,11 +1,20 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentId, AgentMemory, SessionEntry, IMemoryStore } from '@jam/core';
+
+const VALID_AGENT_ID = /^[a-zA-Z0-9_-]+$/;
 
 export class FileMemoryStore implements IMemoryStore {
   constructor(private baseDir: string) {}
 
+  private validateAgentId(agentId: AgentId): void {
+    if (!VALID_AGENT_ID.test(agentId)) {
+      throw new Error(`Invalid agentId: ${agentId}`);
+    }
+  }
+
   async load(agentId: AgentId): Promise<AgentMemory | null> {
+    this.validateAgentId(agentId);
     const filePath = join(this.baseDir, agentId, 'memory.json');
     try {
       const raw = await readFile(filePath, 'utf-8');
@@ -16,17 +25,21 @@ export class FileMemoryStore implements IMemoryStore {
   }
 
   async save(agentId: AgentId, memory: AgentMemory): Promise<void> {
+    this.validateAgentId(agentId);
     const dir = join(this.baseDir, agentId);
     await mkdir(dir, { recursive: true });
 
     const filePath = join(dir, 'memory.json');
-    await writeFile(filePath, JSON.stringify(memory, null, 2), 'utf-8');
+    const tmpPath = `${filePath}.tmp`;
+    await writeFile(tmpPath, JSON.stringify(memory, null, 2), 'utf-8');
+    await rename(tmpPath, filePath);
   }
 
   async appendSession(
     agentId: AgentId,
     entry: SessionEntry,
   ): Promise<void> {
+    this.validateAgentId(agentId);
     const dir = join(this.baseDir, agentId, 'sessions');
     await mkdir(dir, { recursive: true });
 
@@ -42,6 +55,7 @@ export class FileMemoryStore implements IMemoryStore {
     agentId: AgentId,
     limit = 100,
   ): Promise<SessionEntry[]> {
+    this.validateAgentId(agentId);
     const { readdir } = await import('node:fs/promises');
     const dir = join(this.baseDir, agentId, 'sessions');
 

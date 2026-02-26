@@ -112,4 +112,9 @@ export class FileImprovementStore {
       log.error(`Failed to write improvements: ${String(error)}`);
     }
   }
+
+  /** Force-flush pending writes (call before shutdown). */
+  async stop(): Promise<void> {
+    await this.writer.flushNow(() => this.flush());
+  }
 }

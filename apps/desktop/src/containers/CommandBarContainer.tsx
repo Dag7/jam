@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useVoice } from '@/hooks/useVoice';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
 import { useAppStore } from '@/store';
@@ -39,13 +39,36 @@ export const CommandBarContainer: React.FC = () => {
 
   const workingAgentId = useAppStore(selectWorkingAgentId);
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (textInput.trim()) {
       sendTextCommand(textInput.trim());
       setTextInput('');
+      // Reset textarea height after submit
+      if (textareaRef.current) textareaRef.current.style.height = '';
     }
   };
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (textInput.trim()) {
+        sendTextCommand(textInput.trim());
+        setTextInput('');
+        if (textareaRef.current) textareaRef.current.style.height = '';
+      }
+    }
+  }, [textInput, sendTextCommand]);
+
+  const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setTextInput(e.target.value);
+    // Auto-resize textarea to fit content (max 5 rows)
+    const el = e.target;
+    el.style.height = '';
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, []);
 
   const handleInterrupt = () => {
     if (workingAgentId) {
@@ -81,7 +104,7 @@ export const CommandBarContainer: React.FC = () => {
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-end gap-3">
         <MicButton
           voiceMode={voiceMode}
           isRecording={isRecording}
@@ -95,13 +118,15 @@ export const CommandBarContainer: React.FC = () => {
         <Waveform isActive={isVoiceActive} audioLevelRef={audioLevelRef} />
 
         <form onSubmit={handleTextSubmit} className="flex-1">
-          <input
-            type="text"
+          <textarea
+            ref={textareaRef}
             value={textInput}
-            onChange={(e) => setTextInput(e.target.value)}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={isRecording}
-            className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+            rows={1}
+            className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 disabled:opacity-50 resize-none overflow-hidden"
           />
         </form>
 

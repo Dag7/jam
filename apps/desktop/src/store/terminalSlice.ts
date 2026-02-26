@@ -4,6 +4,9 @@ import type { AppStore } from './index';
 /** Maximum scrollback entries kept in memory per agent */
 const MAX_SCROLLBACK = 500;
 
+/** Maximum execute output string length per agent (~500KB) — prevents unbounded memory growth */
+const MAX_EXECUTE_OUTPUT = 500_000;
+
 /** Batching interval for terminal data (ms) — coalesces rapid IPC events into a single Zustand update */
 const TERMINAL_BATCH_MS = 32;
 
@@ -82,7 +85,12 @@ function flushExecuteOutputBatch(): void {
     const updated = { ...state.executeOutput };
     for (const [agentId, { chunks, clear }] of batch) {
       const prev = clear ? '' : (updated[agentId] ?? '');
-      updated[agentId] = prev + chunks.join('');
+      let combined = prev + chunks.join('');
+      // Cap output length — keep the tail (most recent) to prevent unbounded memory growth
+      if (combined.length > MAX_EXECUTE_OUTPUT) {
+        combined = combined.slice(-MAX_EXECUTE_OUTPUT);
+      }
+      updated[agentId] = combined;
     }
     return { executeOutput: updated };
   });

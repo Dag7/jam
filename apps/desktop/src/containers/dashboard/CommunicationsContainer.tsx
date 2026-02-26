@@ -1,3 +1,4 @@
+import { useMemo, useCallback } from 'react';
 import { useAppStore } from '@/store';
 import { useChannels } from '@/hooks/useChannels';
 import { ChannelList } from '@/components/dashboard/ChannelList';
@@ -14,22 +15,27 @@ export function CommunicationsContainer() {
     isLoading,
   } = useChannels();
 
-  const agentMap = Object.fromEntries(
-    Object.values(agents).map((a) => [
-      a.profile.id,
-      { name: a.profile.name, color: a.profile.color },
-    ]),
+  const agentMap = useMemo(
+    () => Object.fromEntries(
+      Object.values(agents).map((a) => [
+        a.profile.id,
+        { name: a.profile.name, color: a.profile.color },
+      ]),
+    ),
+    [agents],
   );
 
   // Default sender — use first running agent or first agent
-  const defaultSender =
+  const defaultSender = useMemo(() =>
     Object.values(agents).find((a) => a.status === 'running')?.profile.id ??
     Object.values(agents)[0]?.profile.id ??
-    'user';
+    'user',
+    [agents],
+  );
 
-  const handleSend = async (content: string) => {
+  const handleSend = useCallback(async (content: string) => {
     await sendMessage(content, defaultSender);
-  };
+  }, [sendMessage, defaultSender]);
 
   return (
     <div className="flex h-full gap-4">

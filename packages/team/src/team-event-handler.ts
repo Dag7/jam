@@ -182,7 +182,7 @@ export class TeamEventHandler {
     const summary = (success ? task.result : task.error) ?? '';
     const line = JSON.stringify({
       title: `[${status}] ${task.title}`,
-      description: summary.slice(0, 500),
+      description: summary.slice(0, 4000),
       from: executorId,
       tags: ['task-result'],
     });

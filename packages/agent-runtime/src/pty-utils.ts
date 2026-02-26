@@ -64,9 +64,12 @@ export class PtyDataHandler {
     this.outputBuffer += cleaned;
     if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => {
-        this.outputHandler()?.(this.agentId, this.outputBuffer);
-        this.outputBuffer = '';
-        this.flushTimer = null;
+        try {
+          this.outputHandler()?.(this.agentId, this.outputBuffer);
+        } finally {
+          this.outputBuffer = '';
+          this.flushTimer = null;
+        }
       }, FLUSH_INTERVAL_MS);
     }
   }

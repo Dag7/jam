@@ -7,41 +7,30 @@ import type { SoulEntry } from '@/store/teamSlice';
 /**
  * Subscribes to all IPC events from the main process and dispatches to Zustand store.
  * Extracted from App.tsx to keep it a pure layout component.
+ *
+ * Uses `useAppStore.getState()` inside callbacks to avoid dependency on store action
+ * references — prevents re-subscription loops that cause 100% CPU.
  */
 export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
-  const setAgents = useAppStore((s) => s.setAgents);
-  const addAgent = useAppStore((s) => s.addAgent);
-  const removeAgent = useAppStore((s) => s.removeAgent);
-  const updateAgentStatus = useAppStore((s) => s.updateAgentStatus);
-  const updateAgentProfile = useAppStore((s) => s.updateAgentProfile);
-  const updateAgentVisualState = useAppStore((s) => s.updateAgentVisualState);
-  const appendTerminalData = useAppStore((s) => s.appendTerminalData);
-  const appendExecuteOutput = useAppStore((s) => s.appendExecuteOutput);
-  const setTranscript = useAppStore((s) => s.setTranscript);
-  const setAgentActive = useAppStore((s) => s.setAgentActive);
-  const addMessage = useAppStore((s) => s.addMessage);
-  const setSandboxProgress = useAppStore((s) => s.setSandboxProgress);
-
-  // Soul evolved — global listener to clear reflecting state across tabs
-  const setSoul = useAppStore((s) => s.setSoul);
-
   useEffect(() => {
+    const store = () => useAppStore.getState();
+
     // Load initial agent list, then load conversation history
     window.jam.agents.list().then((agents) => {
-      setAgents(agents as AgentEntry[]);
+      store().setAgents(agents as AgentEntry[]);
       for (const agent of agents) {
         if (agent.status === 'running') {
-          setAgentActive(agent.profile.id as string, true);
+          store().setAgentActive(agent.profile.id as string, true);
         }
       }
 
-      const store = useAppStore.getState();
-      if (!store.historyLoaded) {
-        store.setIsLoadingHistory(true);
+      const s = store();
+      if (!s.historyLoaded) {
+        s.setIsLoadingHistory(true);
         window.jam.chat.loadHistory({ limit: 50 }).then((result) => {
           if (result.messages.length > 0) {
-            const chatMessages: ChatMessage[] = result.messages.map((m) => ({
-              id: `history-${m.timestamp}-${m.agentId}-${m.role}`,
+            const chatMessages: ChatMessage[] = result.messages.map((m, i) => ({
+              id: `history-${m.timestamp}-${m.agentId}-${m.role}-${i}`,
               role: m.role === 'user' ? 'user' as const : 'agent' as const,
               agentId: m.agentId,
               agentName: m.agentName,
@@ -52,14 +41,14 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
               source: (m.source ?? 'voice') as 'text' | 'voice',
               timestamp: new Date(m.timestamp).getTime(),
             }));
-            useAppStore.getState().prependMessages(chatMessages);
+            store().prependMessages(chatMessages);
           }
-          useAppStore.getState().setHasMoreHistory(result.hasMore);
-          useAppStore.getState().setIsLoadingHistory(false);
-          useAppStore.getState().setHistoryLoaded(true);
+          store().setHasMoreHistory(result.hasMore);
+          store().setIsLoadingHistory(false);
+          store().setHistoryLoaded(true);
         }).catch(() => {
-          useAppStore.getState().setIsLoadingHistory(false);
-          useAppStore.getState().setHistoryLoaded(true);
+          store().setIsLoadingHistory(false);
+          store().setHistoryLoaded(true);
         });
       }
     });
@@ -67,17 +56,17 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     // Subscribe to events from main process
     const unsubStatusChange = window.jam.agents.onStatusChange(
       ({ agentId, status }) => {
-        updateAgentStatus(agentId, status);
-        if (status === 'running') {
-          setAgentActive(agentId, true);
+        store().updateAgentStatus(agentId, status);
+        if (status === 'running' || status === 'starting') {
+          store().setAgentActive(agentId, true);
         } else if (status === 'stopped' || status === 'error') {
-          setAgentActive(agentId, false);
+          store().setAgentActive(agentId, false);
         }
       },
     );
 
     const unsubCreated = window.jam.agents.onCreated(({ profile }) => {
-      addAgent({
+      store().addAgent({
         profile: profile as AgentEntry['profile'],
         status: 'stopped',
         visualState: 'offline',
@@ -85,36 +74,36 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     });
 
     const unsubDeleted = window.jam.agents.onDeleted(({ agentId }) => {
-      removeAgent(agentId);
+      store().removeAgent(agentId);
     });
 
     const unsubUpdated = window.jam.agents.onUpdated(({ agentId, profile }) => {
-      updateAgentProfile(agentId, profile as AgentEntry['profile']);
+      store().updateAgentProfile(agentId, profile as AgentEntry['profile']);
     });
 
     const unsubVisualState = window.jam.agents.onVisualStateChange(
       ({ agentId, visualState }) => {
-        updateAgentVisualState(agentId, visualState as AgentEntry['visualState']);
+        store().updateAgentVisualState(agentId, visualState as AgentEntry['visualState']);
       },
     );
 
     const unsubTerminalData = window.jam.terminal.onData(
       ({ agentId, output }) => {
-        appendTerminalData(agentId, output);
+        store().appendTerminalData(agentId, output);
       },
     );
 
     const unsubExecuteOutput = window.jam.terminal.onExecuteOutput(
       ({ agentId, output, clear }) => {
-        appendExecuteOutput(agentId, output, clear);
+        store().appendExecuteOutput(agentId, output, clear);
       },
     );
 
     const unsubTranscription = window.jam.voice.onTranscription(
       ({ text, isFinal }) => {
-        setTranscript({ text, isFinal });
+        store().setTranscript({ text, isFinal });
         if (isFinal) {
-          setTimeout(() => setTranscript(null), 2000);
+          setTimeout(() => store().setTranscript(null), 2000);
         }
       },
     );
@@ -122,7 +111,7 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     const unsubVoiceState = window.jam.voice.onStateChange(
       ({ state }) => {
         const s = state as 'idle' | 'capturing' | 'processing' | 'speaking';
-        useAppStore.getState().setVoiceState(s);
+        store().setVoiceState(s);
       },
     );
 
@@ -136,24 +125,23 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     const unsubAcknowledged = window.jam.chat.onAgentAcknowledged(
       ({ agentId, agentName, agentRuntime, agentColor, ackText }) => {
         // Suppress ack messages from system agents — they use system notifications instead
-        const agentEntry = useAppStore.getState().agents[agentId];
+        const agentEntry = store().agents[agentId];
         if (agentEntry?.profile.isSystem) return;
 
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'agent',
           agentId,
-          agentName,
-          agentRuntime,
-          agentColor,
+          agentName: agentName || null,
+          agentRuntime: agentRuntime || null,
+          agentColor: agentColor || null,
           content: ackText,
           status: 'complete',
           source: 'text',
           timestamp: Date.now(),
         };
-        const store = useAppStore.getState();
-        store.addMessage(msg);
-        store.setIsProcessing(true, agentId);
+        store().addMessage(msg);
+        store().setIsProcessing(true, agentId);
       },
     );
 
@@ -163,7 +151,7 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
           id: crypto.randomUUID(),
           role: 'user',
           agentId,
-          agentName,
+          agentName: agentName || null,
           agentRuntime: null,
           agentColor: null,
           content: text,
@@ -171,36 +159,36 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
           source: 'voice',
           timestamp: Date.now(),
         };
-        useAppStore.getState().addMessage(msg);
+        store().addMessage(msg);
       },
     );
 
     const unsubAgentResponse = window.jam.chat.onAgentResponse(
       ({ agentId, agentName, agentRuntime, agentColor, text, error }) => {
         // Suppress response messages from system agents — they use system notifications
-        const agentEntry = useAppStore.getState().agents[agentId];
+        const agentEntry = store().agents[agentId];
         if (agentEntry?.profile.isSystem) return;
 
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'agent',
           agentId,
-          agentName,
-          agentRuntime,
-          agentColor,
+          agentName: agentName || null,
+          agentRuntime: agentRuntime || null,
+          agentColor: agentColor || null,
           content: text,
           status: error ? 'error' : 'complete',
           source: 'voice',
           timestamp: Date.now(),
           error,
         };
-        useAppStore.getState().addMessage(msg);
+        store().addMessage(msg);
       },
     );
 
     const unsubAppError = window.jam.app.onError(({ message, details }) => {
       const errorText = details ? `${message}: ${details}` : message;
-      useAppStore.getState().addMessage({
+      store().addMessage({
         id: crypto.randomUUID(),
         role: 'agent',
         agentId: null,
@@ -218,22 +206,22 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     const unsubProgress = window.jam.chat.onAgentProgress(
       ({ agentId, agentName, agentRuntime, agentColor, summary }) => {
         // Suppress progress messages from system agents
-        const agentEntry = useAppStore.getState().agents[agentId];
+        const agentEntry = store().agents[agentId];
         if (agentEntry?.profile.isSystem) return;
 
         const msg: ChatMessage = {
           id: crypto.randomUUID(),
           role: 'system',
           agentId,
-          agentName,
-          agentRuntime,
-          agentColor,
-          content: `${agentName}: ${summary}`,
+          agentName: agentName || null,
+          agentRuntime: agentRuntime || null,
+          agentColor: agentColor || null,
+          content: `${agentName || 'Agent'}: ${summary}`,
           status: 'complete',
           source: 'voice',
           timestamp: Date.now(),
         };
-        useAppStore.getState().addMessage(msg);
+        store().addMessage(msg);
       },
     );
 
@@ -246,19 +234,19 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
           agentName: null,
           agentRuntime: null,
           agentColor: null,
-          content: `${agentName} is busy — your message is queued (#${queuePosition}). It will run when the current task finishes.`,
+          content: `${agentName || 'Agent'} is busy — your message is queued (#${queuePosition}). It will run when the current task finishes.`,
           status: 'complete',
           source: 'text',
           timestamp: Date.now(),
         };
-        useAppStore.getState().addMessage(msg);
+        store().addMessage(msg);
       },
     );
 
     const unsubSystemNotification = window.jam.chat.onSystemNotification(
       ({ taskId, agentId, title, success, summary }) => {
-        const store = useAppStore.getState();
-        store.addNotification({
+        const s = store();
+        s.addNotification({
           id: crypto.randomUUID(),
           type: success ? 'task_completed' : 'task_failed',
           agentId,
@@ -268,21 +256,21 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
           timestamp: Date.now(),
           read: false,
         });
-        store.setIsProcessing(false);
+        s.setIsProcessing(false);
       },
     );
 
     // Sandbox initialization progress
     const unsubSandboxProgress = window.jam.app.onSandboxProgress(
       ({ status, message }) => {
-        setSandboxProgress(status as Parameters<typeof setSandboxProgress>[0], message);
+        store().setSandboxProgress(status as Parameters<ReturnType<typeof useAppStore.getState>['setSandboxProgress']>[0], message);
       },
     );
 
     // Soul evolved — global listener (clear reflecting state even when not viewing agent detail)
     const unsubSoulEvolved = window.jam.team.soul.onEvolved((data) => {
-      setSoul(data.agentId, data.soul as unknown as SoulEntry);
-      useAppStore.getState().setReflecting(data.agentId, false);
+      store().setSoul(data.agentId, data.soul as unknown as SoulEntry);
+      store().setReflecting(data.agentId, false);
     });
 
     // NOTE: Task, stats, relationship, and channel subscriptions are owned by
@@ -310,20 +298,6 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       unsubSandboxProgress();
       unsubSoulEvolved();
     };
-  }, [
-    setAgents,
-    addAgent,
-    removeAgent,
-    updateAgentStatus,
-    updateAgentProfile,
-    updateAgentVisualState,
-    appendTerminalData,
-    appendExecuteOutput,
-    setTranscript,
-    setAgentActive,
-    addMessage,
-    enqueueTTS,
-    setSandboxProgress,
-    setSoul,
-  ]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enqueueTTS]);
 }

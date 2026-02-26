@@ -40,6 +40,7 @@ export class WhisperSTTProvider implements ISTTProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: formData,
+        signal: AbortSignal.timeout(30_000),
       },
     );
 

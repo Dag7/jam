@@ -83,6 +83,8 @@ export class AgentManager {
   private processingLocks = new Set<AgentId>();
   /** Output redactor — masks leaked secret values */
   private redact: (text: string) => string = (t) => t;
+  /** Monotonic counter for unique detached task keys */
+  private detachedSeq = 0;
   /** Optional hook called before an agent starts (e.g., to create Docker container) */
   private preStartHook: ((agentId: AgentId, profile: AgentProfile) => Promise<void>) | null = null;
   /** Extra env vars injected into every agent spawn (e.g., host bridge URL/token) */
@@ -290,7 +292,12 @@ export class AgentManager {
     this.updateStatus(agentId, 'restarting');
     this.stop(agentId);
     await new Promise((r) => setTimeout(r, 500));
-    return this.start(agentId);
+    const result = await this.start(agentId);
+    if (!result.success) {
+      this.updateStatus(agentId, 'stopped');
+      this.updateVisualState(agentId, 'offline');
+    }
+    return result;
   }
 
   delete(agentId: AgentId): { success: boolean; error?: string } {
@@ -464,12 +471,12 @@ export class AgentManager {
       const userTs = new Date().toISOString();
       this.contextBuilder.recordConversation(state.profile.cwd, {
         timestamp: userTs, role: 'user', content: text, source, ...(hidden && { hidden: true }),
-      }).catch(() => {});
+      }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
       if (result.text) {
         const agentTs = new Date(Date.now() + 1).toISOString();
         this.contextBuilder.recordConversation(state.profile.cwd, {
           timestamp: agentTs, role: 'agent', content: result.text, source, ...(hidden && { hidden: true }),
-        }).catch(() => {});
+        }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
       }
     }
 
@@ -506,7 +513,7 @@ export class AgentManager {
 
     // Independent abort controller — keyed separately so it doesn't collide with queue-based execution
     const abortController = new AbortController();
-    const detachedKey = `detached:${agentId}:${Date.now()}` as AgentId;
+    const detachedKey = `detached:${agentId}:${Date.now()}-${++this.detachedSeq}` as AgentId;
     this.abortControllers.set(detachedKey, abortController);
 
     const secrets = this.secretResolver?.(state.profile.secretBindings ?? []) ?? {};
@@ -550,12 +557,12 @@ export class AgentManager {
         const userTs = new Date().toISOString();
         this.contextBuilder.recordConversation(state.profile.cwd, {
           timestamp: userTs, role: 'user', content: text, source: 'text', hidden: true,
-        }).catch(() => {});
+        }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
         if (result.text) {
           const agentTs = new Date(Date.now() + 1).toISOString();
           this.contextBuilder.recordConversation(state.profile.cwd, {
             timestamp: agentTs, role: 'agent', content: result.text, source: 'text', hidden: true,
-          }).catch(() => {});
+          }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
         }
       }
 
@@ -570,7 +577,7 @@ export class AgentManager {
   /** Persist token usage to stats store (fire-and-forget) */
   private recordTokenUsage(agentId: AgentId, result: { usage?: { inputTokens: number; outputTokens: number } }): void {
     if (!this.statsStore || !result.usage) return;
-    this.statsStore.incrementTokens(agentId, result.usage.inputTokens, result.usage.outputTokens).catch(() => {});
+    this.statsStore.incrementTokens(agentId, result.usage.inputTokens, result.usage.outputTokens).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
   }
 
   /** Get the current task status for an agent (from in-memory tracker) */

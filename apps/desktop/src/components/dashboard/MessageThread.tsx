@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 
@@ -16,7 +16,7 @@ interface MessageThreadProps {
 
 const plugins = { code };
 
-export function MessageThread({ messages, agents, onSend, isLoading }: MessageThreadProps) {
+export const MessageThread = React.memo(function MessageThread({ messages, agents, onSend, isLoading }: MessageThreadProps) {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -127,4 +127,4 @@ export function MessageThread({ messages, agents, onSend, isLoading }: MessageTh
       </form>
     </div>
   );
-}
+});

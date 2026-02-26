@@ -105,16 +105,21 @@ export function registerSetupHandlers(deps: SetupHandlerDeps): void {
   });
 
   ipcMain.handle('setup:openTerminal', (_, command: string) => {
+    // Sanitize: only allow simple alphanumeric commands with spaces, dashes, dots, slashes
+    // Prevents shell/AppleScript injection via string interpolation
+    const sanitized = command.replace(/[^a-zA-Z0-9 _./@:-]/g, '');
     try {
       if (process.platform === 'darwin') {
+        // Escape backslashes and double-quotes for AppleScript string context
+        const escaped = sanitized.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         execFileSync('osascript', [
-          '-e', `tell application "Terminal" to do script "${command}"`,
+          '-e', `tell application "Terminal" to do script "${escaped}"`,
           '-e', 'tell application "Terminal" to activate',
         ], { timeout: 5000 });
       } else if (process.platform === 'linux') {
-        execFileSync('x-terminal-emulator', ['-e', command], { timeout: 5000 });
+        execFileSync('x-terminal-emulator', ['-e', sanitized], { timeout: 5000 });
       } else {
-        execFileSync('cmd', ['/k', command], { timeout: 5000 });
+        execFileSync('cmd', ['/k', sanitized], { timeout: 5000 });
       }
       return { success: true };
     } catch {

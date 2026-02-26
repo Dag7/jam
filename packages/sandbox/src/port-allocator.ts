@@ -13,7 +13,7 @@ export class PortAllocator implements IPortAllocator {
 
   constructor(
     private readonly basePort: number = 10_000,
-    private readonly portsPerAgent: number = 20,
+    private readonly portsPerAgent: number = 100,
     private readonly containerBasePort: number = 3000,
   ) {}
 
@@ -42,6 +42,45 @@ export class PortAllocator implements IPortAllocator {
     );
 
     return allocation;
+  }
+
+  /** Reclaim an allocation from an existing container's actual port mappings.
+   *  Uses the lowest mapped container and host ports to reconstruct the range. */
+  reclaim(agentId: string, actualMappings: Map<number, number>): void {
+    if (actualMappings.size === 0) {
+      // No port mappings — fall back to computed allocation
+      this.allocate(agentId);
+      return;
+    }
+
+    // Find the lowest container port and its host port
+    let minContainer = Infinity;
+    let minHost = Infinity;
+    for (const [containerPort, hostPort] of actualMappings) {
+      if (containerPort < minContainer) {
+        minContainer = containerPort;
+        minHost = hostPort;
+      }
+    }
+
+    const allocation = {
+      hostStart: minHost,
+      containerStart: minContainer,
+      count: actualMappings.size,
+    };
+
+    this.allocations.set(agentId, allocation);
+    // Advance nextSlot past any reclaimed range to avoid overlap
+    const reclaimedEnd = Math.ceil((minHost - this.basePort + actualMappings.size) / this.portsPerAgent);
+    if (reclaimedEnd > this.nextSlot) {
+      this.nextSlot = reclaimedEnd;
+    }
+
+    log.info(
+      `Reclaimed ports ${allocation.hostStart}-${allocation.hostStart + allocation.count - 1} ` +
+        `→ container ${allocation.containerStart}-${allocation.containerStart + allocation.count - 1} ` +
+        `for agent ${agentId}`,
+    );
   }
 
   /** Release a port allocation when an agent's container is removed */

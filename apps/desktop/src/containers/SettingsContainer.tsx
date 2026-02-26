@@ -16,6 +16,12 @@ interface ModelTierConfig {
   routine: string;
 }
 
+type ContainerExitBehavior = 'stop' | 'delete' | 'keep-running';
+
+interface SandboxSettings {
+  containerExitBehavior: ContainerExitBehavior;
+}
+
 interface Config {
   sttProvider: STTProvider;
   ttsProvider: TTSProvider;
@@ -30,6 +36,7 @@ interface Config {
   noiseBlocklist: string[];
   modelTiers: ModelTierConfig;
   teamRuntime: string;
+  sandbox: SandboxSettings;
 }
 
 // Combobox-style select: dropdown with custom input option
@@ -104,6 +111,7 @@ export const SettingsContainer: React.FC<{
       'hmm', 'uh', 'um', 'ah', 'oh',
       'okay', 'ok',
     ],
+    sandbox: { containerExitBehavior: 'stop' },
   });
   const [blocklistText, setBlocklistText] = useState('');
 
@@ -118,7 +126,11 @@ export const SettingsContainer: React.FC<{
   useEffect(() => {
     window.jam.config.get().then((c) => {
       const loaded = c as unknown as Partial<Config>;
-      setConfig((prev) => ({ ...prev, ...loaded }));
+      setConfig((prev) => ({
+        ...prev,
+        ...loaded,
+        sandbox: { ...prev.sandbox, ...(loaded.sandbox as Partial<SandboxSettings> | undefined) },
+      }));
       if (Array.isArray(loaded.noiseBlocklist)) {
         setBlocklistText(loaded.noiseBlocklist.join('\n'));
       }
@@ -526,6 +538,42 @@ export const SettingsContainer: React.FC<{
                   <option key={r.id} value={r.id}>{r.displayName}</option>
                 ))}
               </select>
+            </div>
+          </div>
+        </section>
+
+        {/* Sandbox */}
+        <section>
+          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+            Sandbox (Docker)
+          </h3>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">On App Exit</label>
+              <div className="flex gap-1">
+                {([
+                  { id: 'stop' as const, label: 'Stop', desc: 'Containers stop but stay on disk for fast restart' },
+                  { id: 'delete' as const, label: 'Delete', desc: 'Containers are fully removed on exit' },
+                  { id: 'keep-running' as const, label: 'Keep Running', desc: 'Containers stay running in the background' },
+                ]).map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setConfig({ ...config, sandbox: { ...config.sandbox, containerExitBehavior: opt.id } })}
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                      config.sandbox.containerExitBehavior === opt.id
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-600 mt-1">
+                {config.sandbox.containerExitBehavior === 'stop' && 'Containers stop but stay on disk for fast restart'}
+                {config.sandbox.containerExitBehavior === 'delete' && 'Containers are fully removed on exit'}
+                {config.sandbox.containerExitBehavior === 'keep-running' && 'Containers stay running in the background'}
+              </p>
             </div>
           </div>
         </section>

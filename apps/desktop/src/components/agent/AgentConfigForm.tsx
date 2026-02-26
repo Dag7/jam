@@ -16,12 +16,7 @@ import {
   TTS_VOICES,
   AGENT_COLORS,
 } from '@/constants/provider-catalog';
-
-export interface RuntimeMetadataInfo {
-  id: string;
-  displayName: string;
-  models: Array<{ id: string; label: string; group: string }>;
-}
+import type { RuntimeMetadataInfo } from '@/hooks/useRuntimeMetadata';
 
 export interface AgentFormValues {
   id?: string;

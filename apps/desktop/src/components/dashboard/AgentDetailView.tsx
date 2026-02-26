@@ -213,7 +213,7 @@ export function AgentDetailView({
               <p className="text-sm text-zinc-500 italic">No activity yet.</p>
             )}
             {activity.map((item) => {
-              const counterpartAgent = item.counterpart ? agents[item.counterpart] : null;
+              const counterpartAgent = item.counterpart ? (agents[item.counterpart] ?? agents[item.counterpart.toLowerCase()] ?? null) : null;
               const icon = item.type === 'delegation_sent' ? '→'
                 : item.type === 'delegation_received' ? '←'
                 : item.type === 'task_completed' ? '✓'
@@ -525,7 +525,7 @@ function RelationshipCard({ rel, tasks, agentId, agents, isExpanded, onToggle }:
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const target = agents[rel.targetAgentId];
+  const target = agents[rel.targetAgentId] ?? agents[rel.targetAgentId.toLowerCase()] ?? null;
   const trustColor = rel.trustScore > 0.7 ? 'text-green-400'
     : rel.trustScore >= 0.4 ? 'text-yellow-400' : 'text-red-400';
 
@@ -760,7 +760,7 @@ function InboxItem({ task, direction, agents, onClick }: {
   onClick: () => void;
 }) {
   const counterpartId = direction === 'received' ? task.createdBy : task.assignedTo;
-  const counterpart = counterpartId ? agents[counterpartId] : null;
+  const counterpart = counterpartId ? (agents[counterpartId] ?? agents[counterpartId.toLowerCase()] ?? null) : null;
   const isReply = task.tags.includes('task-result');
 
   const statusClass = task.status === 'completed' ? 'bg-green-900/50 text-green-400'
@@ -914,9 +914,15 @@ function InboxConversation({ task, allTasks, agentId, agents, onBack }: {
     return msgs;
   }, [task, allTasks]);
 
+  // Resolve agent by ID, then by lowercase name fallback
+  const resolveAgent = (id: string | undefined) => {
+    if (!id) return null;
+    return agents[id] ?? agents[id.toLowerCase()] ?? null;
+  };
+
   // Determine the counterpart for the header
   const counterpartId = task.createdBy === agentId ? task.assignedTo : task.createdBy;
-  const counterpart = counterpartId ? agents[counterpartId] : null;
+  const counterpart = resolveAgent(counterpartId);
   const self = agents[agentId];
 
   return (
@@ -952,7 +958,7 @@ function InboxConversation({ task, allTasks, agentId, agents, onBack }: {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.map((msg) => {
-          const sender = agents[msg.senderId];
+          const sender = resolveAgent(msg.senderId);
           const isSelf = msg.senderId === agentId;
           return (
             <div key={msg.id} className="flex gap-3">

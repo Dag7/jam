@@ -30,6 +30,7 @@ export class ElevenLabsTTSProvider implements ITTSProvider {
             speed: options?.speed ?? 1.0,
           },
         }),
+        signal: AbortSignal.timeout(30_000),
       },
     );
 
@@ -47,6 +48,7 @@ export class ElevenLabsTTSProvider implements ITTSProvider {
       headers: {
         'xi-api-key': this.apiKey,
       },
+      signal: AbortSignal.timeout(15_000),
     });
 
     if (!response.ok) {

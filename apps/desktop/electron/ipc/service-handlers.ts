@@ -30,6 +30,10 @@ export function registerServiceHandlers(deps: ServiceHandlerDeps): void {
   });
 
   ipcMain.handle('services:openUrl', (_, port: number) => {
+    // Validate port range to prevent URL injection
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return { success: false };
+    }
     try {
       shell.openExternal(`http://localhost:${port}`);
       return { success: true };

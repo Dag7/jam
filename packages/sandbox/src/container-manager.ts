@@ -157,8 +157,19 @@ export class ContainerManager implements IContainerManager {
     log.info(`Container removed for agent "${info.agentName}"`);
   }
 
-  /** Stop and remove all managed containers */
+  /** Stop all containers without removing them (fast reclaim on next startup) */
   stopAll(): void {
+    for (const [agentId, info] of this.containers) {
+      info.status = 'stopping';
+      log.info(`Stopping container for agent "${info.agentName}" (${info.containerId.slice(0, 12)})`);
+      this.docker.stopContainer(info.containerId, this.config.stopTimeoutSec);
+      this.portAllocator.release(agentId);
+    }
+    this.containers.clear();
+  }
+
+  /** Stop and remove all containers (full cleanup) */
+  removeAll(): void {
     for (const [agentId] of this.containers) {
       this.stop(agentId);
     }
@@ -181,16 +192,18 @@ export class ContainerManager implements IContainerManager {
       const isRunning = container.status.startsWith('Up');
 
       if (isRunning && container.agentId) {
-        log.info(`Reclaiming running container "${container.name}" for agent ${container.agentId}`);
+        // Inspect actual Docker port mappings so the port resolver matches reality
+        const actualMappings = this.docker.getPortMappings(container.id);
+        log.info(`Reclaiming running container "${container.name}" for agent ${container.agentId} (${actualMappings.size} port mappings)`);
         this.containers.set(container.agentId, {
           containerId: container.id,
           agentId: container.agentId,
           agentName: container.name.replace(/^jam-/, ''),
           status: 'running',
-          portMappings: new Map(), // Port mappings are already baked into the container
+          portMappings: actualMappings,
         });
-        // Re-register the port allocation for this agent
-        this.portAllocator.allocate(container.agentId);
+        // Re-register the port allocation using actual mappings (not computed)
+        this.portAllocator.reclaim(container.agentId, actualMappings);
         reclaimed.add(container.agentId);
       } else {
         log.info(`Removing stopped container "${container.name}"`);

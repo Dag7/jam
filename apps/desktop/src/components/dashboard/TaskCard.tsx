@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { formatTimeAgo, formatElapsed } from '@/utils/format';
 
 interface TaskCardProps {
@@ -34,7 +34,7 @@ const statusStyles: Record<string, string> = {
   cancelled: 'bg-zinc-700 text-zinc-400',
 };
 
-export function TaskCard({ task, agentName, agentColor, agents, onDelete, onCancel, onAssign }: TaskCardProps) {
+export const TaskCard = React.memo(function TaskCard({ task, agentName, agentColor, agents, onDelete, onCancel, onAssign }: TaskCardProps) {
   const isRunning = task.status === 'running';
   const isDone = task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled';
   const [, setTick] = useState(0);
@@ -223,4 +223,4 @@ export function TaskCard({ task, agentName, agentColor, agents, onDelete, onCanc
       </div>
     </div>
   );
-}
+});

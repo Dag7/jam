@@ -12,22 +12,23 @@ interface TeamOverviewContainerProps {
 export function TeamOverviewContainer({ onSelectAgent }: TeamOverviewContainerProps) {
   const agents = useAppStore((s) => s.agents);
   const souls = useAppStore((s) => s.souls);
-  const setSoul = useAppStore((s) => s.setSoul);
   const { stats, relationships, isLoading } = useTeamStats();
 
   // Stable reference: only changes when agent IDs actually change
   const agentIds = useMemo(() => Object.keys(agents), [agents]);
 
   // Load souls for all agents to display role info
+  // Use getState() inside callback to avoid re-running when setSoul reference changes
   useEffect(() => {
+    const currentSouls = useAppStore.getState().souls;
     for (const id of agentIds) {
-      if (!souls[id]) {
+      if (!currentSouls[id]) {
         window.jam.team.soul.get(id).then((result) => {
-          if (result) setSoul(id, result as unknown as SoulEntry);
+          if (result) useAppStore.getState().setSoul(id, result as unknown as SoulEntry);
         });
       }
     }
-  }, [agentIds, setSoul]); // removed souls — early guard prevents re-fetching already-loaded
+  }, [agentIds]);
 
   if (isLoading) {
     return (

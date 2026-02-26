@@ -42,8 +42,8 @@ export const ChatContainer: React.FC = () => {
       });
 
       if (result.messages.length > 0) {
-        const chatMessages: ChatMessage[] = result.messages.map((m) => ({
-          id: `history-${m.timestamp}-${m.agentId}-${m.role}`,
+        const chatMessages: ChatMessage[] = result.messages.map((m, i) => ({
+          id: `history-${m.timestamp}-${m.agentId}-${m.role}-${i}`,
           role: m.role === 'user' ? ('user' as const) : ('agent' as const),
           agentId: m.agentId,
           agentName: m.agentName,

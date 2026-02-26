@@ -35,6 +35,7 @@ export class ElevenLabsSTTProvider implements ISTTProvider {
           'xi-api-key': this.apiKey,
         },
         body: formData,
+        signal: AbortSignal.timeout(30_000),
       },
     );
 

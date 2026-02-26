@@ -1,7 +1,7 @@
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+import { execFile, spawn } from 'node:child_process';
+import { join, resolve } from 'node:path';
 import { createLogger } from '@jam/core';
 import treeKill from 'tree-kill';
 
@@ -15,6 +15,10 @@ const RESTART_GRACE_MS = 10_000;
 const HEALTH_CHECK_INTERVAL_MS = 8_000;
 /** Consecutive failures before marking a service as dead */
 const FAILURE_THRESHOLD = 3;
+/** Maximum directory depth when scanning for .services.json */
+const MAX_SCAN_DEPTH = 3;
+/** Directories to skip during recursive scan */
+const SCAN_SKIP = new Set(['node_modules', '.git', '__pycache__', 'conversations', 'venv', '.venv', 'dist', 'build']);
 
 export interface TrackedService {
   agentId: string;
@@ -34,6 +38,14 @@ export interface TrackedService {
  *  Default: returns the port as-is (native mode). */
 export type PortResolver = (agentId: string, containerPort: number) => number;
 
+/** Container operations for sandbox mode — stop/restart services inside Docker */
+export interface ContainerOps {
+  /** Kill process listening on containerPort inside the agent's container */
+  killInContainer(agentId: string, containerPort: number): Promise<boolean>;
+  /** Restart a command inside the agent's container (detached) */
+  restartInContainer(agentId: string, command: string, cwd: string): Promise<boolean>;
+}
+
 export class ServiceRegistry {
   /** Cached services by agentId */
   private services = new Map<string, TrackedService[]>();
@@ -45,31 +57,26 @@ export class ServiceRegistry {
   private healthInterval: ReturnType<typeof setInterval> | null = null;
   /** Port resolver for sandbox mode (maps container port → host port) */
   private portResolver: PortResolver = (_agentId, port) => port;
+  /** Container operations for sandbox mode (stop/restart inside Docker) */
+  private containerOps: ContainerOps | null = null;
 
   /** Set a custom port resolver (for Docker sandbox mode) */
   setPortResolver(resolver: PortResolver): void {
     this.portResolver = resolver;
   }
 
-  /** Scan an agent's workspace for `.services.json` and update cache.
-   *  Checks both the root cwd and immediate subdirectories (agents may
-   *  create projects in subdirs that register their own services).
-   *  Keeps dead entries visible (alive=false) for restart capability. */
-  async scan(agentId: string, cwd: string): Promise<TrackedService[]> {
-    // Collect all .services.json paths: root + one level of subdirectories
-    const servicePaths: string[] = [];
-    const rootPath = join(cwd, SERVICES_FILE);
-    if (existsSync(rootPath)) servicePaths.push(rootPath);
+  /** Set container operations for sandbox mode */
+  setContainerOps(ops: ContainerOps): void {
+    this.containerOps = ops;
+  }
 
-    try {
-      const SKIP = new Set(['node_modules', '.git', '__pycache__', 'conversations']);
-      const dirEntries = await readdir(cwd, { withFileTypes: true });
-      for (const entry of dirEntries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.') || SKIP.has(entry.name)) continue;
-        const subPath = join(cwd, entry.name, SERVICES_FILE);
-        if (existsSync(subPath)) servicePaths.push(subPath);
-      }
-    } catch { /* cwd might not exist or be unreadable */ }
+  /** Scan an agent's workspace for `.services.json` and update cache.
+   *  Recursively checks up to MAX_SCAN_DEPTH levels of subdirectories
+   *  (agents may create projects in nested subdirs that register their
+   *  own services). Keeps dead entries visible (alive=false) for restart. */
+  async scan(agentId: string, cwd: string): Promise<TrackedService[]> {
+    // Recursively collect all .services.json paths
+    const servicePaths = await this.findServiceFiles(cwd, 0);
 
     if (servicePaths.length === 0) {
       this.services.delete(agentId);
@@ -165,37 +172,82 @@ export class ServiceRegistry {
     return this.services.get(agentId) ?? [];
   }
 
-  /** Stop a service by port — resolves the actual PID via lsof and kills it */
+  /** Stop a service by port — kills inside container (sandbox) or via lsof (native) */
   async stopService(port: number): Promise<boolean> {
+    // In sandbox mode, kill the process inside the container
+    if (this.containerOps) {
+      const svc = this.findServiceByPort(port);
+      if (svc) {
+        const ok = await this.containerOps.killInContainer(svc.agentId, port);
+        if (ok) {
+          log.info(`Stopped service "${svc.name}" on container port ${port} via docker exec`);
+          this.markServiceDead(port);
+          return true;
+        }
+      }
+      log.warn(`Failed to stop service on container port ${port}`);
+      return false;
+    }
+
+    // Native mode: find PID on host via lsof
     const pid = await findPidByPort(port);
     if (!pid) {
       log.warn(`No process found listening on port ${port}`);
       return false;
     }
     try {
-      // Kill entire process tree — services may have spawned children
       treeKill(pid, 'SIGTERM', (err) => {
         if (err) log.warn(`tree-kill failed for service on port ${port} (PID ${pid}): ${err.message}`);
       });
       log.info(`Stopped service on port ${port} (PID ${pid})`);
-      // Mark as dead in cache (keep the entry for restart)
-      for (const [, services] of this.services) {
-        for (const svc of services) {
-          if (svc.port === port) {
-            svc.alive = false;
-            const key = `${svc.agentId}:${svc.name}`;
-            this.failureCounts.delete(key);
-          }
-        }
-      }
+      this.markServiceDead(port);
       return true;
     } catch {
       return false;
     }
   }
 
+  /** Mark a service as dead in cache by port */
+  private markServiceDead(port: number): void {
+    for (const [, services] of this.services) {
+      for (const svc of services) {
+        if (svc.port === port) {
+          svc.alive = false;
+          this.failureCounts.delete(`${svc.agentId}:${svc.name}`);
+        }
+      }
+    }
+  }
+
+  /** Recursively find .services.json files up to MAX_SCAN_DEPTH */
+  private async findServiceFiles(dir: string, depth: number): Promise<string[]> {
+    const results: string[] = [];
+    const filePath = join(dir, SERVICES_FILE);
+    if (existsSync(filePath)) results.push(filePath);
+    if (depth >= MAX_SCAN_DEPTH) return results;
+
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || SCAN_SKIP.has(entry.name)) continue;
+        const subResults = await this.findServiceFiles(join(dir, entry.name), depth + 1);
+        results.push(...subResults);
+      }
+    } catch { /* dir might not exist or be unreadable */ }
+    return results;
+  }
+
+  /** Find a tracked service entry by its container port */
+  private findServiceByPort(port: number): TrackedService | undefined {
+    for (const [, services] of this.services) {
+      const svc = services.find(s => s.port === port);
+      if (svc) return svc;
+    }
+    return undefined;
+  }
+
   /** Restart a stopped service by name. Requires `command` + `cwd` in the entry. */
-  restartService(serviceName: string): { success: boolean; error?: string } {
+  async restartService(serviceName: string): Promise<{ success: boolean; error?: string }> {
     // Find the service entry
     let entry: TrackedService | undefined;
     for (const services of this.services.values()) {
@@ -208,27 +260,33 @@ export class ServiceRegistry {
     if (entry.alive) return { success: false, error: 'Service is already running' };
 
     const cwd = entry.cwd || process.cwd();
+
+    // In sandbox mode, restart inside the container
+    if (this.containerOps) {
+      const ok = await this.containerOps.restartInContainer(entry.agentId, entry.command, cwd);
+      if (!ok) return { success: false, error: 'Failed to restart inside container' };
+      log.info(`Restarted service "${entry.name}" on port ${entry.port} inside container`);
+      this.markServiceRestarted(entry);
+      return { success: true };
+    }
+
+    // Native mode: spawn on host
     const logFile = entry.logFile || `logs/${entry.name}.log`;
-    const logPath = join(cwd, logFile);
+    const logPath = resolve(cwd, logFile);
+    if (!logPath.startsWith(resolve(cwd))) {
+      return { success: false, error: 'Log file path escapes working directory' };
+    }
 
     try {
-      const child = spawn('sh', ['-c', `${entry.command} > ${logPath} 2>&1`], {
+      const child = spawn('sh', ['-c', `exec ${entry.command}`], {
         cwd,
         detached: true,
-        stdio: 'ignore',
+        stdio: ['ignore', 'ignore', 'ignore'],
       });
       child.unref();
 
       log.info(`Restarted service "${entry.name}" on port ${entry.port} in ${cwd}`);
-
-      // Update the cache entry in-place
-      entry.alive = true;
-      entry.startedAt = new Date().toISOString();
-
-      // Mark grace period so health checks don't prematurely mark it dead
-      this.recentRestarts.set(entry.name, Date.now());
-      // Reset failure counter
-      this.failureCounts.delete(`${entry.agentId}:${entry.name}`);
+      this.markServiceRestarted(entry);
 
       // Append new entry to .services.json (port-based, no PID)
       const servicesFile = join(cwd, SERVICES_FILE);
@@ -246,6 +304,22 @@ export class ServiceRegistry {
     } catch (err) {
       return { success: false, error: String(err) };
     }
+  }
+
+  /** Update cache after a service restart */
+  private markServiceRestarted(entry: TrackedService): void {
+    entry.alive = true;
+    entry.startedAt = new Date().toISOString();
+    this.recentRestarts.set(entry.name, Date.now());
+    this.failureCounts.delete(`${entry.agentId}:${entry.name}`);
+  }
+
+  /** Resolve a container port to the host port for browser access.
+   *  Returns the port as-is if no resolver is set or service not found. */
+  resolvePortForBrowser(containerPort: number): number {
+    const svc = this.findServiceByPort(containerPort);
+    if (!svc) return containerPort;
+    return this.portResolver(svc.agentId, containerPort);
   }
 
   // ── Health Monitor ──────────────────────────────────────────────
@@ -312,7 +386,7 @@ export class ServiceRegistry {
   /** Stop all tracked services for a specific agent */
   async stopForAgent(agentId: string): Promise<void> {
     const services = this.services.get(agentId) ?? [];
-    await Promise.all(services.map(svc => this.killServiceByPort(svc.port, svc.name)));
+    await Promise.all(services.map(svc => this.killServiceByPort(svc.agentId, svc.port, svc.name)));
     this.services.delete(agentId);
   }
 
@@ -322,15 +396,21 @@ export class ServiceRegistry {
     const kills: Promise<void>[] = [];
     for (const [, services] of this.services) {
       for (const svc of services) {
-        kills.push(this.killServiceByPort(svc.port, svc.name));
+        kills.push(this.killServiceByPort(svc.agentId, svc.port, svc.name));
       }
     }
     await Promise.all(kills);
     this.services.clear();
   }
 
-  /** Safely kill a service process tree by finding the PID listening on its port */
-  private async killServiceByPort(port: number, name: string): Promise<void> {
+  /** Kill a service — uses containerOps in sandbox mode, lsof on host in native mode */
+  private async killServiceByPort(agentId: string, port: number, name: string): Promise<void> {
+    if (this.containerOps) {
+      await this.containerOps.killInContainer(agentId, port);
+      log.info(`Stopped service "${name}" on container port ${port} via docker exec`);
+      return;
+    }
+
     const pid = await findPidByPort(port);
     if (!pid) return;
 
@@ -355,19 +435,21 @@ function isPortAlive(port: number, timeoutMs = 2000): Promise<boolean> {
   });
 }
 
-/** Find the PID listening on a given port using lsof.
+/** Find the PID listening on a given port using lsof (non-blocking).
  *  Uses `-sTCP:LISTEN` to only match the server process (not clients).
  *  Excludes our own PID to prevent self-kill. */
 function findPidByPort(port: number): Promise<number | null> {
-  const { execSync } = require('node:child_process') as typeof import('node:child_process');
   const ownPid = process.pid;
-  try {
-    const output = execSync(`lsof -ti :${port} -sTCP:LISTEN`, { encoding: 'utf-8', timeout: 3000 });
-    const pids = output.trim().split('\n')
-      .map(l => parseInt(l.trim(), 10))
-      .filter(p => Number.isFinite(p) && p !== ownPid);
-    return Promise.resolve(pids.length > 0 ? pids[0] : null);
-  } catch {
-    return Promise.resolve(null);
-  }
+  return new Promise((resolve) => {
+    execFile('lsof', ['-ti', `:${port}`, '-sTCP:LISTEN'],
+      { encoding: 'utf-8', timeout: 3000 },
+      (err, stdout) => {
+        if (err || !stdout) return resolve(null);
+        const pids = stdout.trim().split('\n')
+          .map((l: string) => parseInt(l.trim(), 10))
+          .filter((p: number) => Number.isFinite(p) && p !== ownPid);
+        resolve(pids.length > 0 ? pids[0] : null);
+      },
+    );
+  });
 }

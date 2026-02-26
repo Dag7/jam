@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '@/store';
 
 /**
@@ -94,10 +94,13 @@ export function useTTSQueue() {
     }
   };
 
-  const enqueueTTS = (audioData: string) => {
+  // Stable reference — all state is in refs, so no deps needed.
+  // This prevents useIPCSubscriptions from re-subscribing on every render.
+  const enqueueTTS = useCallback((audioData: string) => {
     queueRef.current.push(audioData);
     if (!playingRef.current) playNextTTS();
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Listen for interrupt signal from useVoice (user started speaking)
   useEffect(() => {

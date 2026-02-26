@@ -278,6 +278,29 @@ export class DockerClient implements IDockerClient {
     return spawn(this.docker, args, { stdio: ['pipe', 'pipe', 'pipe'] });
   }
 
+  /** Inspect actual port mappings from a running container.
+   *  Returns a map of containerPort → hostPort parsed from `docker port`. */
+  getPortMappings(containerId: string): Map<number, number> {
+    const mappings = new Map<number, number>();
+    try {
+      const output = execFileSync(
+        this.docker,
+        ['port', containerId],
+        { timeout: 5000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+      // Each line: "3000/tcp -> 0.0.0.0:10000"
+      for (const line of output.trim().split('\n')) {
+        const match = line.match(/^(\d+)\/\w+\s+->\s+[\d.]+:(\d+)/);
+        if (match) {
+          mappings.set(parseInt(match[1], 10), parseInt(match[2], 10));
+        }
+      }
+    } catch {
+      // Container might not have port mappings or might be stopped
+    }
+    return mappings;
+  }
+
   /** List all Jam-managed containers (running or stopped) */
   listJamContainers(): ContainerListEntry[] {
     try {

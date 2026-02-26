@@ -5,9 +5,6 @@ import type { StatsEntry, RelationshipEntry } from '@/store/teamSlice';
 export function useTeamStats() {
   const stats = useAppStore((s) => s.stats);
   const relationships = useAppStore((s) => s.relationships);
-  const setStats = useAppStore((s) => s.setStats);
-  const setRelationships = useAppStore((s) => s.setRelationships);
-  const addRelationship = useAppStore((s) => s.addRelationship);
   // Only re-run when agent IDs change, not when any agent property changes
   const agentIds = useAppStore(
     (s) => Object.keys(s.agents),
@@ -16,6 +13,8 @@ export function useTeamStats() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    const store = () => useAppStore.getState();
+
     const fetchAll = async () => {
       const allRels: RelationshipEntry[] = [];
 
@@ -23,7 +22,7 @@ export function useTeamStats() {
         agentIds.map(async (id) => {
           const agentStats = await window.jam.team.stats.get(id);
           if (agentStats) {
-            setStats(id, agentStats as unknown as StatsEntry);
+            store().setStats(id, agentStats as unknown as StatsEntry);
           }
 
           const rels = await window.jam.team.relationships.getAll(id);
@@ -31,24 +30,25 @@ export function useTeamStats() {
         }),
       );
 
-      setRelationships(allRels);
+      store().setRelationships(allRels);
       setIsLoading(false);
     };
 
     fetchAll();
 
     const cleanupStats = window.jam.team.stats.onUpdated((data) => {
-      setStats(data.agentId, data.stats as unknown as StatsEntry);
+      store().setStats(data.agentId, data.stats as unknown as StatsEntry);
     });
     const cleanupTrust = window.jam.team.relationships.onTrustUpdated((data) => {
-      addRelationship(data.relationship as unknown as RelationshipEntry);
+      store().addRelationship(data.relationship as unknown as RelationshipEntry);
     });
 
     return () => {
       cleanupStats();
       cleanupTrust();
     };
-  }, [agentIds, setStats, setRelationships, addRelationship]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentIds]);
 
   return {
     stats,

@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { createWithEqualityFn } from 'zustand/traditional';
+import { shallow } from 'zustand/shallow';
 import { persist } from 'zustand/middleware';
 import { createAgentSlice, type AgentSlice } from './agentSlice';
 import { createVoiceSlice, type VoiceSlice } from './voiceSlice';
@@ -11,7 +12,7 @@ import { createNotificationSlice, type NotificationSlice } from './notificationS
 
 export type AppStore = AgentSlice & VoiceSlice & TerminalSlice & SettingsSlice & ChatSlice & TaskSlice & TeamSlice & NotificationSlice;
 
-export const useAppStore = create<AppStore>()(
+export const useAppStore = createWithEqualityFn<AppStore>()(
   persist(
     (...args) => ({
       ...createAgentSlice(...args),
@@ -33,4 +34,5 @@ export const useAppStore = create<AppStore>()(
       }),
     },
   ),
+  shallow,
 );

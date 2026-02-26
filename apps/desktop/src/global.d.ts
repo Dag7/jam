@@ -193,13 +193,13 @@ export interface JamAPI {
         agentId?: string;
       }>
     >;
-    onEntry: (
-      callback: (entry: {
+    onBatch: (
+      callback: (entries: Array<{
         timestamp: string;
         level: string;
         message: string;
         agentId?: string;
-      }) => void,
+      }>) => void,
     ) => () => void;
   };
 

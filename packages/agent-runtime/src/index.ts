@@ -18,7 +18,7 @@ export { shellEscape } from './pty-manager.js';
 export type { AgentStore, SecretResolver, SecretValuesProvider } from './agent-manager.js';
 export type { ConversationEntry, SkillDefinition } from './agent-context-builder.js';
 export type { TaskInfo, TaskStep } from './task-tracker.js';
-export type { TrackedService, PortResolver } from './service-registry.js';
+export type { TrackedService, PortResolver, ContainerOps } from './service-registry.js';
 export { buildCleanEnv } from './utils.js';
 export { PtyDataHandler } from './pty-utils.js';
 export type { WritablePty } from './pty-utils.js';

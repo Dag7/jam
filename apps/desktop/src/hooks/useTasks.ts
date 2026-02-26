@@ -5,26 +5,25 @@ import type { TaskEntry } from '@/store/taskSlice';
 export function useTasks() {
   const tasks = useAppStore((s) => s.tasks);
   const taskFilter = useAppStore((s) => s.taskFilter);
-  const setTasks = useAppStore((s) => s.setTasks);
-  const addTask = useAppStore((s) => s.addTask);
-  const updateTask = useAppStore((s) => s.updateTask);
   const setTaskFilter = useAppStore((s) => s.setTaskFilter);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    const store = () => useAppStore.getState();
+
     window.jam.tasks.list().then((result) => {
-      setTasks(result as unknown as TaskEntry[]);
+      store().setTasks(result as unknown as TaskEntry[]);
       setIsLoading(false);
     });
 
     const cleanupCreated = window.jam.tasks.onCreated((data) => {
-      addTask(data.task as unknown as TaskEntry);
+      store().addTask(data.task as unknown as TaskEntry);
     });
     const cleanupUpdated = window.jam.tasks.onUpdated((data) => {
-      updateTask(data.task as unknown as TaskEntry);
+      store().updateTask(data.task as unknown as TaskEntry);
     });
     const cleanupCompleted = window.jam.tasks.onCompleted((data) => {
-      updateTask(data.task as unknown as TaskEntry);
+      store().updateTask(data.task as unknown as TaskEntry);
     });
 
     return () => {
@@ -32,7 +31,8 @@ export function useTasks() {
       cleanupUpdated();
       cleanupCompleted();
     };
-  }, [setTasks, addTask, updateTask]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredTasks = useMemo(() => {
     let result = Object.values(tasks);
@@ -44,8 +44,6 @@ export function useTasks() {
     }
     return result;
   }, [tasks, taskFilter]);
-
-  const removeTask = useAppStore((s) => s.removeTask);
 
   const createTask = useCallback(
     async (input: { title: string; description: string; priority?: string; assignedTo?: string; tags?: string[] }) => {
@@ -64,10 +62,10 @@ export function useTasks() {
   const deleteTask = useCallback(
     async (taskId: string) => {
       const result = await window.jam.tasks.delete(taskId);
-      if (result.success) removeTask(taskId);
+      if (result.success) useAppStore.getState().removeTask(taskId);
       return result;
     },
-    [removeTask],
+    [],
   );
 
   const bulkDeleteTasks = useCallback(

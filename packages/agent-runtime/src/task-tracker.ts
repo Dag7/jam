@@ -15,12 +15,13 @@ export interface TaskInfo {
 }
 
 const MAX_STEPS = 50;
+let taskSeq = 0;
 
 export class TaskTracker {
   private tasks = new Map<AgentId, TaskInfo>();
 
   startTask(agentId: AgentId, command: string): string {
-    const taskId = `${agentId}-${Date.now()}`;
+    const taskId = `${agentId}-${Date.now()}-${++taskSeq}`;
     this.tasks.set(agentId, {
       taskId,
       command,

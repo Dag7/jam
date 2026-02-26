@@ -79,7 +79,7 @@ export function DashboardContainer() {
               <div className="p-2 space-y-0.5">
                 {agentList.map((a) => {
                   const isSelected = a.profile.id === selectedAgentId;
-                  const isRunning = a.status === 'running';
+                  const isRunning = a.status === 'running' || a.status === 'starting';
                   return (
                     <button
                       key={a.profile.id}
@@ -99,7 +99,7 @@ export function DashboardContainer() {
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium truncate">{a.profile.name}</div>
                         <div className={`text-[10px] ${isRunning ? 'text-green-400' : 'text-zinc-500'}`}>
-                          {a.status}
+                          {a.status === 'starting' ? 'starting...' : a.status}
                         </div>
                       </div>
                     </button>

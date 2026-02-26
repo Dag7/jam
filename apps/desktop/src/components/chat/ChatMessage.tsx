@@ -146,14 +146,14 @@ export const ChatMessageView: React.FC<ChatMessageProps> = React.memo(({ message
           color: message.agentColor ?? '#6b7280',
         }}
       >
-        {(message.agentName ?? '?').charAt(0).toUpperCase()}
+        {(message.agentName || '?').charAt(0).toUpperCase()}
       </div>
 
       <div className="flex-1 min-w-0">
         {/* Agent header */}
         <div className="flex items-center gap-2 mb-1">
           <span className="text-sm font-medium text-zinc-200">
-            {message.agentName ?? 'Agent'}
+            {message.agentName || 'Agent'}
           </span>
           {runtimeLabel && (
             <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${runtimeBadgeClass}`}>

@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/store';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
-import { AgentConfigForm, type AgentFormValues, type RuntimeMetadataInfo } from '@/components/agent/AgentConfigForm';
-import type { AgentVisualState } from '@/store/agentSlice';
-
+import { useRuntimeMetadata } from '@/hooks/useRuntimeMetadata';
+import { AgentConfigForm, type AgentFormValues } from '@/components/agent/AgentConfigForm';
 type FormMode = { type: 'closed' } | { type: 'create' } | { type: 'edit'; agentId: string };
 
-const VISUAL_STATE_LABELS: Record<AgentVisualState, { label: string; color: string; dot: string }> = {
+const VISUAL_STATE_LABELS: Record<string, { label: string; color: string; dot: string }> = {
   idle: { label: 'Idle', color: 'text-zinc-400', dot: 'bg-zinc-400' },
   listening: { label: 'Listening', color: 'text-green-400', dot: 'bg-green-400 animate-pulse' },
   thinking: { label: 'Thinking', color: 'text-amber-400', dot: 'bg-amber-400 animate-pulse' },
@@ -22,26 +21,21 @@ export const AgentsOverviewContainer: React.FC = () => {
   const souls = useAppStore((s) => s.souls);
   const { startAgent, stopAgent, deleteAgent, createAgent, updateAgent } = useOrchestrator();
   const [formMode, setFormMode] = useState<FormMode>({ type: 'closed' });
-  const [runtimes, setRuntimes] = useState<RuntimeMetadataInfo[]>([]);
-
-  const setSoul = useAppStore((s) => s.setSoul);
-
-  useEffect(() => {
-    window.jam.runtimes.listMetadata().then((data) => {
-      setRuntimes(data.map((r) => ({ id: r.id, displayName: r.displayName, models: r.models })));
-    });
-  }, []);
+  const runtimes = useRuntimeMetadata();
 
   // Load souls for all agents to display role info
+  // Use getState() inside callback to avoid re-running on every soul/agent change
   useEffect(() => {
+    const { souls: currentSouls, setSoul } = useAppStore.getState();
     for (const agent of agents) {
-      if (!souls[agent.profile.id]) {
+      if (!currentSouls[agent.profile.id]) {
         window.jam.team.soul.get(agent.profile.id).then((result) => {
           if (result) setSoul(agent.profile.id, result as unknown as Parameters<typeof setSoul>[1]);
         });
       }
     }
-  }, [agents, souls, setSoul]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agents]);
 
   const handleCreate = async (profile: Record<string, unknown>) => {
     const result = await createAgent(profile);
@@ -149,9 +143,10 @@ export const AgentsOverviewContainer: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {agents.map((agent) => {
-              const vs = (agent.visualState as AgentVisualState) || 'offline';
-              const isRunning = agent.status === 'running';
-              const stateInfo = VISUAL_STATE_LABELS[vs];
+              const isStarting = agent.status === 'starting';
+              const isRunning = agent.status === 'running' || isStarting;
+              const vs = isStarting ? 'starting' : ((agent.visualState as string) || 'offline');
+              const stateInfo = VISUAL_STATE_LABELS[vs] ?? { label: 'Starting', color: 'text-cyan-400', dot: 'bg-cyan-400 animate-pulse' };
 
               return (
                 <div
@@ -207,9 +202,14 @@ export const AgentsOverviewContainer: React.FC = () => {
                     {isRunning ? (
                       <button
                         onClick={() => handleStop(agent.profile.id)}
-                        className="flex-1 px-3 py-1.5 text-xs font-medium rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                        disabled={isStarting}
+                        className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                          isStarting
+                            ? 'bg-cyan-500/10 text-cyan-400 cursor-wait'
+                            : 'bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                        }`}
                       >
-                        Stop
+                        {isStarting ? 'Starting...' : 'Stop'}
                       </button>
                     ) : (
                       <button

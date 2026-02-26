@@ -85,16 +85,17 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
       this.writeInput(child, profile, text);
 
       // Abort signal support — kill entire process tree on abort
-      if (options?.signal) {
-        options.signal.addEventListener('abort', () => {
-          if (child.pid) {
-            treeKill(child.pid, 'SIGTERM');
-          }
-        }, { once: true });
+      const abortHandler = options?.signal ? () => {
+        if (child.pid) treeKill(child.pid, 'SIGTERM');
+      } : undefined;
+      if (options?.signal && abortHandler) {
+        options.signal.addEventListener('abort', abortHandler, { once: true });
       }
 
+      const MAX_OUTPUT = 50 * 1024 * 1024; // 50 MB cap
       let stdout = '';
       let stderr = '';
+      let stdoutCapped = false;
       const strategy = this.createOutputStrategy();
       const callbacks = {
         onProgress: options?.onProgress,
@@ -103,15 +104,31 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
 
       child.stdout!.on('data', (chunk: Buffer) => {
         const chunkStr = chunk.toString();
-        stdout += chunkStr;
+        if (!stdoutCapped) {
+          if (stdout.length + chunkStr.length > MAX_OUTPUT) {
+            stdout += chunkStr.slice(0, MAX_OUTPUT - stdout.length);
+            stdoutCapped = true;
+          } else {
+            stdout += chunkStr;
+          }
+        }
         strategy.processChunk(chunkStr, callbacks);
       });
 
       child.stderr!.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
+        if (stderr.length < MAX_OUTPUT) {
+          stderr += chunk.toString();
+        }
       });
 
+      const cleanup = () => {
+        if (options?.signal && abortHandler) {
+          options.signal.removeEventListener('abort', abortHandler);
+        }
+      };
+
       child.on('close', (code) => {
+        cleanup();
         strategy.flush(callbacks);
 
         if (code !== 0) {
@@ -129,6 +146,7 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
       });
 
       child.on('error', (err) => {
+        cleanup();
         log.error(`Spawn error: ${String(err)}`, undefined, profile.id);
         resolve({ success: false, text: '', error: String(err) });
       });

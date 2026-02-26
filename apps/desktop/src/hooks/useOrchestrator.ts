@@ -13,17 +13,38 @@ export function useOrchestrator() {
   );
 
   const startAgent = useCallback(async (agentId: string) => {
+    // Optimistic update — show "starting" immediately so the UI reacts
+    const store = useAppStore.getState();
+    store.updateAgentStatus(agentId, 'starting');
+    store.updateAgentVisualState(agentId, 'idle');
+    store.setAgentActive(agentId, true);
+
     const result = await window.jam.agents.start(agentId);
     if (result.success) {
-      useAppStore.getState().setAgentActive(agentId, true);
+      // The IPC event should already have set 'running', but ensure consistency
+      useAppStore.getState().updateAgentStatus(agentId, 'running');
+    } else {
+      // Revert optimistic update on failure
+      useAppStore.getState().updateAgentStatus(agentId, 'stopped');
+      useAppStore.getState().updateAgentVisualState(agentId, 'offline');
+      useAppStore.getState().setAgentActive(agentId, false);
     }
     return result;
   }, []);
 
   const stopAgent = useCallback(async (agentId: string) => {
+    // Optimistic update — show stopped immediately
+    const store = useAppStore.getState();
+    store.updateAgentStatus(agentId, 'stopped');
+    store.updateAgentVisualState(agentId, 'offline');
+    store.setAgentActive(agentId, false);
+
     const result = await window.jam.agents.stop(agentId);
-    if (result.success) {
-      useAppStore.getState().setAgentActive(agentId, false);
+    if (!result.success) {
+      // Revert optimistic update on failure
+      useAppStore.getState().updateAgentStatus(agentId, 'running');
+      useAppStore.getState().updateAgentVisualState(agentId, 'idle');
+      useAppStore.getState().setAgentActive(agentId, true);
     }
     return result;
   }, []);

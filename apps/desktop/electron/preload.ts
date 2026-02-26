@@ -195,28 +195,39 @@ export interface JamAPI {
     get: () => Promise<
       Array<{ timestamp: string; level: string; message: string; agentId?: string }>
     >;
-    onEntry: (
-      callback: (entry: {
+    onBatch: (
+      callback: (entries: Array<{
         timestamp: string;
         level: string;
         message: string;
         agentId?: string;
-      }) => void,
+      }>) => void,
     ) => () => void;
   };
 
   services: {
     list: () => Promise<Array<{
       agentId: string;
-      pid: number;
-      port?: number;
+      port: number;
       name: string;
       logFile?: string;
       startedAt: string;
       alive?: boolean;
+      command?: string;
+      cwd?: string;
     }>>;
-    stop: (pid: number) => Promise<{ success: boolean }>;
-    restart: (serviceName: string) => Promise<{ success: boolean; pid?: number; error?: string }>;
+    listForAgent: (agentId: string) => Promise<Array<{
+      agentId: string;
+      port: number;
+      name: string;
+      logFile?: string;
+      startedAt: string;
+      alive?: boolean;
+      command?: string;
+      cwd?: string;
+    }>>;
+    stop: (port: number) => Promise<{ success: boolean }>;
+    restart: (serviceName: string) => Promise<{ success: boolean; error?: string }>;
     openUrl: (port: number) => Promise<{ success: boolean }>;
   };
 
@@ -499,7 +510,8 @@ contextBridge.exposeInMainWorld('jam', {
 
   logs: {
     get: () => ipcRenderer.invoke('logs:get'),
-    onEntry: (cb) => createEventListener('logs:entry', cb),
+    onBatch: (cb: (entries: Array<{ timestamp: string; level: string; message: string; agentId?: string }>) => void) =>
+      createEventListener('logs:batch', cb),
   },
 
   services: {

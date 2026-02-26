@@ -1,6 +1,8 @@
 // Re-export domain types from @jam/core (single source of truth)
 export type { ContainerInfo, CreateContainerOptions } from '@jam/core';
 
+export type ContainerExitBehavior = 'stop' | 'delete' | 'keep-running';
+
 export interface SandboxConfig {
   /** Whether sandbox mode is enabled */
   enabled: boolean;
@@ -20,6 +22,8 @@ export interface SandboxConfig {
   stopTimeoutSec: number;
   /** Port for the host bridge HTTP server (agents call from containers) */
   hostBridgePort: number;
+  /** What to do with containers on app exit: stop (default), delete, or keep-running */
+  containerExitBehavior: ContainerExitBehavior;
 }
 
 export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
@@ -28,8 +32,9 @@ export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
   memoryMb: 4096,
   pidsLimit: 256,
   portRangeStart: 10_000,
-  portsPerAgent: 20,
+  portsPerAgent: 100,
   imageName: 'jam-agent:latest',
   stopTimeoutSec: 10,
   hostBridgePort: 19_876,
+  containerExitBehavior: 'stop',
 };

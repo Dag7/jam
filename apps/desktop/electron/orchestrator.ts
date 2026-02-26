@@ -87,6 +87,7 @@ export class Orchestrator {
   readonly serviceRegistry: ServiceRegistry;
   readonly containerManager: IContainerManager | null = null;
   private readonly portAllocator: PortAllocator | null = null;
+  private readonly docker: DockerClient | null = null;
   private readonly hostBridge: HostBridge | null = null;
   readonly memoryStore: FileMemoryStore;
   readonly appStore: AppStore;
@@ -113,6 +114,8 @@ export class Orchestrator {
   private readonly sharedSkillsDir: string;
   private readonly imageReady: Promise<void> = Promise.resolve();
   private readonly reclaimedAgentIds: Set<string> = new Set();
+  /** Set to true once all auto-start agents have been launched */
+  private sandboxFullyReady = false;
   readonly taskExecutor: TaskExecutor;
 
   private mainWindow: BrowserWindow | null = null;
@@ -128,6 +131,7 @@ export class Orchestrator {
     // Initialize PTY manager — sandbox mode or native
     if (this.config.sandbox.enabled) {
       const docker = new DockerClient();
+      this.docker = docker;
       if (docker.isAvailable()) {
         log.info('Docker available — enabling sandbox mode');
         this.portAllocator = new PortAllocator(
@@ -254,6 +258,39 @@ export class Orchestrator {
       this.serviceRegistry.setPortResolver((agentId, containerPort) =>
         pa.resolveHostPort(agentId, containerPort) ?? containerPort,
       );
+
+      // Container ops: stop/restart services inside Docker containers
+      const docker = this.docker!;
+      this.serviceRegistry.setContainerOps({
+        killInContainer: async (agentId, containerPort) => {
+          const cid = cm.getContainerId(agentId);
+          if (!cid) return false;
+          const child = docker.execSpawn(cid,
+            ['sh', '-c', `kill $(lsof -ti :${containerPort} -sTCP:LISTEN) 2>/dev/null || true`],
+            {});
+          await new Promise<void>((res) => child.on('close', () => res()));
+          return true;
+        },
+        restartInContainer: async (agentId, command, cwd) => {
+          const cid = cm.getContainerId(agentId);
+          if (!cid) return false;
+
+          // Translate host CWD → container CWD
+          // Agent workspace (e.g. ~/.jam/agents/john) is mounted at /workspace
+          let containerCwd = cwd;
+          const agents = this.agentManager.list();
+          const agent = agents.find(a => a.profile.id === agentId);
+          if (agent?.profile.cwd && cwd.startsWith(agent.profile.cwd)) {
+            containerCwd = '/workspace' + cwd.slice(agent.profile.cwd.length);
+          }
+
+          const child = docker.execSpawn(cid,
+            ['sh', '-c', `cd ${containerCwd} && exec ${command} </dev/null &>/dev/null &`],
+            {}, containerCwd);
+          child.unref();
+          return true;
+        },
+      });
     }
 
     // Bootstrap JAM system agent (creates if not already persisted)
@@ -492,10 +529,18 @@ export class Orchestrator {
 
     // Send initial sandbox status so the renderer knows if it should show a loading screen
     if (this.config.sandbox.enabled && this.containerManager) {
-      this.sendToRenderer('sandbox:progress', {
-        status: 'building-image',
-        message: 'Preparing sandbox environment...',
-      });
+      if (this.sandboxFullyReady) {
+        // Auto-start already completed before window was ready — send 'ready' immediately
+        this.sendToRenderer('sandbox:progress', {
+          status: 'ready',
+          message: 'All agent containers running',
+        });
+      } else {
+        this.sendToRenderer('sandbox:progress', {
+          status: 'building-image',
+          message: 'Preparing sandbox environment...',
+        });
+      }
     }
 
     // Forward events to renderer
@@ -538,19 +583,50 @@ export class Orchestrator {
       this.sendToRenderer('agents:visualStateChange', data);
     });
 
+    // Batch terminal + execute output IPC sends to reduce cross-process overhead.
+    // PTY data already arrives batched at ~16ms; we coalesce at ~32ms to halve IPC calls.
+    const termBatch = new Map<string, string>();
+    let termTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushTermBatch = () => {
+      termTimer = null;
+      for (const [agentId, output] of termBatch) {
+        this.sendToRenderer('terminal:data', { agentId, output });
+      }
+      termBatch.clear();
+    };
+
     this.eventBus.on('agent:output', (data: { agentId: string; data: string }) => {
-      this.sendToRenderer('terminal:data', {
-        agentId: data.agentId,
-        output: data.data,
-      });
+      termBatch.set(data.agentId, (termBatch.get(data.agentId) ?? '') + data.data);
+      if (!termTimer) termTimer = setTimeout(flushTermBatch, 32);
     });
 
+    // Execute output arrives per-chunk with no upstream batching — coalesce at 50ms
+    const execBatch = new Map<string, { chunks: string[]; clear: boolean }>();
+    let execTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushExecBatch = () => {
+      execTimer = null;
+      for (const [agentId, { chunks, clear }] of execBatch) {
+        this.sendToRenderer('terminal:executeOutput', {
+          agentId,
+          output: chunks.join(''),
+          clear,
+        });
+      }
+      execBatch.clear();
+    };
+
     this.eventBus.on('agent:executeOutput', (data: { agentId: string; data: string; clear?: boolean }) => {
-      this.sendToRenderer('terminal:executeOutput', {
-        agentId: data.agentId,
-        output: data.data,
-        clear: data.clear ?? false,
-      });
+      const existing = execBatch.get(data.agentId);
+      if (existing) {
+        if (data.clear) {
+          existing.chunks.length = 0;
+          existing.clear = true;
+        }
+        existing.chunks.push(data.data);
+      } else {
+        execBatch.set(data.agentId, { chunks: [data.data], clear: !!data.clear });
+      }
+      if (!execTimer) execTimer = setTimeout(flushExecBatch, 50);
     });
 
     this.eventBus.on('voice:transcription', (data) => {
@@ -868,6 +944,7 @@ export class Orchestrator {
     }
 
     // Signal sandbox is fully ready
+    this.sandboxFullyReady = true;
     if (this.containerManager) {
       this.sendToRenderer('sandbox:progress', {
         status: 'ready',
@@ -911,16 +988,20 @@ export class Orchestrator {
    *   reclaim on next startup (used during HMR hot reload). If false, containers
    *   are stopped and removed (used on real app exit).
    */
-  shutdown(keepContainers = false): void {
+  async shutdown(keepContainers = false): Promise<void> {
     this.taskExecutor.stop();
     this.teamEventHandler.stop();
     this.taskScheduler.stop();
     this.inboxWatcher.stopAll();
 
-    // Flush pending store writes before killing processes
-    this.taskStore.stop().catch(() => {});
-    this.statsStore.stop().catch(() => {});
-    this.scheduleStore.stop().catch(() => {});
+    // Flush ALL debounced store writes before killing processes.
+    // These must be awaited — otherwise the app exits before writes complete.
+    await Promise.all([
+      this.taskStore.stop().catch((e) => log.warn(`Task store flush failed: ${e}`)),
+      this.statsStore.stop().catch((e) => log.warn(`Stats store flush failed: ${e}`)),
+      this.scheduleStore.stop().catch((e) => log.warn(`Schedule store flush failed: ${e}`)),
+      this.improvementStore.stop().catch((e) => log.warn(`Improvement store flush failed: ${e}`)),
+    ]);
 
     this.agentManager.stopHealthCheck();
     this.agentManager.stopAll();
@@ -933,9 +1014,23 @@ export class Orchestrator {
     if (keepContainers) {
       // HMR: keep containers running — they'll be reclaimed on next startup
       log.info('Keeping Docker containers alive for hot reload reclaim');
-    } else {
-      // Real exit: stop and remove all Docker containers
-      this.containerManager?.stopAll();
+    } else if (this.containerManager) {
+      // Real exit: apply user-configured container exit behavior
+      const behavior = this.config.sandbox.containerExitBehavior;
+      switch (behavior) {
+        case 'keep-running':
+          log.info('Keeping Docker containers running (configured: keep-running)');
+          break;
+        case 'delete':
+          log.info('Stopping and removing all Docker containers (configured: delete)');
+          this.containerManager.removeAll();
+          break;
+        case 'stop':
+        default:
+          log.info('Stopping Docker containers without removing (configured: stop)');
+          this.containerManager.stopAll();
+          break;
+      }
     }
 
     this.eventBus.removeAllListeners();
@@ -948,12 +1043,39 @@ const PROCESS_MANAGEMENT_SKILL = [
   '---',
   'name: process-management',
   'description: How to run servers, UIs, and background processes safely',
-  'triggers: server, run, start, dev, npm run, yarn dev, build, serve, deploy, ui, app, dashboard, website, localhost, port',
+  'triggers: server, run, start, dev, npm run, yarn dev, build, serve, deploy, ui, app, dashboard, website, localhost, port, project, create',
   '---',
   '',
   '# Background Process Management',
   '',
   'When asked to build and run a server, UI, website, or any long-running process:',
+  '',
+  '## Workspace Organization',
+  '',
+  'Keep your workspace organized. Place all project work inside a `projects/` directory:',
+  '',
+  '```',
+  'workspace/',
+  '  SOUL.md              # Your identity (managed by Jam)',
+  '  skills/              # Your learned skills',
+  '  conversations/       # Chat history (managed by Jam)',
+  '  projects/            # All project work goes here',
+  '    my-app/            # One directory per project',
+  '      .services.json   # Service registry for this project',
+  '      src/',
+  '      logs/',
+  '  inbox.jsonl          # Incoming tasks (managed by Jam)',
+  '```',
+  '',
+  'IMPORTANT: Always create projects inside `projects/`. Never dump files or markdown docs in the workspace root.',
+  '',
+  '## Port Assignment',
+  '',
+  'Use ports in the range **3000-3099** for your services. Ports outside this range will not be accessible.',
+  '- 3000-3009: Web servers and frontends',
+  '- 3010-3019: API backends',
+  '- 3020-3029: Database UIs, admin panels',
+  '- 3030+: Other services',
   '',
   '## Rules',
   '1. **NEVER** run long-lived processes in the foreground (they block you forever)',
@@ -961,16 +1083,17 @@ const PROCESS_MANAGEMENT_SKILL = [
   '3. **ALWAYS** run processes in the background with output redirected to a log file',
   '4. **ALWAYS** return control after confirming the process started successfully',
   '5. **ALWAYS** register the service in `.services.json` so Jam can track and manage it',
-  '6. **ALWAYS** use a specific port for your service so Jam can detect and stop it',
+  '6. **ALWAYS** use a port in the range 3000-3099 so Jam can detect and reach it',
   '',
   '## How to Start a Background Process',
   '',
   '```bash',
-  '# Create a logs directory',
-  'mkdir -p logs',
+  '# Create project directory and logs',
+  'mkdir -p projects/my-app/logs',
+  'cd projects/my-app',
   '',
   '# Start the process in background, redirect all output to log file',
-  'nohup npm run dev > logs/server.log 2>&1 &',
+  'nohup npm run dev -- --port 3000 > logs/server.log 2>&1 &',
   '',
   '# Wait briefly for startup',
   'sleep 3',
@@ -981,11 +1104,11 @@ const PROCESS_MANAGEMENT_SKILL = [
   '',
   '## Register the Service (REQUIRED)',
   '',
-  'After starting a background process, write a JSON line to `.services.json` in your workspace directory so Jam can track and restart it.',
+  'After starting a background process, write a JSON line to `.services.json` in the project directory so Jam can track and restart it.',
   'Jam tracks services by **port** — do NOT include PID (it goes stale). You MUST include `port`, `name`, `command`, and `cwd`:',
   '',
   '```bash',
-  'echo \'{"port":3000,"name":"dev-server","command":"npm run dev","cwd":"\'$(pwd)\'","logFile":"logs/server.log","startedAt":"\'$(date -u +%FT%TZ)\'"}\' >> .services.json',
+  'echo \'{"port":3000,"name":"dev-server","command":"npm run dev -- --port 3000","cwd":"\'$(pwd)\'","logFile":"logs/server.log","startedAt":"\'$(date -u +%FT%TZ)\'"}\' >> .services.json',
   '```',
   '',
   'Required fields: `port`, `name`, `command`, `cwd`, `startedAt`',

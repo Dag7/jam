@@ -38,8 +38,8 @@ export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {
 
   useEffect(() => {
     refreshServices();
-    const interval = setInterval(refreshServices, 10_000);
-    return () => clearInterval(interval);
+    // No interval here — ServiceBar already polls services globally every 10s.
+    // We only do a one-time fetch on mount + refresh after stop/restart actions.
   }, [refreshServices]);
 
   const handleStopService = useCallback(async (port: number) => {
@@ -82,13 +82,16 @@ export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {
     }));
 
   const agentMap = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.values(agents).map((a) => [
-          a.profile.id,
-          { name: a.profile.name, color: a.profile.color },
-        ]),
-      ),
+    () => {
+      const map: Record<string, { name: string; color: string }> = {};
+      for (const a of Object.values(agents)) {
+        const entry = { name: a.profile.name, color: a.profile.color };
+        map[a.profile.id] = entry;
+        // Also index by name (lowercase) — agents write to inboxes using names, not UUIDs
+        map[a.profile.name.toLowerCase()] = entry;
+      }
+      return map;
+    },
     [agents],
   );
 

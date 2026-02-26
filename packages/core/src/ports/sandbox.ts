@@ -23,7 +23,10 @@ export interface CreateContainerOptions {
 export interface IContainerManager {
   createAndStart(options: CreateContainerOptions): Promise<ContainerInfo>;
   stop(agentId: string): void;
+  /** Stop all containers without removing them (fast reclaim on next startup) */
   stopAll(): void;
+  /** Stop and remove all containers (full cleanup) */
+  removeAll(): void;
   /** Reclaim running containers from a previous session. Returns reclaimed agent IDs. */
   reclaimExisting(): Set<string>;
   getContainerId(agentId: string): string | undefined;
@@ -47,6 +50,8 @@ export interface IDockerClient {
 /** Resolves container ports to host ports for Docker sandbox mode */
 export interface IPortAllocator {
   allocate(agentId: string): { hostStart: number; containerStart: number; count: number };
+  /** Reclaim an allocation from an existing container's actual port mappings */
+  reclaim(agentId: string, actualMappings: Map<number, number>): void;
   release(agentId: string): void;
   resolveHostPort(agentId: string, containerPort: number): number | undefined;
   buildPortMappings(agentId: string): Array<{ hostPort: number; containerPort: number }>;

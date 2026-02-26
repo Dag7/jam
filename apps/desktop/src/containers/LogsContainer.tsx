@@ -66,32 +66,19 @@ export const LogsContainer: React.FC = () => {
       setVersion((v) => v + 1);
     });
 
-    // Batch incoming logs — accumulate and flush at 200ms intervals
-    let pendingEntries: LogEntry[] = [];
-    let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const flush = () => {
-      flushTimer = null;
-      if (pendingEntries.length === 0) return;
+    // Main process already batches at 200ms — just append each batch
+    const unsub = window.jam.logs.onBatch((entries) => {
       const logs = logsRef.current;
-      const combined = logs.length + pendingEntries.length > MAX_LOGS
-        ? [...logs.slice(-(MAX_LOGS - pendingEntries.length)), ...pendingEntries]
-        : [...logs, ...pendingEntries];
+      const batch = entries as LogEntry[];
+      const combined = logs.length + batch.length > MAX_LOGS
+        ? [...logs.slice(-(MAX_LOGS - batch.length)), ...batch]
+        : [...logs, ...batch];
       logsRef.current = combined;
-      pendingEntries = [];
       setVersion((v) => v + 1);
-    };
-
-    const unsub = window.jam.logs.onEntry((entry) => {
-      pendingEntries.push(entry as LogEntry);
-      if (!flushTimer) {
-        flushTimer = setTimeout(flush, 200);
-      }
     });
 
     return () => {
       unsub();
-      if (flushTimer) clearTimeout(flushTimer);
     };
   }, []);
 

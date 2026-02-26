@@ -66,17 +66,41 @@ export function consoleTransport(entry: LogEntry): void {
   }
 }
 
+/** Pattern matching API keys and tokens (OpenAI sk-, Anthropic sk-ant-, generic long hex/base64) */
+const SECRET_PATTERN = /\b(sk-(?:ant-)?[a-zA-Z0-9_-]{6})[a-zA-Z0-9_-]{20,}/g;
+
 /** Redact API keys and tokens from log messages */
 function redactSecrets(message: string): string {
-  return message.replace(
-    /\b(sk-[a-zA-Z0-9_-]{10})[a-zA-Z0-9_-]{20,}/g,
-    '$1****',
-  );
+  return message.replace(SECRET_PATTERN, '$1****');
 }
 
 function emit(entry: LogEntry): void {
   if (LOG_LEVELS[entry.level] < LOG_LEVELS[globalMinLevel]) return;
-  const sanitized = { ...entry, message: redactSecrets(entry.message) };
+
+  // Fast path: only redact if message might contain secrets (rare)
+  const message = SECRET_PATTERN.test(entry.message)
+    ? (SECRET_PATTERN.lastIndex = 0, redactSecrets(entry.message))
+    : entry.message;
+
+  // Only deep-sanitize data if it contains strings (secrets hide in strings)
+  let sanitizedData = entry.data;
+  if (sanitizedData !== undefined && typeof sanitizedData === 'object' && sanitizedData !== null) {
+    try {
+      const raw = JSON.stringify(sanitizedData);
+      if (SECRET_PATTERN.test(raw)) {
+        SECRET_PATTERN.lastIndex = 0;
+        sanitizedData = JSON.parse(raw.replace(SECRET_PATTERN, '$1****'));
+      }
+    } catch { /* non-serializable data — pass through */ }
+  } else if (typeof sanitizedData === 'string' && SECRET_PATTERN.test(sanitizedData)) {
+    SECRET_PATTERN.lastIndex = 0;
+    sanitizedData = redactSecrets(sanitizedData);
+  }
+
+  const sanitized = message !== entry.message || sanitizedData !== entry.data
+    ? { ...entry, message, data: sanitizedData }
+    : entry;
+
   for (const transport of globalTransports) {
     try {
       transport(sanitized);
