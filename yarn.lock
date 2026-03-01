@@ -623,6 +623,16 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@jam/brain@workspace:*, @jam/brain@workspace:packages/brain":
+  version: 0.0.0-use.local
+  resolution: "@jam/brain@workspace:packages/brain"
+  dependencies:
+    "@jam/core": "workspace:*"
+    rimraf: "npm:^5.0.5"
+    typescript: "npm:^5.9.3"
+  languageName: unknown
+  linkType: soft
+
 "@jam/core@workspace:*, @jam/core@workspace:packages/core":
   version: 0.0.0-use.local
   resolution: "@jam/core@workspace:packages/core"
@@ -637,6 +647,7 @@ __metadata:
   resolution: "@jam/desktop@workspace:apps/desktop"
   dependencies:
     "@jam/agent-runtime": "workspace:*"
+    "@jam/brain": "workspace:*"
     "@jam/core": "workspace:*"
     "@jam/eventbus": "workspace:*"
     "@jam/memory": "workspace:*"
