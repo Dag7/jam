@@ -39,6 +39,7 @@ import {
 import type { ISTTProvider, ITTSProvider, AgentState } from '@jam/core';
 import { createLogger, JAM_SYSTEM_PROFILE } from '@jam/core';
 import { FileMemoryStore } from '@jam/memory';
+import { BrainClient, BrainMemoryStore } from '@jam/brain';
 import {
   FileTaskStore,
   FileCommunicationHub,
@@ -89,7 +90,7 @@ export class Orchestrator {
   private readonly portAllocator: PortAllocator | null = null;
   private readonly docker: DockerClient | null = null;
   private readonly hostBridge: HostBridge | null = null;
-  readonly memoryStore: FileMemoryStore;
+  readonly memoryStore: BrainMemoryStore;
   readonly appStore: AppStore;
   readonly config: JamConfig;
   readonly commandParser: CommandParser;
@@ -219,7 +220,11 @@ export class Orchestrator {
 
     // Create memory + team stores (needed before AgentManager)
     const agentsDir = join(app.getPath('userData'), 'agents');
-    this.memoryStore = new FileMemoryStore(agentsDir);
+    const fileMemory = new FileMemoryStore(agentsDir);
+    const brainClient = new BrainClient({
+      baseUrl: config.brainUrl ?? 'http://localhost:8080',
+    });
+    this.memoryStore = new BrainMemoryStore({ inner: fileMemory, client: brainClient });
     const teamDir = join(app.getPath('userData'), 'team');
     this.taskStore = new FileTaskStore(teamDir);
     this.communicationHub = new FileCommunicationHub(teamDir, this.eventBus);

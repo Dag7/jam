@@ -54,6 +54,8 @@ export interface JamConfig {
   codeImprovement: CodeImprovementConfig;
   // Docker sandbox
   sandbox: SandboxConfig;
+  // Kalanu Brain memory server
+  brainUrl: string;
 }
 
 const DEFAULT_CONFIG: JamConfig = {
@@ -108,6 +110,8 @@ const DEFAULT_CONFIG: JamConfig = {
   },
   // Docker sandbox (opt-in, disabled by default)
   sandbox: { ...DEFAULT_SANDBOX_CONFIG },
+  // Kalanu Brain memory server (defaults to localhost)
+  brainUrl: 'http://localhost:8080',
 };
 
 export function loadConfig(): JamConfig {
@@ -145,6 +149,9 @@ export function loadConfig(): JamConfig {
   }
   if (process.env.JAM_DEFAULT_MODEL) {
     envOverrides.defaultModel = process.env.JAM_DEFAULT_MODEL;
+  }
+  if (process.env.JAM_BRAIN_URL) {
+    envOverrides.brainUrl = process.env.JAM_BRAIN_URL;
   }
 
   // Sandbox env override: JAM_SANDBOX=1 enables sandbox mode
