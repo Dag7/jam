@@ -36,9 +36,10 @@ import {
   ElevenLabsTTSProvider,
   OpenAITTSProvider,
 } from '@jam/voice';
-import type { ISTTProvider, ITTSProvider, AgentState } from '@jam/core';
-import { createLogger, JAM_SYSTEM_PROFILE, Batcher } from '@jam/core';
+import type { ISTTProvider, ITTSProvider, AgentState, IMemoryStore } from '@jam/core';
+import { createLogger, JAM_SYSTEM_PROFILE, Batcher, Events } from '@jam/core';
 import { FileMemoryStore } from '@jam/memory';
+import { BrainClient, BrainMemoryStore } from '@jam/brain';
 import {
   FileTaskStore,
   FileCommunicationHub,
@@ -62,6 +63,7 @@ import { AppStore } from './storage/store';
 import { loadConfig, type JamConfig, type STTProviderType, type TTSProviderType } from './config';
 
 const log = createLogger('Orchestrator');
+
 
 const DEATH_PHRASES = [
   '{name} has left the building. Permanently.',
@@ -89,7 +91,8 @@ export class Orchestrator {
   private readonly portAllocator: PortAllocator | null = null;
   private readonly docker: DockerClient | null = null;
   private readonly hostBridge: HostBridge | null = null;
-  readonly memoryStore: FileMemoryStore;
+  readonly memoryStore: IMemoryStore;
+  readonly brainClient: BrainClient | null = null;
   readonly appStore: AppStore;
   readonly config: JamConfig;
   readonly commandParser: CommandParser;
@@ -117,6 +120,8 @@ export class Orchestrator {
   /** Set to true once all auto-start agents have been launched */
   private sandboxFullyReady = false;
   readonly taskExecutor: TaskExecutor;
+  /** IPC batchers — stored for disposal during shutdown */
+  private readonly batchers: Array<{ dispose(): void }> = [];
 
   private mainWindow: BrowserWindow | null = null;
 
@@ -217,9 +222,24 @@ export class Orchestrator {
     this.sharedSkillsDir = join(homedir(), '.jam', 'shared-skills');
     const sharedSkillsDir = this.sharedSkillsDir;
 
-    // Create memory + team stores (needed before AgentManager)
+    // Create memory store — optionally decorated with Brain for semantic recall
     const agentsDir = join(app.getPath('userData'), 'agents');
-    this.memoryStore = new FileMemoryStore(agentsDir);
+    const fileMemory = new FileMemoryStore(agentsDir);
+
+    if (this.config.brain.enabled) {
+      const brainApiKey = this.appStore.getApiKey('brain') ?? undefined;
+      const brainClient = new BrainClient({
+        baseUrl: this.config.brain.url,
+        apiKey: brainApiKey,
+      });
+      this.brainClient = brainClient;
+      this.memoryStore = new BrainMemoryStore({ inner: fileMemory, client: brainClient });
+      log.info(`Brain memory enabled — ${this.config.brain.url}`);
+    } else {
+      this.memoryStore = fileMemory;
+      log.info('Brain memory disabled — using file-based memory only');
+    }
+
     const teamDir = join(app.getPath('userData'), 'team');
     this.taskStore = new FileTaskStore(teamDir);
     this.communicationHub = new FileCommunicationHub(teamDir, this.eventBus);
@@ -258,6 +278,19 @@ export class Orchestrator {
       sharedSkillsDir,
       this.statsStore,
     );
+
+    // Forward recorded conversations to Brain for semantic indexing (Observer pattern)
+    if (this.brainClient) {
+      const brain = this.brainClient;
+      this.eventBus.on('conversation:recorded', (event: {
+        agentId: string; role: 'user' | 'agent'; content: string; source: string;
+      }) => {
+        const source = event.role === 'user'
+          ? (event.source === 'voice' ? 'user-voice' : 'user-text')
+          : 'agent-response';
+        brain.ingest(event.agentId, event.content, source).catch(() => {});
+      });
+    }
 
     // Register Docker sandbox hooks if sandbox mode is active
     if (this.containerManager && this.portAllocator) {
@@ -396,16 +429,17 @@ export class Orchestrator {
       const agents = this.agentManager.list();
       if (agents.length === 0) return;
 
-      log.info(`Scheduled self-reflection for ${agents.length} agent(s)`);
-      await Promise.allSettled(
-        agents.map((a) =>
-          this.selfImprovement.triggerReflection(a.profile.id)
-            .then((result) => {
-              if (result) log.info(`Reflection complete for "${a.profile.name}"`);
-            })
-            .catch((err) => log.error(`Reflection failed for "${a.profile.name}": ${String(err)}`)),
-        ),
-      );
+      // Run reflections sequentially — parallel execution spawns N child
+      // processes simultaneously which can OOM the main process.
+      log.info(`Scheduled self-reflection for ${agents.length} agent(s) (sequential)`);
+      for (const a of agents) {
+        try {
+          const result = await this.selfImprovement.triggerReflection(a.profile.id);
+          if (result) log.info(`Reflection complete for "${a.profile.name}"`);
+        } catch (err) {
+          log.error(`Reflection failed for "${a.profile.name}": ${String(err)}`);
+        }
+      }
     });
 
     // Code improvement system (opt-in)
@@ -615,6 +649,7 @@ export class Orchestrator {
       },
       (a, b) => a + b,
     );
+    this.batchers.push(termBatcher);
 
     this.eventBus.on('agent:output', (data: { agentId: string; data: string }) => {
       termBatcher.add(data.agentId, data.data);
@@ -640,6 +675,7 @@ export class Orchestrator {
         return existing;
       },
     );
+    this.batchers.push(execBatcher);
 
     this.eventBus.on('agent:executeOutput', (data: { agentId: string; data: string; clear?: boolean }) => {
       execBatcher.add(data.agentId, { chunks: [data.data], clear: !!data.clear });
@@ -976,7 +1012,9 @@ export class Orchestrator {
     await this.cleanupOrphanServices();
     this.serviceRegistry.startHealthMonitor();
 
-    // Start team services
+    this.eventBus.startDiagnostics(10_000);
+
+    // Start team services — must subscribe to AGENTS_READY before we emit it
     this.teamEventHandler.start();
     this.taskExecutor.start();
     await this.taskScheduler.start();
@@ -986,6 +1024,9 @@ export class Orchestrator {
       }
     }
     log.info('Team services started');
+
+    // Signal that all agents are running — triggers task drain and schedule activation
+    this.eventBus.emit(Events.AGENTS_READY, { agentCount: autoStartAgents.length });
   }
 
   /**
@@ -1085,32 +1126,48 @@ export class Orchestrator {
    *   are stopped and removed (used on real app exit).
    */
   async shutdown(keepContainers = false): Promise<void> {
+    // --- Phase 1: Synchronous stops (instant, no I/O) ---
+    this.eventBus.stopDiagnostics();
     this.taskExecutor.stop();
     this.teamEventHandler.stop();
     this.taskScheduler.stop();
     this.inboxWatcher.stopAll();
-
-    // Flush ALL debounced store writes before killing processes.
-    // These must be awaited — otherwise the app exits before writes complete.
-    await Promise.all([
-      this.taskStore.stop().catch((e) => log.warn(`Task store flush failed: ${e}`)),
-      this.statsStore.stop().catch((e) => log.warn(`Stats store flush failed: ${e}`)),
-      this.scheduleStore.stop().catch((e) => log.warn(`Schedule store flush failed: ${e}`)),
-      this.improvementStore.stop().catch((e) => log.warn(`Improvement store flush failed: ${e}`)),
-    ]);
-
     this.agentManager.stopHealthCheck();
+    for (const batcher of this.batchers) batcher.dispose();
+    this.batchers.length = 0;
 
-    // Stop all agent-spawned services BEFORE killing agents.
-    // Scan first to ensure the registry is up-to-date (agents may have spawned
-    // new services since the last periodic scan).
-    try {
-      await this.scanServices();
-    } catch { /* best-effort scan */ }
-    await this.serviceRegistry.stopAll();
-
+    // Kill agents and PTYs immediately — these are the primary orphan risk.
+    // Do this BEFORE any async work so processes die even if later steps hang.
     this.agentManager.stopAll();
     this.ptyManager.killAll();
+
+    // --- Phase 2: Best-effort async cleanup (timeout-guarded) ---
+    // Each operation is individually guarded so a single hang doesn't block everything.
+    const withTimeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T | void> =>
+      Promise.race([p, new Promise<void>((resolve) => setTimeout(() => {
+        log.warn(`Shutdown: ${label} timed out after ${ms}ms — skipping`);
+        resolve();
+      }, ms))]);
+
+    // Flush stores (disk I/O — usually fast, 2s cap)
+    await withTimeout(
+      Promise.all([
+        this.taskStore.stop().catch((e) => log.warn(`Task store flush failed: ${e}`)),
+        this.statsStore.stop().catch((e) => log.warn(`Stats store flush failed: ${e}`)),
+        this.scheduleStore.stop().catch((e) => log.warn(`Schedule store flush failed: ${e}`)),
+        this.improvementStore.stop().catch((e) => log.warn(`Improvement store flush failed: ${e}`)),
+      ]),
+      2000,
+      'store flushes',
+    );
+
+    // Stop tracked services using CACHED data only — no re-scan on shutdown.
+    // Scanning does filesystem walks + TCP port checks which can hang indefinitely.
+    await withTimeout(
+      this.serviceRegistry.stopAll(),
+      2000,
+      'service cleanup',
+    );
 
     // Stop host bridge
     this.hostBridge?.stop().catch(() => {});

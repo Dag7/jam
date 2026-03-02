@@ -279,6 +279,21 @@ export class DockerClient implements IDockerClient {
     return spawn(this.docker, args, { stdio: ['pipe', 'pipe', 'pipe'] });
   }
 
+  /** Kill orphaned agent processes inside a container (for reclaim after crash).
+   *  Targets known agent CLI binaries — leaves the container's init (tini) and
+   *  main process (sleep infinity) alive so the container stays running. */
+  killOrphanedProcesses(containerId: string): void {
+    try {
+      execFileSync(
+        this.docker,
+        ['exec', containerId, 'sh', '-c', "pkill -9 -f 'claude|opencode|codex' 2>/dev/null; exit 0"],
+        { timeout: 5000, stdio: ['pipe', 'pipe', 'pipe'] },
+      );
+    } catch {
+      // Best-effort — container might not have pkill or no matching processes
+    }
+  }
+
   /** Inspect actual port mappings from a running container.
    *  Returns a map of containerPort → hostPort parsed from `docker port`. */
   getPortMappings(containerId: string): Map<number, number> {

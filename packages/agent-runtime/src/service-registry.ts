@@ -2,7 +2,7 @@ import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile, spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
-import { createLogger, IntervalTimer } from '@jam/core';
+import { createLogger, IntervalTimer, TimeoutTimer } from '@jam/core';
 import treeKill from 'tree-kill';
 
 const log = createLogger('ServiceRegistry');
@@ -64,19 +64,25 @@ export class ServiceRegistry {
   private containerOps: ContainerOps | null = null;
   /** Change listeners — notified when any service status changes */
   private changeListeners: ServiceChangeListener[] = [];
+  /** Debounce timer for change notifications — coalesces rapid-fire updates */
+  private readonly notifyTimer = new TimeoutTimer();
+  /** Re-entrance guard — prevents overlapping health check cycles */
+  private healthCheckRunning = false;
 
   /** Register a listener that fires whenever any service status changes */
   onChange(listener: ServiceChangeListener): void {
     this.changeListeners.push(listener);
   }
 
-  /** Notify all change listeners with the full service list */
+  /** Notify all change listeners with the full service list (debounced 250ms) */
   private notifyChange(): void {
     if (this.changeListeners.length === 0) return;
-    const all = this.list();
-    for (const listener of this.changeListeners) {
-      listener(all);
-    }
+    this.notifyTimer.setIfNotSet(() => {
+      const all = this.list();
+      for (const listener of this.changeListeners) {
+        listener(all);
+      }
+    }, 250);
   }
 
   /** Set a custom port resolver (for Docker sandbox mode) */
@@ -164,8 +170,12 @@ export class ServiceRegistry {
     }
     const deduped = Array.from(byName.values());
 
+    // Only notify listeners when data actually changed — prevents spurious IPC events
+    const prev = this.services.get(agentId) ?? [];
     this.services.set(agentId, deduped);
-    this.notifyChange();
+    if (!this.servicesEqual(prev, deduped)) {
+      this.notifyChange();
+    }
     return deduped;
   }
 
@@ -267,6 +277,15 @@ export class ServiceRegistry {
     return undefined;
   }
 
+  /** Shallow compare two service lists by port, name, and alive status */
+  private servicesEqual(a: TrackedService[], b: TrackedService[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].port !== b[i].port || a[i].name !== b[i].name || a[i].alive !== b[i].alive) return false;
+    }
+    return true;
+  }
+
   /** Restart a stopped service by name. Requires `command` + `cwd` in the entry. */
   async restartService(serviceName: string): Promise<{ success: boolean; error?: string }> {
     // Find the service entry
@@ -358,14 +377,17 @@ export class ServiceRegistry {
     }, HEALTH_CHECK_INTERVAL_MS);
   }
 
-  /** Stop the background health monitor */
+  /** Stop the background health monitor (can be restarted later) */
   stopHealthMonitor(): void {
-    this.healthTimer.dispose();
+    this.healthTimer.cancel();
+    this.notifyTimer.cancel();
     log.info('Health monitor stopped');
   }
 
   /** Run a single health check cycle across all cached services */
   private async runHealthChecks(): Promise<void> {
+    if (this.healthCheckRunning) return; // Prevent overlapping cycles
+    this.healthCheckRunning = true;
     let changed = false;
 
     for (const [, services] of this.services) {
@@ -407,6 +429,7 @@ export class ServiceRegistry {
     if (changed) {
       this.notifyChange();
     }
+    this.healthCheckRunning = false;
   }
 
   /** Stop all tracked services for a specific agent */

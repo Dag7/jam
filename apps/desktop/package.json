@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@jam/agent-runtime": "workspace:*",
+    "@jam/brain": "workspace:*",
     "@jam/core": "workspace:*",
     "@jam/eventbus": "workspace:*",
     "@jam/memory": "workspace:*",

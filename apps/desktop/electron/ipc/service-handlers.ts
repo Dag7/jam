@@ -13,14 +13,17 @@ export interface ServiceHandlerDeps {
 export function registerServiceHandlers(deps: ServiceHandlerDeps): void {
   const { serviceRegistry, scanServices } = deps;
 
-  ipcMain.handle('services:list', async () => {
-    await scanServices();
+  ipcMain.handle('services:list', () => {
     return serviceRegistry.list();
   });
 
-  ipcMain.handle('services:listForAgent', async (_, agentId: string) => {
-    await scanServices();
+  ipcMain.handle('services:listForAgent', (_, agentId: string) => {
     return serviceRegistry.listForAgent(agentId);
+  });
+
+  ipcMain.handle('services:scan', async () => {
+    await scanServices();
+    return serviceRegistry.list();
   });
 
   ipcMain.handle('services:stop', async (_, port: number) => {

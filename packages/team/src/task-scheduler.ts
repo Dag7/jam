@@ -77,6 +77,9 @@ export class TaskScheduler {
   private readonly memorySchedules: Map<string, ScheduledTask> = new Map();
   /** Handlers for system schedules — matched by task tag, called instead of creating a generic task */
   private readonly systemHandlers = new Map<string, () => Promise<void>>();
+  /** Set to true once AGENTS_READY fires — ticks are skipped until then */
+  private agentsReady = false;
+  private readonly unsubscribers: Array<() => void> = [];
 
   constructor(
     private readonly taskStore: ITaskStore,
@@ -118,12 +121,23 @@ export class TaskScheduler {
       await this.syncSystemSchedules();
     }
 
+    // Start ticking, but skip dispatch until agents are ready
     this.timer.cancelAndSet(() => this.tick(), this.checkIntervalMs);
-    this.tick();
+
+    // Listen for agents to be ready before dispatching scheduled tasks
+    this.unsubscribers.push(
+      this.eventBus.on(Events.AGENTS_READY, () => {
+        this.agentsReady = true;
+        log.info('Agents ready — scheduler will begin dispatching tasks');
+        this.tick();
+      }),
+    );
   }
 
   stop(): void {
-    this.timer.dispose();
+    this.timer.cancel();
+    for (const unsub of this.unsubscribers) unsub();
+    this.unsubscribers.length = 0;
   }
 
   async getSchedules(): Promise<ScheduledTask[]> {
@@ -172,7 +186,9 @@ export class TaskScheduler {
           pattern: def.pattern,
           taskTemplate: def.taskTemplate,
           enabled: def.enabled !== false,
-          lastRun: null,
+          // Set lastRun to now so newly seeded schedules wait for the next
+          // cron window instead of firing immediately on startup.
+          lastRun: new Date().toISOString(),
           source: 'system',
         });
       }
@@ -180,6 +196,12 @@ export class TaskScheduler {
   }
 
   private async tick(): Promise<void> {
+    // Skip dispatching until agents have fully initialized
+    if (!this.agentsReady) {
+      log.debug('Agents not ready — skipping tick');
+      return;
+    }
+
     const now = new Date();
 
     // Process persistent schedules

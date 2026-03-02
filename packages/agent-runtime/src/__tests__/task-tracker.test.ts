@@ -17,7 +17,7 @@ describe('TaskTracker', () => {
   describe('startTask', () => {
     it('returns a task ID with agent ID prefix', () => {
       const taskId = tracker.startTask('agent-1', 'do something');
-      expect(taskId).toMatch(/^agent-1-\d+$/);
+      expect(taskId).toMatch(/^agent-1-\d+-\d+$/);
     });
 
     it('creates a task with running status', () => {

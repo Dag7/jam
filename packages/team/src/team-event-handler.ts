@@ -16,6 +16,8 @@ export class TeamEventHandler {
 
   /** Lazily-resolved ID for the #team-feed broadcast channel */
   private teamFeedChannelId: string | null = null;
+  /** Serializes concurrent channel creation to prevent duplicates */
+  private teamFeedInitPromise: Promise<string> | null = null;
 
   constructor(
     private readonly eventBus: IEventBus,
@@ -195,27 +197,39 @@ export class TeamEventHandler {
     if (!this.communicationHub) return;
 
     try {
-      // Lazily resolve or create the team-feed channel
-      if (!this.teamFeedChannelId) {
-        const channels = await this.communicationHub.listChannels();
-        const existing = channels.find(c => c.name === TEAM_FEED_CHANNEL);
-        if (existing) {
-          this.teamFeedChannelId = existing.id;
-        } else {
-          const allAgentIds = this.getAgentProfiles().map(a => a.id);
-          const channel = await this.communicationHub.createChannel(
-            TEAM_FEED_CHANNEL,
-            'broadcast',
-            allAgentIds,
-          );
-          this.teamFeedChannelId = channel.id;
-          log.info(`Created ${TEAM_FEED_CHANNEL} broadcast channel`);
-        }
-      }
-
-      await this.communicationHub.sendMessage(this.teamFeedChannelId, senderId, content);
+      const channelId = await this.resolveTeamFeedChannel();
+      await this.communicationHub.sendMessage(channelId, senderId, content);
     } catch (err) {
       log.warn(`Failed to broadcast to team feed: ${String(err)}`);
     }
+  }
+
+  /** Resolve or create the #team-feed channel — serialized to prevent duplicate creation. */
+  private resolveTeamFeedChannel(): Promise<string> {
+    if (this.teamFeedChannelId) return Promise.resolve(this.teamFeedChannelId);
+
+    // Serialize concurrent callers — only the first one creates the channel
+    if (!this.teamFeedInitPromise) {
+      this.teamFeedInitPromise = this.initTeamFeedChannel().finally(() => {
+        this.teamFeedInitPromise = null;
+      });
+    }
+    return this.teamFeedInitPromise;
+  }
+
+  private async initTeamFeedChannel(): Promise<string> {
+    const hub = this.communicationHub!;
+    const channels = await hub.listChannels();
+    const existing = channels.find(c => c.name === TEAM_FEED_CHANNEL);
+    if (existing) {
+      this.teamFeedChannelId = existing.id;
+      return existing.id;
+    }
+
+    const allAgentIds = this.getAgentProfiles().map(a => a.id);
+    const channel = await hub.createChannel(TEAM_FEED_CHANNEL, 'broadcast', allAgentIds);
+    this.teamFeedChannelId = channel.id;
+    log.info(`Created ${TEAM_FEED_CHANNEL} broadcast channel`);
+    return channel.id;
   }
 }

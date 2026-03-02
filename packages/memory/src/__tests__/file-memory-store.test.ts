@@ -7,16 +7,18 @@ vi.mock('node:fs/promises', () => ({
   mkdir: vi.fn(),
   appendFile: vi.fn(),
   readdir: vi.fn(),
+  rename: vi.fn(),
 }));
 
 const { FileMemoryStore } = await import('../file-memory-store.js');
-const { readFile, writeFile, mkdir, appendFile, readdir } = await import('node:fs/promises');
+const { readFile, writeFile, mkdir, appendFile, readdir, rename } = await import('node:fs/promises');
 
 const mockedReadFile = vi.mocked(readFile);
 const mockedWriteFile = vi.mocked(writeFile);
 const mockedMkdir = vi.mocked(mkdir);
 const mockedAppendFile = vi.mocked(appendFile);
 const mockedReaddir = vi.mocked(readdir);
+const mockedRename = vi.mocked(rename);
 
 const testMemory: AgentMemory = {
   persona: 'helpful',
@@ -41,6 +43,7 @@ describe('FileMemoryStore', () => {
     mockedMkdir.mockResolvedValue(undefined as any);
     mockedWriteFile.mockResolvedValue(undefined);
     mockedAppendFile.mockResolvedValue(undefined);
+    mockedRename.mockResolvedValue(undefined);
   });
 
   describe('load', () => {
@@ -68,19 +71,28 @@ describe('FileMemoryStore', () => {
   });
 
   describe('save', () => {
-    it('creates directory and writes JSON', async () => {
+    it('creates directory and writes JSON atomically', async () => {
       await store.save('agent-1', testMemory);
       expect(mockedMkdir).toHaveBeenCalledWith('/tmp/jam-memory/agent-1', { recursive: true });
+      // Atomic write: writes to .tmp then renames
       expect(mockedWriteFile).toHaveBeenCalledWith(
-        '/tmp/jam-memory/agent-1/memory.json',
+        '/tmp/jam-memory/agent-1/memory.json.tmp',
         JSON.stringify(testMemory, null, 2),
         'utf-8',
+      );
+      expect(mockedRename).toHaveBeenCalledWith(
+        '/tmp/jam-memory/agent-1/memory.json.tmp',
+        '/tmp/jam-memory/agent-1/memory.json',
       );
     });
 
     it('uses correct path for different agent IDs', async () => {
       await store.save('agent-2', testMemory);
       expect(mockedMkdir).toHaveBeenCalledWith('/tmp/jam-memory/agent-2', { recursive: true });
+      expect(mockedRename).toHaveBeenCalledWith(
+        '/tmp/jam-memory/agent-2/memory.json.tmp',
+        '/tmp/jam-memory/agent-2/memory.json',
+      );
     });
   });
 

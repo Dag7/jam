@@ -4,8 +4,17 @@ import type { AppStore } from './index';
 /** Maximum scrollback entries kept in memory per agent */
 const MAX_SCROLLBACK = 500;
 
+/** Maximum pending data entries per agent — prevents unbounded memory growth when terminal tab is not mounted */
+const MAX_PENDING_DATA = 1_000;
+
 /** Maximum execute output string length per agent (~500KB) — prevents unbounded memory growth */
 const MAX_EXECUTE_OUTPUT = 500_000;
+
+/** Batching interval for terminal data (ms) — coalesces rapid IPC events into a single Zustand update */
+const TERMINAL_BATCH_MS = 32;
+
+/** Batching interval for execute output (ms) — longer than terminal since markdown re-parsing is heavier */
+const EXECUTE_OUTPUT_BATCH_MS = 50;
 
 export interface TerminalBuffer {
   /** Data waiting to be written to a mounted xterm.js instance */
@@ -35,13 +44,13 @@ export const createTerminalSlice: StateCreator<
   // Batching state — scoped to this closure instead of module-level,
   // so each store instance (tests, HMR) gets its own independent state.
   const terminalBatchQueue = new Map<string, string[]>();
-  let batchRaf: number | null = null;
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
 
   const executeOutputQueue = new Map<string, { chunks: string[]; clear: boolean }>();
-  let executeRaf: number | null = null;
+  let executeOutputTimer: ReturnType<typeof setTimeout> | null = null;
 
   function flushBatch(): void {
-    batchRaf = null;
+    batchTimer = null;
     if (terminalBatchQueue.size === 0) return;
 
     const batch = new Map(terminalBatchQueue);
@@ -55,8 +64,13 @@ export const createTerminalSlice: StateCreator<
         if (scrollback.length > MAX_SCROLLBACK) {
           scrollback.splice(0, scrollback.length - MAX_SCROLLBACK);
         }
+        let pendingData = existing.pendingData.concat(chunks);
+        // Cap pending data to prevent unbounded memory growth when terminal is not mounted
+        if (pendingData.length > MAX_PENDING_DATA) {
+          pendingData = pendingData.slice(-MAX_PENDING_DATA);
+        }
         updated[agentId] = {
-          pendingData: existing.pendingData.concat(chunks),
+          pendingData,
           scrollback,
         };
       }
@@ -65,7 +79,7 @@ export const createTerminalSlice: StateCreator<
   }
 
   function flushExecuteOutputBatch(): void {
-    executeRaf = null;
+    executeOutputTimer = null;
     if (executeOutputQueue.size === 0) return;
 
     const batch = new Map(executeOutputQueue);
@@ -96,8 +110,8 @@ export const createTerminalSlice: StateCreator<
       } else {
         terminalBatchQueue.set(agentId, [data]);
       }
-      if (batchRaf === null) {
-        batchRaf = requestAnimationFrame(flushBatch);
+      if (!batchTimer) {
+        batchTimer = setTimeout(flushBatch, TERMINAL_BATCH_MS);
       }
     },
 
@@ -132,8 +146,8 @@ export const createTerminalSlice: StateCreator<
       } else {
         executeOutputQueue.set(agentId, { chunks: [data], clear: !!clear });
       }
-      if (executeRaf === null) {
-        executeRaf = requestAnimationFrame(flushExecuteOutputBatch);
+      if (!executeOutputTimer) {
+        executeOutputTimer = setTimeout(flushExecuteOutputBatch, EXECUTE_OUTPUT_BATCH_MS);
       }
     },
   };

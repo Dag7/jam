@@ -1,4 +1,4 @@
-import { writeFile, mkdir } from 'node:fs/promises';
+import { writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { IDisposable } from '@jam/core';
 import { RunOnceScheduler } from '@jam/core';
@@ -52,8 +52,10 @@ export class DebouncedFileWriter implements IDisposable {
   }
 }
 
-/** Ensure directory exists, then write compact JSON to file. */
+/** Ensure directory exists, then atomically write compact JSON to file. */
 export async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, JSON.stringify(data), 'utf-8');
+  const tmpPath = `${filePath}.tmp`;
+  await writeFile(tmpPath, JSON.stringify(data), 'utf-8');
+  await rename(tmpPath, filePath);
 }

@@ -36,15 +36,15 @@ describe('HookRegistry', () => {
   });
 
   it('catches errors from hook handlers', () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // createLogger writes to process.stderr, not console.error
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const error = new Error('hook error');
     registry.register('evt', () => { throw error; });
     bus.emit('evt', null);
-    expect(consoleSpy).toHaveBeenCalledWith(
+    expect(stderrSpy).toHaveBeenCalledWith(
       expect.stringContaining('Error in hook'),
-      error,
     );
-    consoleSpy.mockRestore();
+    stderrSpy.mockRestore();
   });
 
   it('sorts hooks by priority (higher priority fires first via bus iteration)', () => {
