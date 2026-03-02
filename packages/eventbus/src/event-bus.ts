@@ -7,10 +7,46 @@ type Handler = (payload: unknown) => void;
 
 export class EventBus implements IEventBus {
   private listeners = new Map<string, Set<Handler>>();
+  /** Event counters for diagnostics — tracks count + payload bytes per event type */
+  private eventCounts = new Map<string, { count: number; bytes: number }>();
+  private diagTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Start logging event frequency every `intervalMs` (call once at startup) */
+  startDiagnostics(intervalMs = 10_000): void {
+    if (this.diagTimer) return;
+    this.diagTimer = setInterval(() => {
+      if (this.eventCounts.size === 0) return;
+      const lines: string[] = ['[EventBus Diagnostics]'];
+      for (const [event, { count, bytes }] of this.eventCounts) {
+        const perSec = (count / (intervalMs / 1000)).toFixed(1);
+        const kbPerSec = ((bytes / 1024) / (intervalMs / 1000)).toFixed(1);
+        lines.push(`  ${event}: ${count} events (${perSec}/s, ${kbPerSec} KB/s)`);
+      }
+      log.info(lines.join('\n'));
+      this.eventCounts.clear();
+    }, intervalMs);
+  }
+
+  stopDiagnostics(): void {
+    if (this.diagTimer) { clearInterval(this.diagTimer); this.diagTimer = null; }
+    this.eventCounts.clear();
+  }
 
   emit<T>(event: string, payload: T): void {
     const handlers = this.listeners.get(event);
     if (!handlers) return;
+
+    // Track event frequency + approximate payload size
+    const entry = this.eventCounts.get(event);
+    const payloadBytes = typeof (payload as { data?: string })?.data === 'string'
+      ? ((payload as { data: string }).data).length * 2  // JS strings are UTF-16
+      : 0;
+    if (entry) {
+      entry.count++;
+      entry.bytes += payloadBytes;
+    } else {
+      this.eventCounts.set(event, { count: 1, bytes: payloadBytes });
+    }
 
     for (const handler of handlers) {
       try {

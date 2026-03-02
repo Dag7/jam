@@ -77,13 +77,19 @@ export class TaskScheduler {
   private readonly memorySchedules: Map<string, ScheduledTask> = new Map();
   /** Handlers for system schedules — matched by task tag, called instead of creating a generic task */
   private readonly systemHandlers = new Map<string, () => Promise<void>>();
+  /** Startup grace period — skip dispatching tasks during early boot to let agents initialize */
+  private startupTs = 0;
+  private readonly startupGraceMs: number;
 
   constructor(
     private readonly taskStore: ITaskStore,
     private readonly eventBus: IEventBus,
     private readonly scheduleStore?: FileScheduleStore,
     private readonly checkIntervalMs: number = 60_000,
-  ) {}
+    startupGraceMs: number = 180_000,
+  ) {
+    this.startupGraceMs = startupGraceMs;
+  }
 
   /** Register a handler for system schedules with a matching tag.
    *  When a schedule fires and its task template has a matching tag,
@@ -113,6 +119,8 @@ export class TaskScheduler {
   }
 
   async start(): Promise<void> {
+    this.startupTs = Date.now();
+
     // Sync system schedules: seed missing, remove stale
     if (this.scheduleStore) {
       await this.syncSystemSchedules();
@@ -123,7 +131,7 @@ export class TaskScheduler {
   }
 
   stop(): void {
-    this.timer.dispose();
+    this.timer.cancel();
   }
 
   async getSchedules(): Promise<ScheduledTask[]> {
@@ -172,7 +180,9 @@ export class TaskScheduler {
           pattern: def.pattern,
           taskTemplate: def.taskTemplate,
           enabled: def.enabled !== false,
-          lastRun: null,
+          // Set lastRun to now so newly seeded schedules wait for the next
+          // cron window instead of firing immediately on startup.
+          lastRun: new Date().toISOString(),
           source: 'system',
         });
       }
@@ -180,6 +190,13 @@ export class TaskScheduler {
   }
 
   private async tick(): Promise<void> {
+    // Skip dispatching during the startup grace period — agents need time to
+    // initialize before accepting heavy work like self-reflection.
+    if (Date.now() - this.startupTs < this.startupGraceMs) {
+      log.debug('Startup grace period — skipping tick');
+      return;
+    }
+
     const now = new Date();
 
     // Process persistent schedules

@@ -28,13 +28,38 @@ export class TaskExecutor {
   private readonly unsubscribers: Array<() => void> = [];
   /** Active task count per agent — limits concurrent detached executions */
   private readonly activeTaskCounts = new Map<string, number>();
-  private readonly MAX_CONCURRENT_TASKS_PER_AGENT = 2;
+  private readonly MAX_CONCURRENT_TASKS_PER_AGENT = 1;
+  /** Global limit — prevents spawning too many host-side processes at once.
+   *  Each executeDetached() spawns a heavy CLI process (e.g. `claude`), so
+   *  allowing 12 concurrent (2 × 6 agents) can OOM the system. */
+  private readonly MAX_GLOBAL_CONCURRENT = 3;
   /** Active execution timers — keyed by taskId so we can cancel on completion */
   private readonly executionTimers = new Map<string, TimeoutTimer>();
   private readonly timeoutMs: number;
+  /** When true, no new tasks are picked up — running tasks finish naturally */
+  private _paused = false;
+  /** Total active executions across all agents */
+  private globalActiveCount = 0;
 
   constructor(private readonly deps: TaskExecutorDeps) {
     this.timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  }
+
+  get paused(): boolean {
+    return this._paused;
+  }
+
+  /** Pause task processing — running tasks continue, no new ones start */
+  pause(): void {
+    this._paused = true;
+    log.info('Task processing paused');
+  }
+
+  /** Resume task processing and drain any queued assigned tasks */
+  resume(): void {
+    this._paused = false;
+    log.info('Task processing resumed');
+    this.drainAssignedTasks();
   }
 
   start(): void {
@@ -58,8 +83,10 @@ export class TaskExecutor {
       }),
     );
 
-    // On startup, check for any tasks that were assigned but never executed
-    this.drainAssignedTasks();
+    // Delay draining tasks from previous sessions — give agents time to fully
+    // initialize and let the system stabilize before dispatching work.
+    // 2 minutes prevents a resource spike when many tasks are stuck from a crash.
+    setTimeout(() => this.drainAssignedTasks(), 120_000);
 
     log.info('Task executor started');
   }
@@ -119,6 +146,7 @@ export class TaskExecutor {
   /** Process any tasks stuck in `assigned` status (e.g., from a previous session).
    *  Also recovers tasks stuck in `running` — these were mid-flight when the app restarted. */
   private async drainAssignedTasks(): Promise<void> {
+    if (this._paused) return;
     try {
       // Recover stuck running tasks — reset to assigned so they can be re-executed
       const running = await this.deps.taskStore.list({ status: 'running' });
@@ -151,6 +179,17 @@ export class TaskExecutor {
 
   /** Attempt to execute a task on an agent (non-blocking, fires and forgets) */
   private tryExecute(taskId: string, agentId: string): void {
+    if (this._paused) {
+      log.debug(`Paused — skipping task ${taskId.slice(0, 8)}`);
+      return;
+    }
+
+    // Global limit — prevents spawning too many heavy CLI processes at once
+    if (this.globalActiveCount >= this.MAX_GLOBAL_CONCURRENT) {
+      log.debug(`Global limit reached (${this.globalActiveCount}/${this.MAX_GLOBAL_CONCURRENT}), task ${taskId.slice(0, 8)} will wait`);
+      return;
+    }
+
     const active = this.activeTaskCounts.get(agentId) ?? 0;
     if (active >= this.MAX_CONCURRENT_TASKS_PER_AGENT) {
       log.debug(`Agent ${agentId.slice(0, 8)} at max concurrent tasks (${active}), task ${taskId.slice(0, 8)} will wait`);
@@ -173,6 +212,7 @@ export class TaskExecutor {
     if (!task || task.status !== 'assigned') return;
 
     this.activeTaskCounts.set(agentId, (this.activeTaskCounts.get(agentId) ?? 0) + 1);
+    this.globalActiveCount++;
     const startedAt = new Date().toISOString();
 
     try {
@@ -259,8 +299,9 @@ export class TaskExecutor {
       const count = (this.activeTaskCounts.get(agentId) ?? 1) - 1;
       if (count <= 0) this.activeTaskCounts.delete(agentId);
       else this.activeTaskCounts.set(agentId, count);
-      // Check if this agent has more assigned tasks waiting
-      this.pickNextForAgent(agentId);
+      this.globalActiveCount = Math.max(0, this.globalActiveCount - 1);
+      // A slot freed up — check ALL agents for waiting tasks, not just this one
+      this.pickNextGlobally();
     }
   }
 
@@ -298,12 +339,19 @@ export class TaskExecutor {
     });
   }
 
-  /** After completing a task, check if the same agent has another assigned task */
-  private async pickNextForAgent(agentId: string): Promise<void> {
+  /** After completing a task, check if any agent has an assigned task waiting.
+   *  Checks globally because the freed slot may allow a different agent to run. */
+  private async pickNextGlobally(): Promise<void> {
+    if (this._paused || this.globalActiveCount >= this.MAX_GLOBAL_CONCURRENT) return;
     try {
-      const assigned = await this.deps.taskStore.list({ status: 'assigned', assignedTo: agentId });
-      if (assigned.length > 0) {
-        this.tryExecute(assigned[0].id, agentId);
+      const assigned = await this.deps.taskStore.list({ status: 'assigned' });
+      for (const task of assigned) {
+        if (!task.assignedTo) continue;
+        if (this.globalActiveCount >= this.MAX_GLOBAL_CONCURRENT) break;
+        const agentActive = this.activeTaskCounts.get(task.assignedTo) ?? 0;
+        if (agentActive >= this.MAX_CONCURRENT_TASKS_PER_AGENT) continue;
+        if (!this.deps.isAgentAvailable(task.assignedTo)) continue;
+        this.tryExecute(task.id, task.assignedTo);
       }
     } catch {
       // Non-critical — next tick or event will retry

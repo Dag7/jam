@@ -14,6 +14,8 @@ interface TaskBoardProps {
     tags: string[];
   }>;
   agents: Record<string, { name: string; color: string }>;
+  paused: boolean;
+  onTogglePaused: () => void;
   onUpdateStatus: (taskId: string, status: string) => void;
   onAssign: (taskId: string, agentId: string) => void;
   onDelete: (taskId: string) => void;
@@ -40,7 +42,7 @@ function columnToStatus(colKey: string): string {
   return colKey;
 }
 
-export function TaskBoard({ tasks, agents, onUpdateStatus, onAssign, onDelete, onBulkDelete, onCancel }: TaskBoardProps) {
+export function TaskBoard({ tasks, agents, paused, onTogglePaused, onUpdateStatus, onAssign, onDelete, onBulkDelete, onCancel }: TaskBoardProps) {
   const [dragOverCol, setDragOverCol] = useState<string | null>(null);
 
   const grouped = tasks.reduce<Record<string, typeof tasks>>((acc, task) => {
@@ -87,7 +89,30 @@ export function TaskBoard({ tasks, agents, onUpdateStatus, onAssign, onDelete, o
   return (
     <div className="p-4 h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-white">Task Board</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-white">Task Board</h2>
+          <button
+            onClick={onTogglePaused}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors ${
+              paused
+                ? 'text-yellow-400 bg-yellow-500/10 hover:bg-yellow-500/20'
+                : 'text-green-400 bg-green-500/10 hover:bg-green-500/20'
+            }`}
+            title={paused ? 'Resume task processing' : 'Pause task processing'}
+          >
+            {paused ? (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5,3 19,12 5,21" />
+              </svg>
+            ) : (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="5" y="3" width="4" height="18" />
+                <rect x="15" y="3" width="4" height="18" />
+              </svg>
+            )}
+            {paused ? 'Paused' : 'Running'}
+          </button>
+        </div>
         <div className="flex items-center gap-2">
           {doneTaskIds.length > 0 && (
             <button

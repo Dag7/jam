@@ -1,9 +1,9 @@
 import { ipcMain } from 'electron';
-import type { PtyManager } from '@jam/agent-runtime';
+import type { IPtyManager } from '@jam/agent-runtime';
 
 /** Narrow dependency interface — only what terminal handlers need */
 export interface TerminalHandlerDeps {
-  ptyManager: PtyManager;
+  ptyManager: IPtyManager;
 }
 
 export function registerTerminalHandlers(deps: TerminalHandlerDeps): void {

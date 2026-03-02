@@ -162,4 +162,5 @@ export const Events = {
   CODE_IMPROVED: 'code:improved',
   CODE_FAILED: 'code:failed',
   CODE_ROLLED_BACK: 'code:rolledback',
+  CONVERSATION_RECORDED: 'conversation:recorded',
 } as const;

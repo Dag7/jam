@@ -64,6 +64,8 @@ export class ServiceRegistry {
   private containerOps: ContainerOps | null = null;
   /** Change listeners — notified when any service status changes */
   private changeListeners: ServiceChangeListener[] = [];
+  /** Re-entrance guard — prevents overlapping health check cycles */
+  private healthCheckRunning = false;
 
   /** Register a listener that fires whenever any service status changes */
   onChange(listener: ServiceChangeListener): void {
@@ -358,14 +360,16 @@ export class ServiceRegistry {
     }, HEALTH_CHECK_INTERVAL_MS);
   }
 
-  /** Stop the background health monitor */
+  /** Stop the background health monitor (can be restarted later) */
   stopHealthMonitor(): void {
-    this.healthTimer.dispose();
+    this.healthTimer.cancel();
     log.info('Health monitor stopped');
   }
 
   /** Run a single health check cycle across all cached services */
   private async runHealthChecks(): Promise<void> {
+    if (this.healthCheckRunning) return; // Prevent overlapping cycles
+    this.healthCheckRunning = true;
     let changed = false;
 
     for (const [, services] of this.services) {
@@ -407,6 +411,7 @@ export class ServiceRegistry {
     if (changed) {
       this.notifyChange();
     }
+    this.healthCheckRunning = false;
   }
 
   /** Stop all tracked services for a specific agent */

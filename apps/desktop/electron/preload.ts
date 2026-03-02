@@ -131,6 +131,15 @@ export interface JamAPI {
     ) => Promise<{ success: boolean; error?: string }>;
   };
 
+  brain: {
+    health: () => Promise<{ healthy: boolean; error?: string }>;
+    search: (agentId: string, query: string, limit?: number) => Promise<{
+      results: Array<{ score: number; source: string; content: string }>;
+      error?: string;
+    }>;
+    consolidate: (agentId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+
   config: {
     get: () => Promise<Record<string, unknown>>;
     set: (
@@ -342,6 +351,8 @@ export interface JamAPI {
       source?: string;
       createdBy?: string;
     }) => Promise<{ success: boolean; schedule?: Record<string, unknown>; error?: string }>;
+    getPaused: () => Promise<boolean>;
+    setPaused: (paused: boolean) => Promise<{ success: boolean; error?: string }>;
     onCreated: (callback: (data: { task: Record<string, unknown> }) => void) => () => void;
     onUpdated: (callback: (data: { task: Record<string, unknown> }) => void) => () => void;
     onCompleted: (callback: (data: { task: Record<string, unknown>; durationMs: number }) => void) => () => void;
@@ -480,6 +491,14 @@ contextBridge.exposeInMainWorld('jam', {
       ipcRenderer.invoke('memory:save', agentId, memory),
   },
 
+  brain: {
+    health: () => ipcRenderer.invoke('brain:health'),
+    search: (agentId: string, query: string, limit?: number) =>
+      ipcRenderer.invoke('brain:search', agentId, query, limit),
+    consolidate: (agentId: string) =>
+      ipcRenderer.invoke('brain:consolidate', agentId),
+  },
+
   config: {
     get: () => ipcRenderer.invoke('config:get'),
     set: (config) => ipcRenderer.invoke('config:set', config),
@@ -529,6 +548,7 @@ contextBridge.exposeInMainWorld('jam', {
   services: {
     list: () => ipcRenderer.invoke('services:list'),
     listForAgent: (agentId) => ipcRenderer.invoke('services:listForAgent', agentId),
+    scan: () => ipcRenderer.invoke('services:scan'),
     stop: (port) => ipcRenderer.invoke('services:stop', port),
     restart: (serviceName) => ipcRenderer.invoke('services:restart', serviceName),
     openUrl: (port) => ipcRenderer.invoke('services:openUrl', port),
@@ -564,6 +584,8 @@ contextBridge.exposeInMainWorld('jam', {
     delete: (taskId) => ipcRenderer.invoke('tasks:delete', taskId),
     cancel: (taskId) => ipcRenderer.invoke('tasks:cancel', taskId),
     createRecurring: (input) => ipcRenderer.invoke('tasks:createRecurring', input),
+    getPaused: () => ipcRenderer.invoke('tasks:getPaused'),
+    setPaused: (paused) => ipcRenderer.invoke('tasks:setPaused', paused),
     onCreated: (cb) => createEventListener('tasks:created', cb),
     onUpdated: (cb) => createEventListener('tasks:updated', cb),
     onCompleted: (cb) => createEventListener('tasks:completed', cb),

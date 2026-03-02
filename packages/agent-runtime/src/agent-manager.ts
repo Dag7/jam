@@ -473,11 +473,15 @@ export class AgentManager {
       const userTs = new Date().toISOString();
       this.contextBuilder.recordConversation(state.profile.cwd, {
         timestamp: userTs, role: 'user', content: text, source, ...(hidden && { hidden: true }),
+      }).then(() => {
+        this.eventBus.emit('conversation:recorded', { agentId, role: 'user', content: text, source });
       }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
       if (result.text) {
         const agentTs = new Date(Date.now() + 1).toISOString();
         this.contextBuilder.recordConversation(state.profile.cwd, {
           timestamp: agentTs, role: 'agent', content: result.text, source, ...(hidden && { hidden: true }),
+        }).then(() => {
+          this.eventBus.emit('conversation:recorded', { agentId, role: 'agent', content: result.text, source });
         }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
       }
     }
@@ -507,6 +511,9 @@ export class AgentManager {
 
     const runtime = this.runtimeRegistry.get(state.profile.runtime);
     if (!runtime) return { success: false, error: `Runtime not found: ${state.profile.runtime}` };
+
+    const { heapUsed } = process.memoryUsage();
+    log.info(`executeDetached start: heap=${(heapUsed / 1024 / 1024).toFixed(0)}MB`, undefined, agentId);
 
     log.info(`Detached execution: "${text.slice(0, 60)}"`, undefined, agentId);
 
@@ -559,11 +566,15 @@ export class AgentManager {
         const userTs = new Date().toISOString();
         this.contextBuilder.recordConversation(state.profile.cwd, {
           timestamp: userTs, role: 'user', content: text, source: 'text', hidden: true,
+        }).then(() => {
+          this.eventBus.emit('conversation:recorded', { agentId, role: 'user', content: text, source: 'text' });
         }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
         if (result.text) {
           const agentTs = new Date(Date.now() + 1).toISOString();
           this.contextBuilder.recordConversation(state.profile.cwd, {
             timestamp: agentTs, role: 'agent', content: result.text, source: 'text', hidden: true,
+          }).then(() => {
+            this.eventBus.emit('conversation:recorded', { agentId, role: 'agent', content: result.text, source: 'text' });
           }).catch((err) => log.warn(`Fire-and-forget failed: ${String(err)}`));
         }
       }
@@ -800,7 +811,7 @@ export class AgentManager {
   }
 
   stopHealthCheck(): void {
-    this.healthCheckTimer.dispose();
+    this.healthCheckTimer.cancel();
   }
 
   private updateStatus(agentId: AgentId, status: AgentStatus): void {

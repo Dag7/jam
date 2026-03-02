@@ -20,5 +20,5 @@ export type { ConversationEntry, SkillDefinition, ExecutionEnvironment } from '.
 export type { TaskInfo, TaskStep } from './task-tracker.js';
 export type { TrackedService, PortResolver, ContainerOps } from './service-registry.js';
 export { buildCleanEnv } from './utils.js';
-export { PtyDataHandler } from './pty-utils.js';
+export { PtyDataHandler, getPtyDataRate } from './pty-utils.js';
 export type { WritablePty } from './pty-utils.js';

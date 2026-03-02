@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import type { AgentManager } from '@jam/agent-runtime';
-import type { BrainMemoryStore } from '@jam/brain';
+import type { IMemoryStore } from '@jam/core';
 import type { AppStore } from '../storage/store';
 import { saveConfig, type JamConfig } from '../config';
 
@@ -9,7 +9,7 @@ export interface ConfigHandlerDeps {
   config: JamConfig;
   appStore: AppStore;
   agentManager: AgentManager;
-  memoryStore: BrainMemoryStore;
+  memoryStore: IMemoryStore;
   initVoice: () => void;
 }
 
@@ -19,7 +19,7 @@ const ALLOWED_CONFIG_KEYS = new Set<string>([
   'defaultModel', 'defaultRuntime', 'theme', 'voiceSensitivity',
   'minRecordingMs', 'noSpeechThreshold', 'noiseBlocklist',
   'modelTiers', 'teamRuntime', 'scheduleCheckIntervalMs',
-  'codeImprovement', 'sandbox', 'brainUrl',
+  'codeImprovement', 'sandbox', 'brain',
 ]);
 
 export function registerConfigHandlers(deps: ConfigHandlerDeps): void {

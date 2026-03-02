@@ -192,9 +192,13 @@ export class ContainerManager implements IContainerManager {
       const isRunning = container.status.startsWith('Up');
 
       if (isRunning && container.agentId) {
+        // Kill orphaned agent processes from the crashed session — prevents
+        // double-process issues when new PTYs are spawned into reclaimed containers.
+        this.docker.killOrphanedProcesses(container.id);
+
         // Inspect actual Docker port mappings so the port resolver matches reality
         const actualMappings = this.docker.getPortMappings(container.id);
-        log.info(`Reclaiming running container "${container.name}" for agent ${container.agentId} (${actualMappings.size} port mappings)`);
+        log.info(`Reclaiming running container "${container.name}" for agent ${container.agentId} (${actualMappings.size} port mappings, orphans killed)`);
         this.containers.set(container.agentId, {
           containerId: container.id,
           agentId: container.agentId,

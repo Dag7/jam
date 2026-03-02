@@ -3,6 +3,7 @@ const DEFAULT_TIMEOUT_MS = 5_000;
 export interface BrainClientConfig {
   baseUrl: string;
   timeout?: number;
+  apiKey?: string;
 }
 
 export interface BrainSearchResult {
@@ -29,10 +30,12 @@ interface SearchResponse {
 export class BrainClient {
   private readonly baseUrl: string;
   private readonly timeout: number;
+  private readonly apiKey?: string;
 
   constructor(config: BrainClientConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     this.timeout = config.timeout ?? DEFAULT_TIMEOUT_MS;
+    this.apiKey = config.apiKey;
   }
 
   async health(): Promise<boolean> {
@@ -110,9 +113,14 @@ export class BrainClient {
     const timer = setTimeout(() => controller.abort(), this.timeout);
 
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (this.apiKey) {
+        headers['Authorization'] = `Bearer ${this.apiKey}`;
+      }
+
       const options: RequestInit = {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         signal: controller.signal,
       };
 

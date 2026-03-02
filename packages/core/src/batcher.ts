@@ -18,17 +18,21 @@ import { TimeoutTimer } from './timers.js';
 export class Batcher<V> implements IDisposable {
   private queue = new Map<string, V>();
   private readonly timer = new TimeoutTimer();
+  /** Pre-bound flush callback — avoids creating a new closure on every add() call */
+  private readonly boundFlush: () => void;
 
   constructor(
     private readonly intervalMs: number,
     private readonly flush: (batch: Map<string, V>) => void,
     private readonly merge: (existing: V, incoming: V) => V,
-  ) {}
+  ) {
+    this.boundFlush = () => this.doFlush();
+  }
 
   add(key: string, value: V): void {
     const existing = this.queue.get(key);
     this.queue.set(key, existing !== undefined ? this.merge(existing, value) : value);
-    this.timer.setIfNotSet(() => this.doFlush(), this.intervalMs);
+    this.timer.setIfNotSet(this.boundFlush, this.intervalMs);
   }
 
   /** Force-flush any pending items immediately */

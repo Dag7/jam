@@ -92,7 +92,7 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
         options.signal.addEventListener('abort', abortHandler, { once: true });
       }
 
-      const MAX_OUTPUT = 50 * 1024 * 1024; // 50 MB cap
+      const MAX_OUTPUT = 5 * 1024 * 1024; // 5 MB cap — keeps main process memory bounded
       let stdout = '';
       let stderr = '';
       let stdoutCapped = false;

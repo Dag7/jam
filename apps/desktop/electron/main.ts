@@ -22,6 +22,7 @@ import { registerSetupHandlers } from './ipc/setup-handlers';
 import { registerServiceHandlers } from './ipc/service-handlers';
 import { registerTaskHandlers } from './ipc/task-handlers';
 import { registerTeamHandlers } from './ipc/team-handlers';
+import { registerBrainHandlers } from './ipc/brain-handlers';
 
 const log = createLogger('Main');
 
@@ -33,6 +34,16 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let orchestrator: Orchestrator;
 let isQuitting = false;
+
+// --- Crash safety: prevent the process from becoming a zombie ---
+process.on('uncaughtException', (err) => {
+  log.error(`Uncaught exception: ${err.message}\n${err.stack}`);
+  // Give a brief window for the log to flush, then force exit
+  setTimeout(() => process.exit(1), 1000);
+});
+process.on('unhandledRejection', (reason) => {
+  log.error(`Unhandled rejection: ${String(reason)}`);
+});
 
 // --- HMR cleanup ---
 if (process.env.VITE_DEV_SERVER_URL) {
@@ -100,6 +111,7 @@ function createWindow(): void {
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 15, y: 12 },
     backgroundColor: '#09090b',
+    icon: path.join(__dirname, '../assets/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -113,6 +125,23 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  // Detect renderer crash (OOM, GPU crash, etc.) — trigger immediate shutdown
+  // to prevent the main process from becoming an unkillable zombie.
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    log.error(`Renderer crashed: ${details.reason} (exit code ${details.exitCode})`);
+    if (!isQuitting) {
+      isQuitting = true;
+      // Don't wait for graceful shutdown — the renderer is already dead.
+      // Kill agents/PTYs synchronously, then force exit.
+      try {
+        orchestrator?.agentManager.stopAll();
+        orchestrator?.ptyManager.killAll();
+      } catch { /* best-effort */ }
+      if (tray) { tray.destroy(); tray = null; }
+      setTimeout(() => process.exit(1), 500);
+    }
+  });
 
   mainWindow.on('close', (event) => {
     if (tray && !isQuitting) {
@@ -230,6 +259,9 @@ function registerIpcHandlers(): void {
     scheduleStore: orchestrator.scheduleStore,
     codeImprovement: orchestrator.codeImprovement,
   });
+  registerBrainHandlers({
+    brainClient: orchestrator.brainClient,
+  });
 
   // App + Logs (trivial, kept inline)
   ipcMain.handle('app:getVersion', () => app.getVersion());
@@ -295,6 +327,11 @@ app.on('activate', () => {
 
 let shutdownComplete = false;
 
+/** Hard deadline — if the process is still alive after this, force exit.
+ *  Keeps the timeout short (3s) because orchestrator.shutdown() already
+ *  has per-operation timeouts internally. */
+const SHUTDOWN_TIMEOUT_MS = 3000;
+
 app.on('before-quit', (event) => {
   isQuitting = true;
   if (tray) {
@@ -303,9 +340,17 @@ app.on('before-quit', (event) => {
   }
 
   if (!shutdownComplete) {
-    // Prevent quit until async store flushes + service cleanup complete
     event.preventDefault();
+
+    // Absolute safety net: process.exit() as the hard backstop.
+    // app.quit() goes through the Electron event loop which itself may be stuck.
+    const forceExitTimer = setTimeout(() => {
+      log.warn(`Shutdown timed out after ${SHUTDOWN_TIMEOUT_MS}ms — force exiting`);
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+
     orchestrator.shutdown().finally(() => {
+      clearTimeout(forceExitTimer);
       shutdownComplete = true;
       app.quit();
     });
@@ -319,7 +364,9 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     log.info(`Received ${sig} — shutting down`);
     isQuitting = true;
     if (!shutdownComplete) {
+      const forceTimer = setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS);
       orchestrator.shutdown().finally(() => {
+        clearTimeout(forceTimer);
         process.exit(0);
       });
     } else {

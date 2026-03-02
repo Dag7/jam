@@ -102,4 +102,18 @@ export function registerTaskHandlers(deps: TaskHandlerDeps): void {
     if (!taskExecutor) return { success: false, error: 'Task executor not available' };
     return taskExecutor.cancelTask(taskId);
   });
+
+  ipcMain.handle('tasks:getPaused', () => {
+    return taskExecutor?.paused ?? false;
+  });
+
+  ipcMain.handle('tasks:setPaused', (_, paused: boolean) => {
+    if (!taskExecutor) return { success: false, error: 'Task executor not available' };
+    if (paused) {
+      taskExecutor.pause();
+    } else {
+      taskExecutor.resume();
+    }
+    return { success: true };
+  });
 }

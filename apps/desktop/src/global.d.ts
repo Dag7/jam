@@ -124,6 +124,15 @@ export interface JamAPI {
     ) => Promise<{ success: boolean; error?: string }>;
   };
 
+  brain: {
+    health: () => Promise<{ healthy: boolean; error?: string }>;
+    search: (agentId: string, query: string, limit?: number) => Promise<{
+      results: Array<{ score: number; source: string; content: string }>;
+      error?: string;
+    }>;
+    consolidate: (agentId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+
   config: {
     get: () => Promise<Record<string, unknown>>;
     set: (
@@ -215,6 +224,16 @@ export interface JamAPI {
       cwd?: string;
     }>>;
     listForAgent: (agentId: string) => Promise<Array<{
+      agentId: string;
+      port: number;
+      name: string;
+      logFile?: string;
+      startedAt: string;
+      alive?: boolean;
+      command?: string;
+      cwd?: string;
+    }>>;
+    scan: () => Promise<Array<{
       agentId: string;
       port: number;
       name: string;
@@ -341,6 +360,8 @@ export interface JamAPI {
     ) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
     delete: (taskId: string) => Promise<{ success: boolean; error?: string }>;
     cancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+    getPaused: () => Promise<boolean>;
+    setPaused: (paused: boolean) => Promise<{ success: boolean; error?: string }>;
     createRecurring: (input: {
       title: string;
       description: string;
