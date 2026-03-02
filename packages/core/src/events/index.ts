@@ -137,7 +137,15 @@ export interface CodeImprovementRolledBackEvent {
   improvement: import('../models/code-improvement.js').CodeImprovement;
 }
 
+/** Emitted after all auto-start agents have been launched and are running */
+export interface AgentsReadyEvent {
+  /** Number of agents that were auto-started */
+  agentCount: number;
+}
+
 export const Events = {
+  /** All auto-start agents launched — safe to dispatch tasks and schedules */
+  AGENTS_READY: 'agents:ready',
   AGENT_CREATED: 'agent:created',
   AGENT_DELETED: 'agent:deleted',
   AGENT_STATUS_CHANGED: 'agent:statusChanged',

@@ -1,5 +1,5 @@
 import type { IEventBus } from '@jam/core';
-import { createLogger } from '@jam/core';
+import { createLogger, IntervalTimer } from '@jam/core';
 
 const log = createLogger('EventBus');
 
@@ -9,12 +9,11 @@ export class EventBus implements IEventBus {
   private listeners = new Map<string, Set<Handler>>();
   /** Event counters for diagnostics — tracks count + payload bytes per event type */
   private eventCounts = new Map<string, { count: number; bytes: number }>();
-  private diagTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly diagTimer = new IntervalTimer();
 
   /** Start logging event frequency every `intervalMs` (call once at startup) */
   startDiagnostics(intervalMs = 10_000): void {
-    if (this.diagTimer) return;
-    this.diagTimer = setInterval(() => {
+    this.diagTimer.cancelAndSet(() => {
       if (this.eventCounts.size === 0) return;
       const lines: string[] = ['[EventBus Diagnostics]'];
       for (const [event, { count, bytes }] of this.eventCounts) {
@@ -28,7 +27,7 @@ export class EventBus implements IEventBus {
   }
 
   stopDiagnostics(): void {
-    if (this.diagTimer) { clearInterval(this.diagTimer); this.diagTimer = null; }
+    this.diagTimer.cancel();
     this.eventCounts.clear();
   }
 

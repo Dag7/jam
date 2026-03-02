@@ -77,19 +77,16 @@ export class TaskScheduler {
   private readonly memorySchedules: Map<string, ScheduledTask> = new Map();
   /** Handlers for system schedules — matched by task tag, called instead of creating a generic task */
   private readonly systemHandlers = new Map<string, () => Promise<void>>();
-  /** Startup grace period — skip dispatching tasks during early boot to let agents initialize */
-  private startupTs = 0;
-  private readonly startupGraceMs: number;
+  /** Set to true once AGENTS_READY fires — ticks are skipped until then */
+  private agentsReady = false;
+  private readonly unsubscribers: Array<() => void> = [];
 
   constructor(
     private readonly taskStore: ITaskStore,
     private readonly eventBus: IEventBus,
     private readonly scheduleStore?: FileScheduleStore,
     private readonly checkIntervalMs: number = 60_000,
-    startupGraceMs: number = 180_000,
-  ) {
-    this.startupGraceMs = startupGraceMs;
-  }
+  ) {}
 
   /** Register a handler for system schedules with a matching tag.
    *  When a schedule fires and its task template has a matching tag,
@@ -119,19 +116,28 @@ export class TaskScheduler {
   }
 
   async start(): Promise<void> {
-    this.startupTs = Date.now();
-
     // Sync system schedules: seed missing, remove stale
     if (this.scheduleStore) {
       await this.syncSystemSchedules();
     }
 
+    // Start ticking, but skip dispatch until agents are ready
     this.timer.cancelAndSet(() => this.tick(), this.checkIntervalMs);
-    this.tick();
+
+    // Listen for agents to be ready before dispatching scheduled tasks
+    this.unsubscribers.push(
+      this.eventBus.on(Events.AGENTS_READY, () => {
+        this.agentsReady = true;
+        log.info('Agents ready — scheduler will begin dispatching tasks');
+        this.tick();
+      }),
+    );
   }
 
   stop(): void {
     this.timer.cancel();
+    for (const unsub of this.unsubscribers) unsub();
+    this.unsubscribers.length = 0;
   }
 
   async getSchedules(): Promise<ScheduledTask[]> {
@@ -190,10 +196,9 @@ export class TaskScheduler {
   }
 
   private async tick(): Promise<void> {
-    // Skip dispatching during the startup grace period — agents need time to
-    // initialize before accepting heavy work like self-reflection.
-    if (Date.now() - this.startupTs < this.startupGraceMs) {
-      log.debug('Startup grace period — skipping tick');
+    // Skip dispatching until agents have fully initialized
+    if (!this.agentsReady) {
+      log.debug('Agents not ready — skipping tick');
       return;
     }
 

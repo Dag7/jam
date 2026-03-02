@@ -83,10 +83,12 @@ export class TaskExecutor {
       }),
     );
 
-    // Delay draining tasks from previous sessions — give agents time to fully
-    // initialize and let the system stabilize before dispatching work.
-    // 2 minutes prevents a resource spike when many tasks are stuck from a crash.
-    setTimeout(() => this.drainAssignedTasks(), 120_000);
+    // Drain stuck tasks from previous sessions once agents are ready
+    this.unsubscribers.push(
+      this.deps.eventBus.on(Events.AGENTS_READY, () => {
+        this.drainAssignedTasks();
+      }),
+    );
 
     log.info('Task executor started');
   }

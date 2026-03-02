@@ -40,15 +40,15 @@ describe('EventBus', () => {
 
     it('catches and logs errors from handlers', () => {
       const bus = new EventBus();
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      // createLogger writes to process.stderr, not console.error
+      const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       const error = new Error('handler failure');
       bus.on('evt', () => { throw error; });
       bus.emit('evt', null);
-      expect(consoleSpy).toHaveBeenCalledWith(
-        '[EventBus] Error in handler for "evt":',
-        error,
+      expect(stderrSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Error in handler for "evt"'),
       );
-      consoleSpy.mockRestore();
+      stderrSpy.mockRestore();
     });
   });
 

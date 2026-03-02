@@ -37,7 +37,7 @@ import {
   OpenAITTSProvider,
 } from '@jam/voice';
 import type { ISTTProvider, ITTSProvider, AgentState, IMemoryStore } from '@jam/core';
-import { createLogger, JAM_SYSTEM_PROFILE, Batcher } from '@jam/core';
+import { createLogger, JAM_SYSTEM_PROFILE, Batcher, Events } from '@jam/core';
 import { FileMemoryStore } from '@jam/memory';
 import { BrainClient, BrainMemoryStore } from '@jam/brain';
 import {
@@ -1014,7 +1014,7 @@ export class Orchestrator {
 
     this.eventBus.startDiagnostics(10_000);
 
-    // Start team services
+    // Start team services — must subscribe to AGENTS_READY before we emit it
     this.teamEventHandler.start();
     this.taskExecutor.start();
     await this.taskScheduler.start();
@@ -1024,6 +1024,9 @@ export class Orchestrator {
       }
     }
     log.info('Team services started');
+
+    // Signal that all agents are running — triggers task drain and schedule activation
+    this.eventBus.emit(Events.AGENTS_READY, { agentCount: autoStartAgents.length });
   }
 
   /**
