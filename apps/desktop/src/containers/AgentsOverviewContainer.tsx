@@ -72,6 +72,7 @@ export const AgentsOverviewContainer: React.FC = () => {
         model: editingAgent.profile.model,
         systemPrompt: editingAgent.profile.systemPrompt,
         color: editingAgent.profile.color,
+        avatarUrl: editingAgent.profile.avatarUrl,
         voice: editingAgent.profile.voice,
         cwd: editingAgent.profile.cwd,
         autoStart: editingAgent.profile.autoStart,
