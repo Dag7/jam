@@ -12,6 +12,7 @@ export function CommunicationsContainer() {
     messages,
     setActiveChannel,
     sendMessage,
+    loadMore,
     isLoading,
   } = useChannels();
 
@@ -53,6 +54,7 @@ export function CommunicationsContainer() {
             messages={messages}
             agents={agentMap}
             onSend={handleSend}
+            onLoadMore={loadMore}
             isLoading={isLoading}
           />
         ) : (

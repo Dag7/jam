@@ -126,12 +126,6 @@ export class Orchestrator {
 
   private mainWindow: BrowserWindow | null = null;
 
-  // ── IPC Diagnostics ──────────────────────────────────────────────
-  private ipcMessageCounts = new Map<string, number>();
-  private ipcDiagnosticsTimer: ReturnType<typeof setInterval> | null = null;
-  private eventLoopLagTimer: ReturnType<typeof setInterval> | null = null;
-  private lastEventLoopCheck = 0;
-
   constructor() {
     this.config = loadConfig();
     this.eventBus = new EventBus();
@@ -587,52 +581,9 @@ export class Orchestrator {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       try {
         this.mainWindow.webContents.send(channel, data);
-        // Track IPC message counts for diagnostics
-        this.ipcMessageCounts.set(channel, (this.ipcMessageCounts.get(channel) ?? 0) + 1);
       } catch {
         // Window may have been destroyed between check and send (race during HMR)
       }
-    }
-  }
-
-  /** Start IPC + event loop diagnostics (call after startup) */
-  startIPCDiagnostics(): void {
-    // IPC message rate — log every 5s
-    this.ipcDiagnosticsTimer = setInterval(() => {
-      if (this.ipcMessageCounts.size === 0) return;
-      const lines: string[] = [];
-      let total = 0;
-      for (const [channel, count] of this.ipcMessageCounts) {
-        lines.push(`  ${channel}: ${count} msgs (${(count / 5).toFixed(1)}/s)`);
-        total += count;
-      }
-      log.info(`[IPC Diagnostics] ${total} messages in 5s (${(total / 5).toFixed(1)}/s)\n${lines.join('\n')}`);
-      this.ipcMessageCounts.clear();
-    }, 5000);
-
-    // Event loop lag detector — fires every 500ms, logs if blocked >100ms
-    this.lastEventLoopCheck = Date.now();
-    this.eventLoopLagTimer = setInterval(() => {
-      const now = Date.now();
-      const expected = 500;
-      const actual = now - this.lastEventLoopCheck;
-      const lag = actual - expected;
-      if (lag > 100) {
-        log.warn(`[Event Loop Lag] Main process blocked for ${lag}ms (expected ${expected}ms, actual ${actual}ms)`);
-      }
-      this.lastEventLoopCheck = now;
-    }, 500);
-  }
-
-  /** Stop IPC + event loop diagnostics */
-  stopIPCDiagnostics(): void {
-    if (this.ipcDiagnosticsTimer) {
-      clearInterval(this.ipcDiagnosticsTimer);
-      this.ipcDiagnosticsTimer = null;
-    }
-    if (this.eventLoopLagTimer) {
-      clearInterval(this.eventLoopLagTimer);
-      this.eventLoopLagTimer = null;
     }
   }
 
@@ -1104,9 +1055,7 @@ export class Orchestrator {
     }
     phase('sandbox:ready sent');
 
-    // Start IPC + event loop diagnostics immediately so we catch the freeze
-    this.startIPCDiagnostics();
-    phase('IPC diagnostics started');
+    phase('Startup complete');
 
     // Wait for the renderer's initial mount to complete before starting background work.
     // Without this, service scanning (recursive FS + TCP port checks with 2s timeouts),
@@ -1131,8 +1080,6 @@ export class Orchestrator {
 
     // Signal that all agents are running — triggers task drain and schedule activation
     this.eventBus.emit(Events.AGENTS_READY, { agentCount: autoStartAgents.length });
-
-    this.eventBus.startDiagnostics(10_000);
 
     // Orphan service cleanup runs AFTER everything else — its recursive filesystem
     // scanning + TCP port checks (2s timeout each) can block the event loop for seconds.
@@ -1248,8 +1195,6 @@ export class Orchestrator {
    */
   async shutdown(keepContainers = false): Promise<void> {
     // --- Phase 1: Synchronous stops (instant, no I/O) ---
-    this.stopIPCDiagnostics();
-    this.eventBus.stopDiagnostics();
     this.taskExecutor.stop();
     this.teamEventHandler.stop();
     this.taskScheduler.stop();

@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 
@@ -11,43 +12,73 @@ interface MessageThreadProps {
   }>;
   agents: Record<string, { name: string; color: string }>;
   onSend: (content: string) => void;
+  onLoadMore?: () => void;
   isLoading: boolean;
 }
 
 const plugins = { code };
 
-export const MessageThread = React.memo(function MessageThread({ messages, agents, onSend, isLoading }: MessageThreadProps) {
+/** Truncate message content to prevent Streamdown from parsing huge markdown blocks */
+const MAX_CONTENT_LENGTH = 2000;
+
+const MessageRow = React.memo(function MessageRow({
+  msg,
+  sender,
+}: {
+  msg: { id: string; senderId: string; content: string; timestamp: string };
+  sender: { name: string; color: string } | undefined;
+}) {
+  const content =
+    msg.content.length > MAX_CONTENT_LENGTH
+      ? msg.content.slice(0, MAX_CONTENT_LENGTH) + '\n\n…(truncated)'
+      : msg.content;
+
+  return (
+    <div className="flex gap-3 px-4 py-2">
+      {/* Avatar */}
+      <div
+        className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 mt-0.5"
+        style={{ backgroundColor: sender?.color ?? '#6b7280' }}
+      >
+        {(sender?.name ?? '?').charAt(0).toUpperCase()}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span
+            className="text-sm font-semibold"
+            style={{ color: sender?.color ?? '#9ca3af' }}
+          >
+            {sender?.name ?? 'Unknown'}
+          </span>
+          <span className="text-[10px] text-zinc-500">
+            {new Date(msg.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+        </div>
+        <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 mt-0.5">
+          <Streamdown mode="static" plugins={plugins}>
+            {content}
+          </Streamdown>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+export const MessageThread = React.memo(function MessageThread({
+  messages,
+  agents,
+  onSend,
+  onLoadMore,
+  isLoading,
+}: MessageThreadProps) {
   const [input, setInput] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [atBottom, setAtBottom] = useState(true);
-  const prevMsgCount = useRef(messages.length);
-
-  // Scroll to bottom — instant on mount/channel switch, smooth on new messages
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'instant') => {
-    bottomRef.current?.scrollIntoView({ behavior });
-  }, []);
-
-  // Instant scroll on mount or when message list resets (channel switch)
-  useEffect(() => {
-    scrollToBottom('instant');
-    prevMsgCount.current = messages.length;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Smooth scroll only when new messages arrive (and user is at bottom)
-  useEffect(() => {
-    if (messages.length > prevMsgCount.current && atBottom) {
-      scrollToBottom('instant');
-    }
-    prevMsgCount.current = messages.length;
-  }, [messages.length, atBottom, scrollToBottom]);
-
-  const handleScroll = () => {
-    const el = containerRef.current;
-    if (!el) return;
-    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
-  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,81 +87,66 @@ export const MessageThread = React.memo(function MessageThread({ messages, agent
     onSend(trimmed);
     setInput('');
     setAtBottom(true);
-    // Scroll after send — slight delay for DOM update
-    requestAnimationFrame(() => scrollToBottom('instant'));
   };
+
+  const itemContent = useCallback(
+    (index: number) => {
+      const msg = messages[index];
+      if (!msg) return null;
+      return <MessageRow msg={msg} sender={agents[msg.senderId]} />;
+    },
+    [messages, agents],
+  );
 
   return (
     <div className="flex flex-col h-full bg-zinc-900 relative">
-      {/* Message list */}
-      <div
-        ref={containerRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 space-y-4"
-      >
-        {messages.map((msg) => {
-          const sender = agents[msg.senderId];
-          return (
-            <div key={msg.id} className="flex gap-3">
-              {/* Avatar */}
-              <div
-                className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 mt-0.5"
-                style={{ backgroundColor: sender?.color ?? '#6b7280' }}
-              >
-                {(sender?.name ?? '?').charAt(0).toUpperCase()}
-              </div>
+      {/* Virtualized message list */}
+      <Virtuoso
+        ref={virtuosoRef}
+        style={{ flex: 1 }}
+        totalCount={messages.length}
+        itemContent={itemContent}
+        initialTopMostItemIndex={Math.max(0, messages.length - 1)}
+        followOutput="smooth"
+        atBottomStateChange={setAtBottom}
+        atBottomThreshold={80}
+        startReached={onLoadMore}
+        overscan={200}
+      />
 
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline gap-2">
-                  <span
-                    className="text-sm font-semibold"
-                    style={{ color: sender?.color ?? '#9ca3af' }}
-                  >
-                    {sender?.name ?? 'Unknown'}
-                  </span>
-                  <span className="text-[10px] text-zinc-500">
-                    {new Date(msg.timestamp).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </span>
-                </div>
-                <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 mt-0.5">
-                  <Streamdown mode="static" plugins={plugins}>
-                    {msg.content}
-                  </Streamdown>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-
-        {isLoading && (
-          <div className="flex items-center gap-2 text-zinc-500 text-sm">
-            <div className="flex gap-1">
-              <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" />
-              <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.15s]" />
-              <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.3s]" />
-            </div>
-            <span>Typing...</span>
+      {isLoading && (
+        <div className="flex items-center gap-2 text-zinc-500 text-sm px-4 py-2">
+          <div className="flex gap-1">
+            <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce" />
+            <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.15s]" />
+            <span className="w-1.5 h-1.5 bg-zinc-500 rounded-full animate-bounce [animation-delay:0.3s]" />
           </div>
-        )}
-
-        <div ref={bottomRef} />
-      </div>
+          <span>Typing...</span>
+        </div>
+      )}
 
       {/* Scroll to bottom button */}
       {!atBottom && (
         <button
           onClick={() => {
-            scrollToBottom('instant');
-            setAtBottom(true);
+            virtuosoRef.current?.scrollToIndex({
+              index: messages.length - 1,
+              behavior: 'smooth',
+            });
           }}
           className="absolute bottom-20 right-6 w-8 h-8 rounded-full bg-zinc-700 border border-zinc-600 flex items-center justify-center text-zinc-300 hover:bg-zinc-600 hover:text-white transition-colors shadow-lg"
           title="Scroll to bottom"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </button>

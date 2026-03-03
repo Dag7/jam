@@ -35,7 +35,7 @@ export function useChannels() {
     if (existing?.length) return; // already loaded
 
     window.jam.team.channels
-      .getMessages(activeChannelId, 50)
+      .getMessages(activeChannelId, 20)
       .then((result: unknown) => {
         useAppStore.getState().prependChannelMessages(
           activeChannelId,
@@ -64,7 +64,7 @@ export function useChannels() {
 
     const older = await window.jam.team.channels.getMessages(
       activeChannelId,
-      50,
+      20,
       oldest.id,
     );
     useAppStore.getState().prependChannelMessages(

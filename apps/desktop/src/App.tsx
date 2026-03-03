@@ -72,7 +72,6 @@ export default function App() {
   useEffect(() => {
     const splash = document.getElementById('splash');
     if (splash) splash.remove();
-    console.log(`[Renderer Diag] App component mounted at ${Math.round(performance.now())}ms`);
   }, []);
 
   // TTS audio queue (sequential playback, interrupt support)
@@ -96,13 +95,6 @@ export default function App() {
   const sandboxLoading = sandboxStatus === 'building-image' || sandboxStatus === 'starting-containers';
   if (!onboardingChecked || sandboxLoading) {
     return <SandboxLoadingOverlay status={sandboxLoading ? sandboxStatus : 'building-image'} message={sandboxLoading ? sandboxMessage : 'Loading...'} />;
-  }
-
-  // Log when the full UI renders (sandbox loading finished)
-  // This is a render-time log — fires every render but useful for first occurrence
-  if (typeof window !== 'undefined' && !(window as unknown as Record<string, boolean>).__jamFullUILogged) {
-    (window as unknown as Record<string, boolean>).__jamFullUILogged = true;
-    console.log(`[Renderer Diag] Full UI rendering (sandbox overlay removed) at ${Math.round(performance.now())}ms`);
   }
 
   // Show onboarding wizard for first-time users
