@@ -114,7 +114,10 @@ export class InboxWatcher {
           const request = JSON.parse(line) as {
             type?: string;
             title?: string;
+            subject?: string;     // alias for title
             description?: string;
+            body?: string;        // alias for description
+            content?: string;     // alias for description
             priority?: string;
             assignedTo?: string;
             from?: string;
@@ -127,10 +130,11 @@ export class InboxWatcher {
             continue;
           }
 
-          const description = request.description || '';
+          // Accept common aliases so agents using subject/body don't create Untitled tasks
+          const description = request.description || request.body || request.content || '';
 
-          // Derive title: use explicit title, or extract first line of description
-          let title = request.title;
+          // Derive title: use explicit title/subject, or extract first line of description
+          let title = request.title || request.subject;
           if (!title || title === 'undefined') {
             const firstLine = description.split('\n')[0]?.trim() ?? '';
             title = firstLine.length > 0
