@@ -72,19 +72,31 @@ jobs:
           mkdir -p ~/private_keys
           echo "$APPLE_API_KEY" | base64 --decode > ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
 
-      # Signed build (release) — includes code signing + notarization
+      # Signed build (release) — code signing only, notarization submitted separately
       - name: Build (signed)
         if: inputs.sign
-        timeout-minutes: 30
+        timeout-minutes: 15
         run: yarn workspace @jam/desktop electron:build --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_API_KEY: ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      # Submit for notarization without waiting — Apple processes in background,
+      # Gatekeeper checks online when users download (stapling not required)
+      - name: Notarize macOS artifacts (no-wait)
+        if: matrix.platform == 'mac' && inputs.sign
+        run: |
+          for f in apps/desktop/release/*.dmg apps/desktop/release/*.zip; do
+            if [ -f "$f" ]; then
+              echo "Submitting $(basename "$f") for notarization..."
+              xcrun notarytool submit "$f" \
+                --key ~/private_keys/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8 \
+                --key-id ${{ secrets.APPLE_API_KEY_ID }} \
+                --issuer ${{ secrets.APPLE_API_ISSUER }} \
+                --no-wait
+            fi
+          done
 
       # Unsigned build (staging) — fast, no notarization wait
       - name: Build (unsigned)

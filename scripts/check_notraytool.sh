@@ -1,0 +1,1 @@
+xcrun notarytool history --key ~/Desktop/gad/apple-account/certs/AuthKey_423BZ3U8CJ.p8 --key-id 423BZ3U8CJ --issuer 00e87972-423c-4225-90c3-ae2570b9a395 2>&1
