@@ -4,10 +4,11 @@ import { TeamOverviewContainer } from './TeamOverviewContainer';
 import { TaskBoardContainer } from './TaskBoardContainer';
 import { CommunicationsContainer } from './CommunicationsContainer';
 import { AgentDetailContainer } from './AgentDetailContainer';
+import { MergeContainer } from './MergeContainer';
 import { ScheduleList } from '@/components/dashboard/ScheduleList';
 import { ImprovementList } from '@/components/dashboard/ImprovementList';
 
-type DashboardTab = 'overview' | 'tasks' | 'comms' | 'schedules' | 'code' | 'agent';
+type DashboardTab = 'overview' | 'tasks' | 'comms' | 'schedules' | 'code' | 'merges' | 'agent';
 
 export function DashboardContainer() {
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
@@ -25,6 +26,7 @@ export function DashboardContainer() {
     { id: 'comms', label: 'Communications' },
     { id: 'schedules', label: 'Schedules' },
     { id: 'code', label: 'Code' },
+    { id: 'merges', label: 'Merges' },
     { id: 'agent', label: 'Agent Detail' },
   ];
 
@@ -69,6 +71,7 @@ export function DashboardContainer() {
             {activeTab === 'comms' && <CommunicationsContainer />}
             {activeTab === 'schedules' && <ScheduleList />}
             {activeTab === 'code' && <ImprovementList />}
+            {activeTab === 'merges' && <MergeContainer />}
           </div>
         )}
 

@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import type { ICommunicationHub, IRelationshipStore, IStatsStore } from '@jam/core';
-import type { SoulManager, SelfImprovementEngine, FileScheduleStore } from '@jam/team';
+import type { SoulManager, SelfImprovementEngine, FileScheduleStore, FileBlackboard } from '@jam/team';
 import type { CodeImprovementEngine } from '@jam/team';
 
 export interface TeamHandlerDeps {
@@ -11,10 +11,11 @@ export interface TeamHandlerDeps {
   selfImprovement: SelfImprovementEngine;
   scheduleStore: FileScheduleStore;
   codeImprovement: CodeImprovementEngine | null;
+  blackboard: FileBlackboard;
 }
 
 export function registerTeamHandlers(deps: TeamHandlerDeps): void {
-  const { communicationHub, relationshipStore, statsStore, soulManager, selfImprovement, scheduleStore, codeImprovement } = deps;
+  const { communicationHub, relationshipStore, statsStore, soulManager, selfImprovement, scheduleStore, codeImprovement, blackboard } = deps;
 
   // Channels
   ipcMain.handle('channels:list', async (_, agentId?: string) => {
@@ -176,4 +177,30 @@ export function registerTeamHandlers(deps: TeamHandlerDeps): void {
     if (!codeImprovement) return { healthy: false, lastCheck: new Date().toISOString(), issues: ['Code improvement is disabled'] };
     return codeImprovement.getHealth();
   });
+
+  // --- Blackboard ---
+
+  ipcMain.handle('blackboard:listTopics', async () => {
+    return blackboard.listTopics();
+  });
+
+  ipcMain.handle('blackboard:read', async (_, topic: string, limit?: number) => {
+    return blackboard.read(topic, limit);
+  });
+
+  ipcMain.handle(
+    'blackboard:publish',
+    async (_, agentId: string, topic: string, artifact: { type: string; content: string; metadata?: Record<string, unknown> }) => {
+      try {
+        const result = await blackboard.publish(agentId, topic, {
+          type: artifact.type as 'text' | 'diff' | 'json' | 'file-ref',
+          content: artifact.content,
+          metadata: artifact.metadata,
+        });
+        return { success: true, artifact: result };
+      } catch (error) {
+        return { success: false, error: String(error) };
+      }
+    },
+  );
 }

@@ -34,8 +34,11 @@ RUN curl -fsSL https://cursor.com/install | bash \
   && mv /root/.local/bin/cursor-agent /usr/local/bin/cursor-agent 2>/dev/null || true
 
 # Create non-root agent user (Claude Code refuses --dangerously-skip-permissions as root)
+# Restricted sudo: only package managers — no arbitrary root commands
 RUN useradd -m -s /bin/bash -G sudo agent \
-  && echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/agent
+  && echo "agent ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt, /usr/bin/npm, /usr/bin/pip3" \
+  >> /etc/sudoers.d/agent \
+  && chmod 0440 /etc/sudoers.d/agent
 
 # Working directory
 WORKDIR /workspace

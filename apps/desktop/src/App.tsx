@@ -18,6 +18,7 @@ import { LogsDrawer } from '@/components/LogsDrawer';
 import { useTTSQueue } from '@/hooks/useTTSQueue';
 import { useIPCSubscriptions } from '@/hooks/useIPCSubscriptions';
 import { NotificationPanel } from '@/components/NotificationPanel';
+import { NotificationToast } from '@/components/common/NotificationToast';
 import { SandboxLoadingOverlay } from '@/components/SandboxLoadingOverlay';
 
 // Named selector — returns primitive (number). No array allocation.
@@ -26,6 +27,24 @@ const selectUnreadCount = (s: ReturnType<typeof useAppStore.getState>) => {
   let count = 0;
   for (const n of s.notifications) if (!n.read) count++;
   return count;
+};
+
+// Select unread error/warning/info notifications for toast display (max 3)
+const selectToastNotifications = (s: ReturnType<typeof useAppStore.getState>) => {
+  const toasts: Array<{ id: string; level: 'info' | 'warning' | 'error'; title: string; body?: string }> = [];
+  for (const n of s.notifications) {
+    if (n.read) continue;
+    if (n.type === 'error' || n.type === 'warning' || n.type === 'info') {
+      toasts.push({
+        id: n.id,
+        level: n.type,
+        title: n.title,
+        body: n.summary || undefined,
+      });
+    }
+    if (toasts.length >= 3) break;
+  }
+  return toasts;
 };
 
 export default function App() {
@@ -42,6 +61,8 @@ export default function App() {
   const voiceState = useAppStore((s) => s.voiceState);
   const sandboxStatus = useAppStore((s) => s.sandboxStatus);
   const sandboxMessage = useAppStore((s) => s.sandboxMessage);
+  const toastNotifications = useAppStore(useShallow(selectToastNotifications));
+  const markNotificationRead = useAppStore((s) => s.markNotificationRead);
 
   // Narrow selector — only extracts what HeaderBar needs, shallow-compared
   const headerAgents = useAppStore(
@@ -90,6 +111,16 @@ export default function App() {
   const toggleLogs = useCallback(() => setLogsDrawerOpen(!useAppStore.getState().logsDrawerOpen), [setLogsDrawerOpen]);
   const toggleNav = useCallback(() => setNavExpanded(!useAppStore.getState().navExpanded), [setNavExpanded]);
   const closeThread = useCallback(() => setThreadAgent(null), [setThreadAgent]);
+
+  // Auto-dismiss info/warning toasts after 5 seconds (errors persist)
+  useEffect(() => {
+    const infos = toastNotifications.filter((n) => n.level !== 'error');
+    if (infos.length === 0) return;
+    const timer = setTimeout(() => {
+      for (const n of infos) markNotificationRead(n.id);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [toastNotifications, markNotificationRead]);
 
   // Show loading overlay while sandbox is initializing (image build / container startup)
   const sandboxLoading = sandboxStatus === 'building-image' || sandboxStatus === 'starting-containers';
@@ -175,6 +206,12 @@ export default function App() {
           <CommandBarContainer />
         </div>
       </div>
+
+      {/* Toast notifications for errors/warnings/info */}
+      <NotificationToast
+        notifications={toastNotifications}
+        onDismiss={markNotificationRead}
+      />
     </AppShell>
   );
 }

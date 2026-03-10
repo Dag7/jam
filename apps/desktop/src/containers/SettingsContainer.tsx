@@ -1,13 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SecretsManager } from '@/components/settings/SecretsManager';
+import { VoiceSettings, ComboSelect } from '@/components/settings/VoiceSettings';
+import { SandboxSettings } from '@/components/settings/SandboxSettings';
+import { BrainSettings } from '@/components/settings/BrainSettings';
 import {
   type STTProvider,
   type TTSProvider,
   type VoiceSensitivity,
-  STT_MODELS,
   TTS_VOICES,
   AGENT_MODELS,
-  VOICE_PROVIDERS,
 } from '@/constants/provider-catalog';
 
 interface ModelTierConfig {
@@ -17,12 +18,26 @@ interface ModelTierConfig {
 }
 
 type ContainerExitBehavior = 'stop' | 'delete' | 'keep-running';
+type SandboxTier = 'none' | 'os' | 'docker';
 
-interface SandboxSettings {
+interface OsSandboxSettings {
+  enabled: boolean;
+  allowedDomains: string[];
+  denyRead: string[];
+  extraAllowWrite: string[];
+  denyWrite: string[];
+}
+
+interface WorktreeSettings {
+  autoCreate: boolean;
+  worktreeDir: string;
+}
+
+interface SandboxDockerSettings {
   containerExitBehavior: ContainerExitBehavior;
 }
 
-interface BrainSettings {
+interface BrainConfig {
   enabled: boolean;
   url: string;
 }
@@ -41,85 +56,50 @@ interface Config {
   noiseBlocklist: string[];
   modelTiers: ModelTierConfig;
   teamRuntime: string;
-  sandbox: SandboxSettings;
-  brain: BrainSettings;
+  sandboxTier: SandboxTier;
+  osSandbox: OsSandboxSettings;
+  worktree: WorktreeSettings;
+  sandbox: SandboxDockerSettings;
+  brain: BrainConfig;
 }
 
-// Combobox-style select: dropdown with custom input option
-const ComboSelect: React.FC<{
-  value: string;
-  options: Array<{ id: string; label: string }>;
-  onChange: (val: string) => void;
-  placeholder?: string;
-}> = ({ value, options, onChange, placeholder }) => {
-  const isCustom = value !== '' && !options.some((o) => o.id === value);
-  const [showCustom, setShowCustom] = useState(isCustom);
-
-  return (
-    <div className="space-y-1">
-      <select
-        value={showCustom ? '__custom__' : value}
-        onChange={(e) => {
-          if (e.target.value === '__custom__') {
-            setShowCustom(true);
-            onChange('');
-          } else {
-            setShowCustom(false);
-            onChange(e.target.value);
-          }
-        }}
-        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
-      >
-        {options.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.label}
-          </option>
-        ))}
-        <option value="__custom__">Custom...</option>
-      </select>
-      {showCustom && (
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder || 'Enter custom value'}
-          className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
-          autoFocus
-        />
-      )}
-    </div>
-  );
+const DEFAULT_CONFIG: Config = {
+  sttProvider: 'openai',
+  ttsProvider: 'openai',
+  sttModel: 'whisper-1',
+  ttsVoice: 'alloy',
+  ttsSpeed: 1.25,
+  defaultModel: 'claude-opus-4-6',
+  defaultRuntime: 'claude-code',
+  modelTiers: { creative: 'claude-opus-4-6', analytical: 'sonnet', routine: 'haiku' },
+  teamRuntime: 'claude-code',
+  voiceSensitivity: 'medium',
+  minRecordingMs: 600,
+  noSpeechThreshold: 0.6,
+  noiseBlocklist: [
+    'bye', 'bye bye', 'bye-bye', 'goodbye',
+    'thank you', 'thanks', 'thank', 'you',
+    'hmm', 'uh', 'um', 'ah', 'oh',
+    'okay', 'ok',
+  ],
+  sandboxTier: 'os',
+  osSandbox: {
+    enabled: true,
+    allowedDomains: ['api.anthropic.com', 'api.openai.com', 'github.com', 'registry.npmjs.org'],
+    denyRead: ['~/.ssh', '~/.gnupg', '~/.aws/credentials'],
+    extraAllowWrite: ['/tmp'],
+    denyWrite: ['.env', '*.pem', '*.key'],
+  },
+  worktree: { autoCreate: true, worktreeDir: '.jam-worktrees' },
+  sandbox: { containerExitBehavior: 'stop' },
+  brain: { enabled: false, url: 'http://localhost:8080' },
 };
 
 export const SettingsContainer: React.FC<{
   onClose: () => void;
   onRerunSetup?: () => void;
-}> = ({
-  onClose,
-  onRerunSetup,
-}) => {
-  const [config, setConfig] = useState<Config>({
-    sttProvider: 'openai',
-    ttsProvider: 'openai',
-    sttModel: 'whisper-1',
-    ttsVoice: 'alloy',
-    ttsSpeed: 1.25,
-    defaultModel: 'claude-opus-4-6',
-    defaultRuntime: 'claude-code',
-    modelTiers: { creative: 'claude-opus-4-6', analytical: 'sonnet', routine: 'haiku' },
-    teamRuntime: 'claude-code',
-    voiceSensitivity: 'medium',
-    minRecordingMs: 600,
-    noSpeechThreshold: 0.6,
-    noiseBlocklist: [
-      'bye', 'bye bye', 'bye-bye', 'goodbye',
-      'thank you', 'thanks', 'thank', 'you',
-      'hmm', 'uh', 'um', 'ah', 'oh',
-      'okay', 'ok',
-    ],
-    sandbox: { containerExitBehavior: 'stop' },
-    brain: { enabled: false, url: 'http://localhost:8080' },
-  });
+}> = ({ onClose, onRerunSetup }) => {
+  const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [blocklistText, setBlocklistText] = useState('');
 
   const [openaiKey, setOpenaiKey] = useState('');
@@ -140,8 +120,10 @@ export const SettingsContainer: React.FC<{
       setConfig((prev) => ({
         ...prev,
         ...loaded,
-        sandbox: { ...prev.sandbox, ...(loaded.sandbox as Partial<SandboxSettings> | undefined) },
-        brain: { ...prev.brain, ...(loaded.brain as Partial<BrainSettings> | undefined) },
+        osSandbox: { ...prev.osSandbox, ...(loaded.osSandbox as Partial<OsSandboxSettings> | undefined) },
+        worktree: { ...prev.worktree, ...(loaded.worktree as Partial<WorktreeSettings> | undefined) },
+        sandbox: { ...prev.sandbox, ...(loaded.sandbox as Partial<SandboxDockerSettings> | undefined) },
+        brain: { ...prev.brain, ...(loaded.brain as Partial<BrainConfig> | undefined) },
       }));
       if (Array.isArray(loaded.noiseBlocklist)) {
         setBlocklistText(loaded.noiseBlocklist.join('\n'));
@@ -155,31 +137,10 @@ export const SettingsContainer: React.FC<{
     });
   }, []);
 
-  const needsOpenai =
-    config.sttProvider === 'openai' || config.ttsProvider === 'openai';
-  const needsElevenlabs =
-    config.sttProvider === 'elevenlabs' || config.ttsProvider === 'elevenlabs';
+  const needsOpenai = config.sttProvider === 'openai' || config.ttsProvider === 'openai';
+  const needsElevenlabs = config.sttProvider === 'elevenlabs' || config.ttsProvider === 'elevenlabs';
 
-  // Reset model/voice to first option when switching providers
-  const handleSTTProviderChange = (provider: STTProvider) => {
-    const models = STT_MODELS[provider];
-    setConfig({
-      ...config,
-      sttProvider: provider,
-      sttModel: models[0]?.id ?? '',
-    });
-  };
-
-  const handleTTSProviderChange = (provider: TTSProvider) => {
-    const voices = TTS_VOICES[provider];
-    setConfig({
-      ...config,
-      ttsProvider: provider,
-      ttsVoice: voices[0]?.id ?? '',
-    });
-  };
-
-  const handleTestVoice = async () => {
+  const handleTestVoice = useCallback(async () => {
     setTestingVoice(true);
     try {
       const voiceId = config.ttsVoice || TTS_VOICES[config.ttsProvider][0]?.id || 'alloy';
@@ -190,7 +151,7 @@ export const SettingsContainer: React.FC<{
       }
     } catch { /* ignore */ }
     finally { setTestingVoice(false); }
-  };
+  }, [config.ttsVoice, config.ttsProvider]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -213,7 +174,6 @@ export const SettingsContainer: React.FC<{
         setBrainKey('');
       }
 
-      // Convert blocklist textarea to array before saving
       const configToSave = {
         ...config,
         noiseBlocklist: blocklistText
@@ -237,6 +197,10 @@ export const SettingsContainer: React.FC<{
     setStatus(`${service} key removed.`);
   };
 
+  const updateConfig = useCallback((updates: Partial<Config>) => {
+    setConfig((prev) => ({ ...prev, ...updates }));
+  }, []);
+
   return (
     <div className="flex flex-col h-full bg-zinc-900">
       <div className="flex-1 overflow-y-auto">
@@ -255,183 +219,16 @@ export const SettingsContainer: React.FC<{
             </button>
             <h1 className="text-xl font-semibold text-zinc-100">Settings</h1>
           </div>
-        {/* Voice Providers */}
-        <section>
-          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-            Speech-to-Text
-          </h3>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Provider</label>
-              <select
-                value={config.sttProvider}
-                onChange={(e) => handleSTTProviderChange(e.target.value as STTProvider)}
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
-              >
-                {VOICE_PROVIDERS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Model</label>
-              <ComboSelect
-                value={config.sttModel}
-                options={STT_MODELS[config.sttProvider]}
-                onChange={(val) => setConfig({ ...config, sttModel: val })}
-                placeholder="Custom model ID"
-              />
-            </div>
-          </div>
-        </section>
 
-        <section>
-          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-            Text-to-Speech
-          </h3>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Provider</label>
-              <select
-                value={config.ttsProvider}
-                onChange={(e) => handleTTSProviderChange(e.target.value as TTSProvider)}
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
-              >
-                {VOICE_PROVIDERS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Default Voice</label>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <ComboSelect
-                    value={config.ttsVoice}
-                    options={TTS_VOICES[config.ttsProvider]}
-                    onChange={(val) => setConfig({ ...config, ttsVoice: val })}
-                    placeholder="Custom voice ID"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleTestVoice}
-                  disabled={testingVoice}
-                  className="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 border border-zinc-600 rounded-lg text-sm text-zinc-300 disabled:opacity-50 transition-colors self-start"
-                  title="Preview voice"
-                >
-                  {testingVoice ? '...' : '\u25B6'}
-                </button>
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">
-                Speech Speed <span className="text-zinc-600">({Math.round(config.ttsSpeed * 100)}%)</span>
-              </label>
-              <input
-                type="range"
-                min={0.5}
-                max={2.0}
-                step={0.05}
-                value={config.ttsSpeed}
-                onChange={(e) => setConfig({ ...config, ttsSpeed: Number(e.target.value) })}
-                className="w-full accent-blue-500"
-              />
-              <div className="flex justify-between text-[10px] text-zinc-600 mt-0.5">
-                <span>50%</span>
-                <span>100%</span>
-                <span>150%</span>
-                <span>200%</span>
-              </div>
-              <p className="text-xs text-zinc-600 mt-1">
-                Controls how fast agents speak. Default: 125%
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* Voice Filtering */}
-        <section>
-          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-            Voice Filtering
-          </h3>
-          <p className="text-xs text-zinc-500 mb-3">
-            Reduce false triggers from ambient noise in always-listening mode.
-          </p>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Mic Sensitivity</label>
-              <div className="flex gap-1">
-                {(['low', 'medium', 'high'] as const).map((level) => (
-                  <button
-                    key={level}
-                    onClick={() => setConfig({ ...config, voiceSensitivity: level })}
-                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                      config.voiceSensitivity === level
-                        ? 'bg-blue-600 border-blue-500 text-white'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
-                    }`}
-                  >
-                    {level.charAt(0).toUpperCase() + level.slice(1)}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-zinc-600 mt-1">
-                Low = quiet room, Medium = normal, High = noisy environment
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">
-                Min Recording Duration <span className="text-zinc-600">({config.minRecordingMs}ms)</span>
-              </label>
-              <input
-                type="range"
-                min={100}
-                max={2000}
-                step={100}
-                value={config.minRecordingMs}
-                onChange={(e) => setConfig({ ...config, minRecordingMs: Number(e.target.value) })}
-                className="w-full accent-blue-500"
-              />
-              <p className="text-xs text-zinc-600">
-                Recordings shorter than this are discarded as noise
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">
-                Speech Confidence Threshold <span className="text-zinc-600">({config.noSpeechThreshold.toFixed(1)})</span>
-              </label>
-              <input
-                type="range"
-                min={0.1}
-                max={0.95}
-                step={0.05}
-                value={config.noSpeechThreshold}
-                onChange={(e) => setConfig({ ...config, noSpeechThreshold: Number(e.target.value) })}
-                className="w-full accent-blue-500"
-              />
-              <p className="text-xs text-zinc-600">
-                Higher = stricter, rejects more noise (Whisper only)
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">Noise Blocklist</label>
-              <textarea
-                value={blocklistText}
-                onChange={(e) => setBlocklistText(e.target.value)}
-                rows={4}
-                placeholder="One phrase per line (e.g., bye bye)"
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
-              />
-              <p className="text-xs text-zinc-600">
-                Transcriptions matching these phrases exactly are ignored
-              </p>
-            </div>
-          </div>
-        </section>
+        {/* Voice: STT, TTS, Filtering */}
+        <VoiceSettings
+          config={config}
+          blocklistText={blocklistText}
+          testingVoice={testingVoice}
+          onConfigChange={updateConfig}
+          onBlocklistChange={setBlocklistText}
+          onTestVoice={handleTestVoice}
+        />
 
         {/* API Keys */}
         <section>
@@ -517,7 +314,7 @@ export const SettingsContainer: React.FC<{
               <ComboSelect
                 value={config.defaultModel}
                 options={AGENT_MODELS}
-                onChange={(val) => setConfig({ ...config, defaultModel: val })}
+                onChange={(val) => updateConfig({ defaultModel: val })}
                 placeholder="Custom model ID"
               />
             </div>
@@ -525,7 +322,7 @@ export const SettingsContainer: React.FC<{
               <label className="block text-xs text-zinc-400 mb-1">Default Runtime</label>
               <select
                 value={config.defaultRuntime}
-                onChange={(e) => setConfig({ ...config, defaultRuntime: e.target.value })}
+                onChange={(e) => updateConfig({ defaultRuntime: e.target.value })}
                 className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
               >
                 {runtimeOptions.map((r) => (
@@ -535,6 +332,7 @@ export const SettingsContainer: React.FC<{
             </div>
           </div>
         </section>
+
         {/* Model Tiers */}
         <section>
           <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
@@ -549,7 +347,7 @@ export const SettingsContainer: React.FC<{
               <ComboSelect
                 value={config.modelTiers.creative}
                 options={AGENT_MODELS}
-                onChange={(val) => setConfig({ ...config, modelTiers: { ...config.modelTiers, creative: val } })}
+                onChange={(val) => updateConfig({ modelTiers: { ...config.modelTiers, creative: val } })}
                 placeholder="Model ID"
               />
             </div>
@@ -558,7 +356,7 @@ export const SettingsContainer: React.FC<{
               <ComboSelect
                 value={config.modelTiers.analytical}
                 options={AGENT_MODELS}
-                onChange={(val) => setConfig({ ...config, modelTiers: { ...config.modelTiers, analytical: val } })}
+                onChange={(val) => updateConfig({ modelTiers: { ...config.modelTiers, analytical: val } })}
                 placeholder="Model ID"
               />
             </div>
@@ -567,7 +365,7 @@ export const SettingsContainer: React.FC<{
               <ComboSelect
                 value={config.modelTiers.routine}
                 options={AGENT_MODELS}
-                onChange={(val) => setConfig({ ...config, modelTiers: { ...config.modelTiers, routine: val } })}
+                onChange={(val) => updateConfig({ modelTiers: { ...config.modelTiers, routine: val } })}
                 placeholder="Model ID"
               />
             </div>
@@ -575,7 +373,7 @@ export const SettingsContainer: React.FC<{
               <label className="block text-xs text-zinc-400 mb-1">Team Runtime</label>
               <select
                 value={config.teamRuntime}
-                onChange={(e) => setConfig({ ...config, teamRuntime: e.target.value })}
+                onChange={(e) => updateConfig({ teamRuntime: e.target.value })}
                 className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-blue-500"
               >
                 {runtimeOptions.map((r) => (
@@ -587,124 +385,34 @@ export const SettingsContainer: React.FC<{
         </section>
 
         {/* Kalanu Brain */}
-        <section>
-          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-            Kalanu Brain
-          </h3>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-xs text-zinc-300">Enable Brain Memory</label>
-                <p className="text-xs text-zinc-600">Semantic memory via Kalanu Brain server (requires restart)</p>
-              </div>
-              <button
-                onClick={() => setConfig({
-                  ...config,
-                  brain: { ...config.brain, enabled: !config.brain.enabled },
-                })}
-                className={`relative w-10 h-5 rounded-full transition-colors ${
-                  config.brain.enabled ? 'bg-blue-600' : 'bg-zinc-700'
-                }`}
-              >
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                  config.brain.enabled ? 'translate-x-5' : ''
-                }`} />
-              </button>
-            </div>
+        <BrainSettings
+          config={config.brain}
+          brainKey={brainKey}
+          hasBrainKey={hasBrain}
+          brainHealth={brainHealth}
+          onConfigChange={(updates) => updateConfig({ brain: { ...config.brain, ...updates } })}
+          onBrainKeyChange={setBrainKey}
+          onDeleteBrainKey={async () => {
+            await window.jam.apiKeys.delete('brain');
+            setHasBrain(false);
+          }}
+          onTestConnection={async () => {
+            const result = await window.jam.brain.health();
+            setBrainHealth(result.healthy);
+          }}
+        />
 
-            {config.brain.enabled && (
-              <>
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Server URL</label>
-                  <input
-                    type="text"
-                    value={config.brain.url}
-                    onChange={(e) => setConfig({
-                      ...config,
-                      brain: { ...config.brain, url: e.target.value },
-                    })}
-                    className="w-full px-3 py-1.5 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:border-blue-500"
-                    placeholder="http://localhost:8080"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-zinc-400 mb-1">
-                    API Key {hasBrain && <span className="text-green-500 ml-1">saved</span>}
-                  </label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={brainKey}
-                      onChange={(e) => setBrainKey(e.target.value)}
-                      placeholder={hasBrain ? '••••••••' : 'Optional'}
-                      className="flex-1 px-3 py-1.5 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:outline-none focus:border-blue-500"
-                    />
-                    {hasBrain && (
-                      <button
-                        onClick={async () => {
-                          await window.jam.apiKeys.delete('brain');
-                          setHasBrain(false);
-                        }}
-                        className="px-2 py-1 text-xs text-red-400 hover:text-red-300"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <button
-                  onClick={async () => {
-                    const result = await window.jam.brain.health();
-                    setBrainHealth(result.healthy);
-                  }}
-                  className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors"
-                >
-                  Test Connection
-                  {brainHealth === true && <span className="ml-2 text-green-500">Connected</span>}
-                  {brainHealth === false && <span className="ml-2 text-red-500">Failed</span>}
-                </button>
-              </>
-            )}
-          </div>
-        </section>
-
-        {/* Sandbox */}
-        <section>
-          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
-            Sandbox (Docker)
-          </h3>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs text-zinc-400 mb-1">On App Exit</label>
-              <div className="flex gap-1">
-                {([
-                  { id: 'stop' as const, label: 'Stop', desc: 'Containers stop but stay on disk for fast restart' },
-                  { id: 'delete' as const, label: 'Delete', desc: 'Containers are fully removed on exit' },
-                  { id: 'keep-running' as const, label: 'Keep Running', desc: 'Containers stay running in the background' },
-                ]).map((opt) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => setConfig({ ...config, sandbox: { ...config.sandbox, containerExitBehavior: opt.id } })}
-                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                      config.sandbox.containerExitBehavior === opt.id
-                        ? 'bg-blue-600 border-blue-500 text-white'
-                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <p className="text-xs text-zinc-600 mt-1">
-                {config.sandbox.containerExitBehavior === 'stop' && 'Containers stop but stay on disk for fast restart'}
-                {config.sandbox.containerExitBehavior === 'delete' && 'Containers are fully removed on exit'}
-                {config.sandbox.containerExitBehavior === 'keep-running' && 'Containers stay running in the background'}
-              </p>
-            </div>
-          </div>
-        </section>
+        {/* Sandbox & Isolation */}
+        <SandboxSettings
+          sandboxTier={config.sandboxTier}
+          osSandbox={config.osSandbox}
+          worktree={config.worktree}
+          docker={config.sandbox}
+          onSandboxTierChange={(tier) => updateConfig({ sandboxTier: tier })}
+          onOsSandboxChange={(updates) => updateConfig({ osSandbox: { ...config.osSandbox, ...updates } })}
+          onWorktreeChange={(updates) => updateConfig({ worktree: { ...config.worktree, ...updates } })}
+          onDockerChange={(updates) => updateConfig({ sandbox: { ...config.sandbox, ...updates } })}
+        />
 
         {/* Re-run Setup */}
         {onRerunSetup && (

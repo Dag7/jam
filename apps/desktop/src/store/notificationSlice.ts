@@ -1,15 +1,19 @@
 import type { StateCreator } from 'zustand';
 import type { AppStore } from './index';
 
+export type NotificationType = 'task_completed' | 'task_failed' | 'error' | 'warning' | 'info';
+
 export interface Notification {
   id: string;
-  type: 'task_completed' | 'task_failed';
+  type: NotificationType;
   agentId: string;
   title: string;
   summary: string;
   taskId: string;
   timestamp: number;
   read: boolean;
+  /** Suggested recovery action for errors */
+  recoveryAction?: 'retry' | 'reconfigure' | 'dismiss';
 }
 
 export interface NotificationSlice {

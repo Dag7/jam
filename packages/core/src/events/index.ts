@@ -137,6 +137,21 @@ export interface CodeImprovementRolledBackEvent {
   improvement: import('../models/code-improvement.js').CodeImprovement;
 }
 
+/** Emitted when an artifact is published to the team blackboard */
+export interface BlackboardPublishedEvent {
+  agentId: string;
+  topic: string;
+  artifactId: string;
+}
+
+/** Emitted when a task negotiation occurs (reassign, block) */
+export interface TaskNegotiatedEvent {
+  taskId: string;
+  agentId: string;
+  action: 'reassign' | 'block';
+  reason: string;
+}
+
 /** Emitted after all auto-start agents have been launched and are running */
 export interface AgentsReadyEvent {
   /** Number of agents that were auto-started */
@@ -171,4 +186,6 @@ export const Events = {
   CODE_FAILED: 'code:failed',
   CODE_ROLLED_BACK: 'code:rolledback',
   CONVERSATION_RECORDED: 'conversation:recorded',
+  BLACKBOARD_PUBLISHED: 'blackboard:published',
+  TASK_NEGOTIATED: 'task:negotiated',
 } as const;

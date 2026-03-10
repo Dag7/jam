@@ -22,6 +22,17 @@ const log = createLogger('BaseAgentRuntime');
  * Subclasses override hooks to customize args, env, input, output parsing.
  */
 export abstract class BaseAgentRuntime implements IAgentRuntime {
+  /**
+   * Optional OS-level sandbox wrapper for one-shot execute() spawns.
+   * Set by the orchestrator when sandboxTier is 'os'.
+   * Transforms a command string through seatbelt/bubblewrap.
+   */
+  private static sandboxWrapper: ((cmd: string) => Promise<string>) | null = null;
+
+  static setSandboxWrapper(wrapper: ((cmd: string) => Promise<string>) | null): void {
+    BaseAgentRuntime.sandboxWrapper = wrapper;
+  }
+
   abstract readonly runtimeId: string;
   abstract readonly metadata: RuntimeMetadata;
 
@@ -56,6 +67,9 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
   /**
    * Spawn a child process. Extracted as a hook so sandboxed runtimes can
    * override to route through `docker exec` instead.
+   *
+   * When an OS-level sandbox wrapper is set (via setSandboxWrapper),
+   * the command is automatically wrapped through seatbelt/bubblewrap.
    */
   protected spawnProcess(
     command: string,
@@ -69,12 +83,36 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     });
   }
 
+  /**
+   * Wrap a command through the OS sandbox if available.
+   * Called from execute() before spawnProcess().
+   */
+  private static async maybeSandboxCommand(
+    command: string,
+    args: string[],
+  ): Promise<{ command: string; args: string[] }> {
+    if (!BaseAgentRuntime.sandboxWrapper) return { command, args };
+
+    try {
+      const fullCmd = [command, ...args].join(' ');
+      const wrappedCmd = await BaseAgentRuntime.sandboxWrapper(fullCmd);
+      const shell = process.env.SHELL || '/bin/zsh';
+      return { command: shell, args: ['-c', wrappedCmd] };
+    } catch (err) {
+      log.warn(`OS sandbox wrapping failed: ${String(err)}. Proceeding unsandboxed.`);
+      return { command, args };
+    }
+  }
+
   /** Concrete execute() — shared lifecycle across all runtimes */
   async execute(profile: AgentProfile, text: string, options?: ExecutionOptions): Promise<ExecutionResult> {
-    const command = this.getCommand();
-    const args = this.buildExecuteArgs(profile, options, text);
+    const rawCommand = this.getCommand();
+    const rawArgs = this.buildExecuteArgs(profile, options, text);
     const env = buildCleanEnv({ ...this.buildExecuteEnv(profile, options), ...options?.env });
     const cwd = options?.cwd ?? profile.cwd ?? process.env.HOME ?? '/';
+
+    // Apply OS-level sandbox wrapping if configured
+    const { command, args } = await BaseAgentRuntime.maybeSandboxCommand(rawCommand, rawArgs);
 
     log.info(`Executing: ${command} ${args.join(' ').slice(0, 80)}`, undefined, profile.id);
 

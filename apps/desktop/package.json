@@ -24,6 +24,7 @@
     "@jam/core": "workspace:*",
     "@jam/eventbus": "workspace:*",
     "@jam/memory": "workspace:*",
+    "@jam/os-sandbox": "workspace:*",
     "@jam/sandbox": "workspace:*",
     "@jam/team": "workspace:*",
     "@jam/voice": "workspace:*",

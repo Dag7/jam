@@ -6,6 +6,8 @@ import type { ModelTierConfig } from '@jam/core';
 import { DEFAULT_MODEL_TIERS } from '@jam/core';
 import type { SandboxConfig } from '@jam/sandbox';
 import { DEFAULT_SANDBOX_CONFIG } from '@jam/sandbox';
+import type { SandboxTier, OsSandboxConfig, WorktreeConfig } from '@jam/os-sandbox';
+import { DEFAULT_OS_SANDBOX_CONFIG, DEFAULT_WORKTREE_CONFIG } from '@jam/os-sandbox';
 
 const log = createLogger('Config');
 
@@ -30,6 +32,7 @@ export interface CodeImprovementConfig {
 }
 
 export type { SandboxConfig } from '@jam/sandbox';
+export type { SandboxTier, OsSandboxConfig, WorktreeConfig } from '@jam/os-sandbox';
 
 export interface BrainConfig {
   /** Whether Kalanu Brain semantic memory is active (opt-in) */
@@ -59,10 +62,18 @@ export interface JamConfig {
   scheduleCheckIntervalMs: number;
   // Code improvement
   codeImprovement: CodeImprovementConfig;
-  // Docker sandbox
+  // Sandbox tier: 'none' | 'os' (default) | 'docker'
+  sandboxTier: SandboxTier;
+  // OS-level sandbox (seatbelt/bubblewrap) — used when sandboxTier is 'os'
+  osSandbox: OsSandboxConfig;
+  // Git worktree isolation — independent of sandbox tier
+  worktree: WorktreeConfig;
+  // Docker sandbox — used when sandboxTier is 'docker'
   sandbox: SandboxConfig;
   // Kalanu Brain memory server (opt-in)
   brain: BrainConfig;
+  // Logging
+  logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
 
 const DEFAULT_CONFIG: JamConfig = {
@@ -115,6 +126,12 @@ const DEFAULT_CONFIG: JamConfig = {
     maxImprovementsPerDay: 5,
     allowedAgentIds: [],
   },
+  // Sandbox tier: OS-level is the default (no Docker required)
+  sandboxTier: 'os',
+  // OS sandbox defaults
+  osSandbox: { ...DEFAULT_OS_SANDBOX_CONFIG },
+  // Git worktree defaults
+  worktree: { ...DEFAULT_WORKTREE_CONFIG },
   // Docker sandbox (opt-in, disabled by default)
   sandbox: { ...DEFAULT_SANDBOX_CONFIG },
   // Kalanu Brain memory server (opt-in, disabled by default)
@@ -122,6 +139,8 @@ const DEFAULT_CONFIG: JamConfig = {
     enabled: false,
     url: 'http://localhost:8080',
   },
+  // Logging
+  logLevel: 'info',
 };
 
 export function loadConfig(): JamConfig {
@@ -160,12 +179,24 @@ export function loadConfig(): JamConfig {
   if (process.env.JAM_DEFAULT_MODEL) {
     envOverrides.defaultModel = process.env.JAM_DEFAULT_MODEL;
   }
-  // Sandbox env override: JAM_SANDBOX=1 enables sandbox mode
+
+  // Sandbox tier env override: JAM_SANDBOX_TIER=none|os|docker
+  if (process.env.JAM_SANDBOX_TIER) {
+    envOverrides.sandboxTier = process.env.JAM_SANDBOX_TIER as SandboxTier;
+  }
+
+  // Backward compatibility: JAM_SANDBOX=1 maps to sandboxTier='docker'
   const sandboxEnvOverride: Partial<SandboxConfig> = {};
   if (process.env.JAM_SANDBOX === '1' || process.env.JAM_SANDBOX === 'true') {
     sandboxEnvOverride.enabled = true;
+    if (!process.env.JAM_SANDBOX_TIER) {
+      envOverrides.sandboxTier = 'docker';
+    }
   } else if (process.env.JAM_SANDBOX === '0' || process.env.JAM_SANDBOX === 'false') {
     sandboxEnvOverride.enabled = false;
+    if (!process.env.JAM_SANDBOX_TIER) {
+      envOverrides.sandboxTier = 'none';
+    }
   }
 
   // Brain env override: JAM_BRAIN=1 enables brain mode, JAM_BRAIN_URL overrides URL
@@ -186,11 +217,19 @@ export function loadConfig(): JamConfig {
     ...envOverrides,
     modelTiers: { ...DEFAULT_CONFIG.modelTiers, ...fileConfig.modelTiers },
     codeImprovement: { ...DEFAULT_CONFIG.codeImprovement, ...fileConfig.codeImprovement },
+    osSandbox: { ...DEFAULT_CONFIG.osSandbox, ...fileConfig.osSandbox },
+    worktree: { ...DEFAULT_CONFIG.worktree, ...fileConfig.worktree },
     sandbox: { ...DEFAULT_CONFIG.sandbox, ...fileConfig.sandbox, ...sandboxEnvOverride },
     brain: { ...DEFAULT_CONFIG.brain, ...fileConfig.brain, ...brainEnvOverride },
   };
 
-  log.info(`Config resolved: stt=${merged.sttProvider}, tts=${merged.ttsProvider}, runtime=${merged.defaultRuntime}, theme=${merged.theme}`);
+  // Backward compatibility: migrate sandbox.enabled=true to sandboxTier='docker'
+  if (merged.sandbox.enabled && !fileConfig.sandboxTier && !process.env.JAM_SANDBOX_TIER) {
+    merged.sandboxTier = 'docker';
+    log.info('Migrated sandbox.enabled=true → sandboxTier=docker');
+  }
+
+  log.info(`Config resolved: stt=${merged.sttProvider}, tts=${merged.ttsProvider}, runtime=${merged.defaultRuntime}, sandboxTier=${merged.sandboxTier}`);
   return merged;
 }
 

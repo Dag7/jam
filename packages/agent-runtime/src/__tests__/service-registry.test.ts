@@ -6,11 +6,7 @@ vi.mock('node:fs/promises', () => ({
   readFile: vi.fn(),
   readdir: vi.fn(),
   writeFile: vi.fn(),
-}));
-
-// Mock node:fs
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn(),
+  access: vi.fn(),
 }));
 
 // Mock node:child_process
@@ -38,12 +34,11 @@ vi.mock('node:net', () => ({
   }),
 }));
 
-import { readFile, readdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { readFile, readdir, access } from 'node:fs/promises';
 
 const mockedReadFile = vi.mocked(readFile);
 const mockedReaddir = vi.mocked(readdir);
-const mockedExistsSync = vi.mocked(existsSync);
+const mockedAccess = vi.mocked(access);
 
 /** Helper: create a .services.json line */
 function serviceLine(name: string, port: number): string {
@@ -58,8 +53,8 @@ function serviceLine(name: string, port: number): string {
 
 /** Setup mocks so findServiceFiles finds .services.json in the root dir */
 function mockServicesFile(...lines: string[]): void {
-  // existsSync returns true for the .services.json path
-  mockedExistsSync.mockReturnValue(true);
+  // access resolves (file exists) for the .services.json path
+  mockedAccess.mockResolvedValue(undefined);
   // readdir returns no subdirectories (flat workspace)
   mockedReaddir.mockResolvedValue([]);
   // readFile returns the service lines
@@ -68,7 +63,7 @@ function mockServicesFile(...lines: string[]): void {
 
 /** Setup mocks so findServiceFiles finds nothing */
 function mockNoServicesFile(): void {
-  mockedExistsSync.mockReturnValue(false);
+  mockedAccess.mockRejectedValue(new Error('ENOENT'));
   mockedReaddir.mockResolvedValue([]);
 }
 

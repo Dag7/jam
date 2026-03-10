@@ -5,6 +5,14 @@ import type { AgentEntry } from '@/store/agentSlice';
 import type { ChatMessage } from '@/store/chatSlice';
 import type { SoulEntry } from '@/store/teamSlice';
 
+/** Infer a recovery action from an error message */
+function inferRecoveryAction(message: string): 'retry' | 'reconfigure' | 'dismiss' {
+  const lower = message.toLowerCase();
+  if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('econnreset')) return 'retry';
+  if (lower.includes('api key') || lower.includes('auth') || lower.includes('401') || lower.includes('403')) return 'reconfigure';
+  return 'dismiss';
+}
+
 /**
  * Subscribes to all IPC events from the main process and dispatches to Zustand store.
  * Extracted from App.tsx to keep it a pure layout component.
@@ -196,6 +204,20 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
         source: 'text',
         timestamp: Date.now(),
         error: errorText,
+      });
+
+      // Also surface as a persistent notification
+      const recoveryAction = inferRecoveryAction(message);
+      store().addNotification({
+        id: crypto.randomUUID(),
+        type: 'error',
+        agentId: '',
+        title: message,
+        summary: details ?? '',
+        taskId: '',
+        timestamp: Date.now(),
+        read: false,
+        recoveryAction,
       });
     });
 

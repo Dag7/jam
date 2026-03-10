@@ -365,6 +365,9 @@ export interface JamAPI {
     cancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
     getPaused: () => Promise<boolean>;
     setPaused: (paused: boolean) => Promise<{ success: boolean; error?: string }>;
+    addDependency: (taskId: string, dependsOnTaskId: string) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
+    removeDependency: (taskId: string, dependsOnTaskId: string) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
+    getBlocked: () => Promise<Array<Record<string, unknown>>>;
     createRecurring: (input: {
       title: string;
       description: string;
@@ -448,6 +451,51 @@ export interface JamAPI {
       rollback: (improvementId: string) => Promise<{ success: boolean; error?: string }>;
       health: () => Promise<{ healthy: boolean; lastCheck: string; issues: string[] }>;
     };
+    blackboard: {
+      listTopics: () => Promise<string[]>;
+      read: (topic: string, limit?: number) => Promise<Array<{
+        id: string;
+        agentId: string;
+        topic: string;
+        type: string;
+        content: string;
+        timestamp: string;
+        metadata?: Record<string, unknown>;
+      }>>;
+      publish: (agentId: string, topic: string, artifact: {
+        type: string;
+        content: string;
+        metadata?: Record<string, unknown>;
+      }) => Promise<{ success: boolean; artifact?: Record<string, unknown>; error?: string }>;
+    };
+  };
+
+  sandbox: {
+    getTier: () => Promise<string>;
+    listWorktrees: () => Promise<Array<{
+      agentId: string;
+      agentName: string;
+      worktreePath: string;
+      branch: string;
+      repoPath: string;
+    }>>;
+    removeWorktree: (agentId: string) => Promise<{ success: boolean; error?: string }>;
+  };
+
+  merge: {
+    status: (agentId: string) => Promise<string>;
+    preview: (agentId: string, targetBranch?: string) => Promise<{
+      agentId: string;
+      branch: string;
+      filesChanged: Array<{ path: string; status: string; diff: string }>;
+      conflictsDetected: boolean;
+    }>;
+    execute: (agentId: string, targetBranch?: string) => Promise<{
+      success: boolean;
+      mergedFiles: number;
+      error?: string;
+    }>;
+    abort: (agentId: string) => Promise<void>;
   };
 }
 

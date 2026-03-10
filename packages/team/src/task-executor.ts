@@ -91,6 +91,13 @@ export class TaskExecutor {
       }),
     );
 
+    // When a task completes, check if any blocked tasks can now be unblocked
+    this.unsubscribers.push(
+      this.deps.eventBus.on(Events.TASK_COMPLETED, () => {
+        this.unblockReadyTasks();
+      }),
+    );
+
     // Drain stuck tasks from previous sessions once agents are ready.
     // Delay by a grace period so the renderer can finish its initial mount
     // before we spawn heavy CLI processes (each executeDetached is a full agent).
@@ -202,6 +209,44 @@ export class TaskExecutor {
     if (this._paused) {
       log.debug(`Paused — skipping task ${taskId.slice(0, 8)}`);
       return;
+    }
+
+    // Check dependencies before executing
+    this.checkAndExecute(taskId, agentId).catch((err) => {
+      log.error(`Task dependency check error: ${String(err)}`);
+    });
+  }
+
+  /** Check task dependencies and execute if all are met */
+  private async checkAndExecute(taskId: string, agentId: string): Promise<void> {
+    const task = await this.deps.taskStore.get(taskId);
+    if (!task) return;
+
+    // Check dependsOn — all dependencies must be completed
+    if (task.dependsOn && task.dependsOn.length > 0) {
+      const pendingDeps: string[] = [];
+      for (const depId of task.dependsOn) {
+        const dep = await this.deps.taskStore.get(depId);
+        if (!dep || dep.status !== 'completed') {
+          pendingDeps.push(depId);
+        }
+      }
+
+      if (pendingDeps.length > 0) {
+        // Block the task until dependencies complete
+        if (task.status !== 'blocked') {
+          await this.deps.taskStore.update(taskId, {
+            status: 'blocked',
+            blockReason: `Waiting for ${pendingDeps.length} dependency task(s) to complete`,
+          });
+          this.deps.eventBus.emit(Events.TASK_UPDATED, {
+            task: { ...task, status: 'blocked' },
+            previousStatus: task.status,
+          });
+          log.info(`Task "${task.title}" blocked — ${pendingDeps.length} unmet dependencies`);
+        }
+        return;
+      }
     }
 
     // Global limit — prevents spawning too many heavy CLI processes at once
@@ -357,6 +402,40 @@ export class TaskExecutor {
         },
       );
     });
+  }
+
+  /** When a task completes, check if any blocked tasks have all deps satisfied.
+   *  Transitions blocked → assigned so they get picked up by tryExecute. */
+  private async unblockReadyTasks(): Promise<void> {
+    try {
+      const blocked = await this.deps.taskStore.list({ status: 'blocked' });
+      for (const task of blocked) {
+        if (!task.dependsOn || task.dependsOn.length === 0) continue;
+
+        let allMet = true;
+        for (const depId of task.dependsOn) {
+          const dep = await this.deps.taskStore.get(depId);
+          if (!dep || dep.status !== 'completed') {
+            allMet = false;
+            break;
+          }
+        }
+
+        if (allMet && task.assignedTo) {
+          await this.deps.taskStore.update(task.id, {
+            status: 'assigned',
+            blockReason: undefined,
+          });
+          this.deps.eventBus.emit(Events.TASK_UPDATED, {
+            task: { ...task, status: 'assigned' },
+            previousStatus: 'blocked',
+          });
+          log.info(`Task "${task.title}" unblocked — all dependencies met`);
+        }
+      }
+    } catch (err) {
+      log.error(`Failed to unblock tasks: ${String(err)}`);
+    }
   }
 
   /** After completing a task, check if any agent has an assigned task waiting.

@@ -108,6 +108,7 @@ describe('TaskExecutor', () => {
         isAgentAvailable,
         abortAgent,
         timeoutMs: 60_000,
+        drainGraceMs: 0,
       });
       executor.start();
 
@@ -129,6 +130,7 @@ describe('TaskExecutor', () => {
         isAgentAvailable,
         abortAgent,
         timeoutMs: 60_000,
+        drainGraceMs: 0,
       });
       executor.start();
 

@@ -102,6 +102,17 @@ export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {
     [agents],
   );
 
+  // Derive activity heatmap: ISO date → completed task count (12 weeks)
+  const activityHeatmap = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const t of Object.values(useAppStore.getState().tasks)) {
+      if (t.assignedTo !== agentId || t.status !== 'completed' || !t.completedAt) continue;
+      const dateKey = t.completedAt.slice(0, 10); // ISO date "YYYY-MM-DD"
+      map[dateKey] = (map[dateKey] ?? 0) + 1;
+    }
+    return map;
+  }, [agentId, tasks]);
+
   // Derive activity log from tasks involving this agent
   const activity = useMemo(() => {
     const allTasks = Object.values(useAppStore.getState().tasks);
@@ -170,6 +181,7 @@ export function AgentDetailContainer({ agentId }: AgentDetailContainerProps) {
       services={services}
       relationships={agentRelationships}
       agents={agentMap}
+      activityHeatmap={activityHeatmap}
       onTriggerReflection={triggerReflection}
       onCancelTask={(taskId) => window.jam.tasks.cancel(taskId)}
       onStopService={handleStopService}

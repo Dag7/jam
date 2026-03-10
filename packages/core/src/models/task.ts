@@ -2,6 +2,7 @@ export type TaskStatus =
   | 'pending'
   | 'assigned'
   | 'running'
+  | 'blocked'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -28,6 +29,10 @@ export interface Task {
   tags: string[];
   /** For subtask chains */
   parentTaskId?: string;
+  /** Task IDs that must complete before this task can run (DAG dependencies) */
+  dependsOn?: string[];
+  /** Reason the task is blocked (set when status is 'blocked') */
+  blockReason?: string;
 }
 
 export interface TaskMetrics {

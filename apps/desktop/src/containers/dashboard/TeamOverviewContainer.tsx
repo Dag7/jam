@@ -5,6 +5,27 @@ import { TeamOverview } from '@/components/dashboard/TeamOverview';
 import { RelationshipGraph } from '@/components/dashboard/RelationshipGraph';
 import type { SoulEntry } from '@/store/teamSlice';
 
+/** Bucket completed tasks into daily counts over last N days per agent */
+function buildSparklines(
+  tasks: Record<string, { assignedTo?: string; completedAt?: string; status?: string }>,
+  agentIds: string[],
+  days = 14,
+): Record<string, number[]> {
+  const now = Date.now();
+  const msPerDay = 86_400_000;
+  const result: Record<string, number[]> = {};
+  for (const id of agentIds) result[id] = new Array(days).fill(0);
+  for (const t of Object.values(tasks)) {
+    if (t.status !== 'completed' || !t.completedAt || !t.assignedTo) continue;
+    const buckets = result[t.assignedTo];
+    if (!buckets) continue;
+    const age = now - new Date(t.completedAt).getTime();
+    const dayIndex = days - 1 - Math.floor(age / msPerDay);
+    if (dayIndex >= 0 && dayIndex < days) buckets[dayIndex]++;
+  }
+  return result;
+}
+
 interface TeamOverviewContainerProps {
   onSelectAgent: (agentId: string) => void;
 }
@@ -12,6 +33,7 @@ interface TeamOverviewContainerProps {
 export function TeamOverviewContainer({ onSelectAgent }: TeamOverviewContainerProps) {
   const agents = useAppStore((s) => s.agents);
   const souls = useAppStore((s) => s.souls);
+  const tasks = useAppStore((s) => s.tasks);
   const { stats, relationships, isLoading } = useTeamStats();
 
   // Stable reference: only changes when agent IDs actually change
@@ -38,6 +60,11 @@ export function TeamOverviewContainer({ onSelectAgent }: TeamOverviewContainerPr
     );
   }
 
+  const taskSparklines = useMemo(
+    () => buildSparklines(tasks, agentIds),
+    [tasks, agentIds],
+  );
+
   const agentList = Object.values(agents).map((a) => ({
     id: a.profile.id,
     name: a.profile.name,
@@ -52,6 +79,7 @@ export function TeamOverviewContainer({ onSelectAgent }: TeamOverviewContainerPr
       <TeamOverview
         agents={agentList}
         stats={stats}
+        taskSparklines={taskSparklines}
         onSelectAgent={onSelectAgent}
       />
 

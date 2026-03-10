@@ -17,6 +17,7 @@ import {
   ServiceRegistry,
 } from '@jam/agent-runtime';
 import type { IPtyManager } from '@jam/agent-runtime';
+import { BaseAgentRuntime } from '@jam/agent-runtime';
 import type { IContainerManager } from '@jam/core';
 import { randomBytes } from 'node:crypto';
 import {
@@ -28,6 +29,12 @@ import {
   HostBridge,
   AGENT_DOCKERFILE,
 } from '@jam/sandbox';
+import {
+  OsSandboxedPtyManager,
+  SandboxConfigBuilder,
+  WorktreeManager,
+  MergeService,
+} from '@jam/os-sandbox';
 import {
   VoiceService,
   CommandParser,
@@ -57,6 +64,8 @@ import {
   FileImprovementStore,
   CodeImprovementEngine,
   TaskExecutor,
+  FileBlackboard,
+  TaskNegotiationHandler,
 } from '@jam/team';
 import type { ITeamExecutor } from '@jam/team';
 import { AppStore } from './storage/store';
@@ -91,6 +100,8 @@ export class Orchestrator {
   private readonly portAllocator: PortAllocator | null = null;
   private readonly docker: DockerClient | null = null;
   private readonly hostBridge: HostBridge | null = null;
+  readonly worktreeManager: WorktreeManager | null = null;
+  readonly mergeService: MergeService | null = null;
   readonly memoryStore: IMemoryStore;
   readonly brainClient: BrainClient | null = null;
   readonly appStore: AppStore;
@@ -114,6 +125,8 @@ export class Orchestrator {
   readonly teamExecutor: ITeamExecutor;
   readonly improvementStore: FileImprovementStore;
   readonly codeImprovement: CodeImprovementEngine | null = null;
+  readonly blackboard: FileBlackboard;
+  readonly negotiationHandler: TaskNegotiationHandler;
   private readonly sharedSkillsDir: string;
   private readonly imageReady: Promise<void> = Promise.resolve();
   private readonly reclaimedAgentIds: Set<string> = new Set();
@@ -139,12 +152,16 @@ export class Orchestrator {
       this.sendToRenderer('services:changed', services);
     });
 
-    // Initialize PTY manager — sandbox mode or native
-    if (this.config.sandbox.enabled) {
+    // Initialize PTY manager — tiered sandbox: none | os | docker
+    const sandboxTier = this.config.sandboxTier;
+    log.info(`Sandbox tier: ${sandboxTier}`);
+
+    if (sandboxTier === 'docker') {
+      // Docker sandbox — full container isolation
       const docker = new DockerClient();
       this.docker = docker;
       if (docker.isAvailable()) {
-        log.info('Docker available — enabling sandbox mode');
+        log.info('Docker available — enabling container sandbox mode');
         this.portAllocator = new PortAllocator(
           this.config.sandbox.portRangeStart,
           this.config.sandbox.portsPerAgent,
@@ -153,14 +170,11 @@ export class Orchestrator {
         this.ptyManager = new SandboxedPtyManager(this.containerManager, docker);
 
         // Reclaim running containers from a previous session (e.g. hot reload)
-        // Stopped/crashed containers are cleaned up; running ones are reused
         this.reclaimedAgentIds = this.containerManager.reclaimExisting();
 
-        // Ensure agent image exists — awaited by startAutoStartAgents() before launching containers
+        // Ensure agent image exists
         const imageManager = new ImageManager(docker, AGENT_DOCKERFILE);
-        // Use content-hash versioned tag so Dockerfile changes trigger automatic rebuild
         this.config.sandbox.imageName = imageManager.resolveTag(this.config.sandbox.imageName);
-        // Throttle build progress to max 2 updates/sec — prevents flooding the renderer
         let lastProgressAt = 0;
         let pendingLine = '';
         this.imageReady = imageManager.ensureImage(this.config.sandbox.imageName, (line) => {
@@ -186,7 +200,7 @@ export class Orchestrator {
           });
         });
 
-        // Start host bridge — HTTP API for containerized agents to execute host operations
+        // Start host bridge
         this.hostBridge = new HostBridge(this.config.sandbox.hostBridgePort, {
           openExternal: (url) => shell.openExternal(url),
           readClipboard: () => clipboard.readText(),
@@ -209,8 +223,42 @@ export class Orchestrator {
         this.eventBus.emit('sandbox:unavailable', { reason: 'Docker Desktop is not running or not installed' });
         this.ptyManager = new PtyManager();
       }
+    } else if (sandboxTier === 'os') {
+      // OS-level sandbox — seatbelt (macOS) / bubblewrap (Linux)
+      const basePty = new PtyManager();
+      const configBuilder = new SandboxConfigBuilder(this.config.osSandbox);
+      const osSandboxPty = new OsSandboxedPtyManager(basePty, configBuilder);
+
+      // Initialize sandbox runtime (async, graceful fallback to plain PtyManager)
+      osSandboxPty.initialize().then(() => {
+        log.info('OS sandbox initialized');
+      }).catch((err) => {
+        log.warn(`OS sandbox init failed: ${String(err)} — commands run unsandboxed`);
+      });
+
+      this.ptyManager = osSandboxPty;
+
+      // Also set the sandbox wrapper for one-shot execute() calls via BaseAgentRuntime
+      if (this.config.osSandbox.enabled) {
+        BaseAgentRuntime.setSandboxWrapper(async (cmd: string) => {
+          // When OS sandbox is available, one-shot execute() spawns are already
+          // wrapped by OsSandboxedPtyManager. For direct child_process spawns
+          // (base-runtime execute()), we pass through — the PTY layer handles wrapping.
+          return cmd;
+        });
+        log.info('OS sandbox wrapper registered for one-shot execute()');
+      }
     } else {
+      // No sandbox — plain native execution
       this.ptyManager = new PtyManager();
+      log.info('No sandbox — agents run directly on host');
+    }
+
+    // Git worktree isolation (independent of sandbox tier)
+    if (this.config.worktree.autoCreate) {
+      this.worktreeManager = new WorktreeManager(this.config.worktree);
+      this.mergeService = new MergeService(this.worktreeManager);
+      log.info('Git worktree isolation enabled');
     }
 
     // Register runtimes
@@ -243,6 +291,8 @@ export class Orchestrator {
 
     const teamDir = join(app.getPath('userData'), 'team');
     this.taskStore = new FileTaskStore(teamDir);
+    this.blackboard = new FileBlackboard(teamDir, this.eventBus);
+    this.negotiationHandler = new TaskNegotiationHandler(this.taskStore, this.eventBus);
     this.communicationHub = new FileCommunicationHub(teamDir, this.eventBus);
     this.relationshipStore = new FileRelationshipStore(teamDir);
     this.statsStore = new FileStatsStore(teamDir);
@@ -345,6 +395,25 @@ export class Orchestrator {
           child.unref();
           return true;
         },
+      });
+    }
+
+    // Git worktree pre-start hook — creates worktree before agent launches
+    // Note: when Docker sandbox is active, the Docker pre-start hook is already set above.
+    // Worktree isolation is independent of sandbox tier and only applies to non-Docker modes.
+    if (this.worktreeManager && !this.containerManager) {
+      const wm = this.worktreeManager;
+
+      this.agentManager.setPreStartHook(async (_agentId, profile) => {
+        if (profile.useWorktree && profile.cwd) {
+          try {
+            const info = await wm.create(_agentId, profile.name, profile.cwd);
+            profile.cwd = info.worktreePath;
+            log.info(`Worktree created for "${profile.name}" at ${info.worktreePath}`);
+          } catch (err) {
+            log.warn(`Worktree creation failed for "${profile.name}": ${String(err)}`);
+          }
+        }
       });
     }
 
@@ -469,6 +538,30 @@ export class Orchestrator {
       this.eventBus,
       (input) => this.agentManager.create(input),
     );
+
+    // Wire inbox events to blackboard and negotiation handler
+    this.eventBus.on('inbox:blackboard:publish', (data: {
+      agentId: string; topic: string; artifactType: string; content: unknown; metadata?: unknown;
+    }) => {
+      this.blackboard.publish(data.agentId, data.topic, {
+        type: data.artifactType as 'text' | 'diff' | 'json' | 'file-ref',
+        content: String(data.content),
+        metadata: data.metadata as Record<string, unknown> | undefined,
+      }).catch((err) => log.warn(`Blackboard publish failed: ${String(err)}`));
+    });
+
+    this.eventBus.on('inbox:task:negotiate', (data: {
+      agentId: string; taskId: string; action: string; reason: string;
+    }) => {
+      if (data.action === 'reassign') {
+        this.negotiationHandler.handleReassignRequest(data.taskId, data.agentId, data.reason)
+          .catch((err) => log.warn(`Task reassign failed: ${String(err)}`));
+      } else if (data.action === 'block') {
+        this.negotiationHandler.handleBlockRequest(data.taskId, data.agentId, data.reason)
+          .catch((err) => log.warn(`Task block failed: ${String(err)}`));
+      }
+    });
+
     this.teamEventHandler = new TeamEventHandler(
       this.eventBus,
       this.statsStore,
@@ -514,8 +607,8 @@ export class Orchestrator {
     const teamSkill = this.buildTeamCommunicationSkill();
     await writeFile(teamSkillPath, teamSkill, 'utf-8');
 
-    // Host bridge skill — only in sandbox mode (teaches agents how to call host operations)
-    if (this.config.sandbox.enabled && this.hostBridge) {
+    // Host bridge skill — only in Docker sandbox mode (teaches agents how to call host operations)
+    if (this.config.sandboxTier === 'docker' && this.hostBridge) {
       const bridgeSkillPath = join(dir, 'host-bridge.md');
       await writeFile(bridgeSkillPath, HOST_BRIDGE_SKILL, 'utf-8');
     }
@@ -595,7 +688,7 @@ export class Orchestrator {
     this.mainWindow = win;
 
     // Send initial sandbox status so the renderer knows if it should show a loading screen
-    if (this.config.sandbox.enabled && this.containerManager) {
+    if (this.config.sandboxTier === 'docker' && this.containerManager) {
       if (this.sandboxFullyReady) {
         // Auto-start already completed before window was ready — send 'ready' immediately
         this.sendToRenderer('sandbox:progress', {

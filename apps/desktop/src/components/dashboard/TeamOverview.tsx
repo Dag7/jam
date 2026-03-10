@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { AgentStatCard } from '@/components/dashboard/AgentStatCard';
+import { BarChart } from '@/components/charts/BarChart';
 import { formatTokens, estimateCost } from '@/utils/format';
 
 interface StatEntry {
@@ -14,10 +15,11 @@ interface StatEntry {
 interface TeamOverviewProps {
   agents: Array<{ id: string; name: string; color: string; avatarUrl?: string; status: string; role?: string }>;
   stats: Record<string, StatEntry>;
+  taskSparklines?: Record<string, number[]>;
   onSelectAgent: (agentId: string) => void;
 }
 
-export function TeamOverview({ agents, stats, onSelectAgent }: TeamOverviewProps) {
+export function TeamOverview({ agents, stats, taskSparklines, onSelectAgent }: TeamOverviewProps) {
   const totals = useMemo(() => {
     let tasksCompleted = 0;
     let tasksFailed = 0;
@@ -31,6 +33,18 @@ export function TeamOverview({ agents, stats, onSelectAgent }: TeamOverviewProps
     }
     return { tasksCompleted, tasksFailed, tokensIn, tokensOut };
   }, [stats]);
+
+  const tokenBarData = useMemo(() => {
+    return agents
+      .map((a) => {
+        const s = stats[a.id];
+        if (!s) return null;
+        const total = (s.totalTokensIn ?? 0) + (s.totalTokensOut ?? 0);
+        if (total === 0) return null;
+        return { label: a.name.slice(0, 8), value: total, color: a.color };
+      })
+      .filter((d): d is { label: string; value: number; color: string } => d !== null);
+  }, [agents, stats]);
 
   const totalTokens = totals.tokensIn + totals.tokensOut;
   const totalCost = estimateCost(totals.tokensIn, totals.tokensOut);
@@ -68,10 +82,19 @@ export function TeamOverview({ agents, stats, onSelectAgent }: TeamOverviewProps
             key={agent.id}
             agent={agent}
             stats={stats[agent.id] ?? null}
+            sparklineData={taskSparklines?.[agent.id]}
             onClick={() => onSelectAgent(agent.id)}
           />
         ))}
       </div>
+
+      {/* Token usage comparison chart */}
+      {tokenBarData.length > 0 && (
+        <div className="mt-6 bg-zinc-800 rounded-lg p-4">
+          <h3 className="text-sm font-medium text-zinc-300 mb-3">Token Usage by Agent</h3>
+          <BarChart data={tokenBarData} height={100} />
+        </div>
+      )}
     </div>
   );
 }

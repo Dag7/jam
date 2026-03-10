@@ -21,4 +21,7 @@ export { FileImprovementStore } from './stores/file-improvement-store.js';
 export { CodeImprovementEngine } from './code-improvement-engine.js';
 export { TaskExecutor } from './task-executor.js';
 export type { TaskExecutorDeps } from './task-executor.js';
+export { FileBlackboard } from './stores/file-blackboard.js';
+export type { BlackboardArtifact } from './stores/file-blackboard.js';
+export { TaskNegotiationHandler } from './task-negotiation-handler.js';
 export * from './git-utils.js';

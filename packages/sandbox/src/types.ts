@@ -3,6 +3,8 @@ export type { ContainerInfo, CreateContainerOptions } from '@jam/core';
 
 export type ContainerExitBehavior = 'stop' | 'delete' | 'keep-running';
 
+export type NetworkPolicy = 'unrestricted' | 'host-bridge-only';
+
 export interface SandboxConfig {
   /** Whether sandbox mode is enabled */
   enabled: boolean;
@@ -24,6 +26,14 @@ export interface SandboxConfig {
   hostBridgePort: number;
   /** What to do with containers on app exit: stop (default), delete, or keep-running */
   containerExitBehavior: ContainerExitBehavior;
+  /** Enable seccomp BPF syscall filtering (default: true) */
+  seccompEnabled: boolean;
+  /** Network egress policy: unrestricted (default) or host-bridge-only (blocks external) */
+  networkPolicy: NetworkPolicy;
+  /** Disk quota per container in MB (0 = unlimited; requires overlay2 storage driver) */
+  diskQuotaMb: number;
+  /** Path for audit log file (JSONL). Empty string = disabled. */
+  auditLogPath: string;
 }
 
 export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
@@ -37,4 +47,8 @@ export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
   stopTimeoutSec: 10,
   hostBridgePort: 19_876,
   containerExitBehavior: 'stop',
+  seccompEnabled: true,
+  networkPolicy: 'unrestricted',
+  diskQuotaMb: 0,
+  auditLogPath: '',
 };

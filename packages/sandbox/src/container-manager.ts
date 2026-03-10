@@ -1,10 +1,12 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import type { IContainerManager, IPortAllocator } from '@jam/core';
 import type { ContainerInfo, CreateContainerOptions } from '@jam/core';
 import { createLogger } from '@jam/core';
 import type { DockerClient } from './docker-client.js';
 import type { SandboxConfig } from './types.js';
+import { serializeSeccompProfile } from './seccomp-profile.js';
 
 const log = createLogger('ContainerManager');
 
@@ -105,6 +107,19 @@ export class ContainerManager implements IContainerManager {
       { volumeName: `${safeName}-cache`, containerPath: `${agentHome}/.cache` },
     ];
 
+    // Write seccomp profile to disk if enabled
+    let seccompProfile: string | undefined;
+    if (this.config.seccompEnabled) {
+      const seccompDir = join(homedir(), '.jam');
+      if (!existsSync(seccompDir)) mkdirSync(seccompDir, { recursive: true });
+      const seccompPath = join(seccompDir, 'seccomp-default.json');
+      if (!existsSync(seccompPath)) {
+        writeFileSync(seccompPath, serializeSeccompProfile(), 'utf-8');
+        log.info(`Wrote seccomp profile to ${seccompPath}`);
+      }
+      seccompProfile = seccompPath;
+    }
+
     try {
       // Create the container
       const containerId = this.docker.createContainer({
@@ -122,6 +137,8 @@ export class ContainerManager implements IContainerManager {
         workdir: '/workspace',
         env: options.env,
         command: ['sleep', 'infinity'],
+        seccompProfile,
+        diskQuotaMb: this.config.diskQuotaMb || undefined,
       });
 
       info.containerId = containerId;

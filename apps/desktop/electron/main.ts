@@ -11,6 +11,7 @@ import {
   systemPreferences,
 } from 'electron';
 import path from 'node:path';
+import { appendFileSync, renameSync, statSync, mkdirSync } from 'node:fs';
 import { createLogger, addLogTransport, Batcher, TimeoutTimer, type LogEntry } from '@jam/core';
 import { Orchestrator } from './orchestrator';
 import { CommandRouter } from './command-router';
@@ -26,6 +27,7 @@ import { registerServiceHandlers } from './ipc/service-handlers';
 import { registerTaskHandlers } from './ipc/task-handlers';
 import { registerTeamHandlers } from './ipc/team-handlers';
 import { registerBrainHandlers } from './ipc/brain-handlers';
+import { registerSandboxHandlers } from './ipc/sandbox-handlers';
 
 const log = createLogger('Main');
 
@@ -67,7 +69,7 @@ if (process.env.VITE_DEV_SERVER_URL) {
 }
 
 // --- Log Buffer & IPC Transport (batched) ---
-const LOG_BUFFER_SIZE = 500;
+const LOG_BUFFER_SIZE = 1000;
 const logBuffer: LogEntry[] = [];
 
 const logBatcher = new Batcher<LogEntry[]>(
@@ -82,10 +84,43 @@ const logBatcher = new Batcher<LogEntry[]>(
   (existing, incoming) => { existing.push(...incoming); return existing; },
 );
 
+// --- Persistent log file transport with rotation ---
+const LOG_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+let logFilePath: string | null = null;
+let logFileReady = false;
+
+// app.getPath() is only available after 'ready', so we defer setup
+app.whenReady().then(() => {
+  try {
+    const logDir = path.join(app.getPath('userData'), 'logs');
+    mkdirSync(logDir, { recursive: true });
+    logFilePath = path.join(logDir, 'jam.log');
+    logFileReady = true;
+  } catch { /* best-effort */ }
+});
+
+function writeToLogFile(entry: LogEntry): void {
+  if (!logFileReady || !logFilePath) return;
+  try {
+    // Rotate if over size limit
+    try {
+      const st = statSync(logFilePath);
+      if (st.size > LOG_MAX_BYTES) {
+        const rotated = logFilePath + '.1';
+        renameSync(logFilePath, rotated);
+      }
+    } catch { /* file may not exist yet */ }
+
+    const line = `${entry.timestamp} [${entry.level.toUpperCase()}] [${entry.scope}]${entry.agentId ? ` (${entry.agentId.slice(0, 8)})` : ''} ${entry.message}\n`;
+    appendFileSync(logFilePath, line, 'utf-8');
+  } catch { /* best-effort */ }
+}
+
 addLogTransport((entry: LogEntry) => {
   logBuffer.push(entry);
   if (logBuffer.length > LOG_BUFFER_SIZE) logBuffer.shift();
   logBatcher.add('logs', [entry]);
+  writeToLogFile(entry);
 });
 
 // --- Single instance lock ---
@@ -268,9 +303,15 @@ function registerIpcHandlers(): void {
     selfImprovement: orchestrator.selfImprovement,
     scheduleStore: orchestrator.scheduleStore,
     codeImprovement: orchestrator.codeImprovement,
+    blackboard: orchestrator.blackboard,
   });
   registerBrainHandlers({
     brainClient: orchestrator.brainClient,
+  });
+  registerSandboxHandlers({
+    worktreeManager: orchestrator.worktreeManager,
+    mergeService: orchestrator.mergeService,
+    config: orchestrator.config,
   });
 
   // App + Logs (trivial, kept inline)

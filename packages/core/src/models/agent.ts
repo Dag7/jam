@@ -50,6 +50,10 @@ export interface AgentProfile {
   secretBindings?: SecretBinding[];
   /** System agents are bootstrapped by the app and cannot be deleted/edited */
   isSystem?: boolean;
+  /** Use git worktree for this agent's workspace isolation */
+  useWorktree?: boolean;
+  /** Agent role in team coordination */
+  agentRole?: 'worker' | 'supervisor';
 }
 
 export interface AgentState {

@@ -651,6 +651,7 @@ __metadata:
     "@jam/core": "workspace:*"
     "@jam/eventbus": "workspace:*"
     "@jam/memory": "workspace:*"
+    "@jam/os-sandbox": "workspace:*"
     "@jam/sandbox": "workspace:*"
     "@jam/team": "workspace:*"
     "@jam/voice": "workspace:*"
@@ -697,6 +698,17 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@jam/memory@workspace:packages/memory"
   dependencies:
+    "@jam/core": "workspace:*"
+    rimraf: "npm:^5.0.5"
+    typescript: "npm:^5.9.3"
+  languageName: unknown
+  linkType: soft
+
+"@jam/os-sandbox@workspace:*, @jam/os-sandbox@workspace:packages/os-sandbox":
+  version: 0.0.0-use.local
+  resolution: "@jam/os-sandbox@workspace:packages/os-sandbox"
+  dependencies:
+    "@jam/agent-runtime": "workspace:*"
     "@jam/core": "workspace:*"
     rimraf: "npm:^5.0.5"
     typescript: "npm:^5.9.3"

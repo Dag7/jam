@@ -25,6 +25,12 @@ export interface CreateContainerArgs {
   workdir: string;
   env?: Record<string, string>;
   command: string[];
+  /** Path to seccomp profile JSON file */
+  seccompProfile?: string;
+  /** Docker network name to attach to */
+  network?: string;
+  /** Disk quota in MB (requires overlay2 storage driver) */
+  diskQuotaMb?: number;
 }
 
 export interface ContainerListEntry {
@@ -135,6 +141,21 @@ export class DockerClient implements IDockerClient {
     cmdArgs.push('--cpus', String(args.cpus));
     cmdArgs.push('--memory', `${args.memoryMb}m`);
     cmdArgs.push('--pids-limit', String(args.pidsLimit));
+
+    // Seccomp profile — restrict dangerous syscalls
+    if (args.seccompProfile) {
+      cmdArgs.push('--security-opt', `seccomp=${args.seccompProfile}`);
+    }
+
+    // Network — attach to a specific Docker network
+    if (args.network) {
+      cmdArgs.push('--network', args.network);
+    }
+
+    // Disk quota (requires overlay2 storage driver; fail gracefully)
+    if (args.diskQuotaMb && args.diskQuotaMb > 0) {
+      cmdArgs.push('--storage-opt', `size=${args.diskQuotaMb}m`);
+    }
 
     // Bind-mount volumes
     for (const vol of args.volumes) {

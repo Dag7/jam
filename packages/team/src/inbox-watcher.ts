@@ -133,6 +133,31 @@ export class InboxWatcher {
             continue;
           }
 
+          // Handle blackboard publish requests
+          if (request.type === 'blackboard:publish') {
+            const req = request as Record<string, unknown>;
+            this.eventBus.emit('inbox:blackboard:publish', {
+              agentId,
+              topic: (req.topic as string) || 'default',
+              artifactType: (req.artifactType as string) || 'text',
+              content: req.content || req.body || req.description || '',
+              metadata: req.metadata,
+            });
+            continue;
+          }
+
+          // Handle task negotiation requests
+          if (request.type === 'task:negotiate') {
+            const req = request as Record<string, unknown>;
+            this.eventBus.emit('inbox:task:negotiate', {
+              agentId,
+              taskId: req.taskId as string,
+              action: req.action as string,
+              reason: (req.reason as string) || '',
+            });
+            continue;
+          }
+
           // Accept common aliases so agents using subject/body don't create Untitled tasks
           const description = request.description || request.body || request.content || '';
 

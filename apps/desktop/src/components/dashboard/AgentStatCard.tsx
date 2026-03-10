@@ -1,5 +1,6 @@
 import React from 'react';
 import { formatTokens, estimateCost } from '@/utils/format';
+import { Sparkline } from '@/components/charts/Sparkline';
 
 interface AgentStatCardProps {
   agent: { id: string; name: string; color: string; status: string; role?: string; avatarUrl?: string };
@@ -11,10 +12,11 @@ interface AgentStatCardProps {
     averageResponseMs: number;
     streaks: { current: number };
   } | null;
+  sparklineData?: number[];
   onClick: () => void;
 }
 
-export const AgentStatCard = React.memo(function AgentStatCard({ agent, stats, onClick }: AgentStatCardProps) {
+export const AgentStatCard = React.memo(function AgentStatCard({ agent, stats, sparklineData, onClick }: AgentStatCardProps) {
   const totalTokens = stats ? stats.totalTokensIn + stats.totalTokensOut : 0;
   const cost = stats ? estimateCost(stats.totalTokensIn, stats.totalTokensOut) : 0;
 
@@ -89,6 +91,16 @@ export const AgentStatCard = React.memo(function AgentStatCard({ agent, stats, o
               <div className="text-xs text-zinc-400">Streak</div>
             </div>
           </div>
+
+          {/* Task activity sparkline (14-day trend) */}
+          {sparklineData && sparklineData.length >= 2 && (
+            <div className="pt-2 border-t border-zinc-700/50">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-zinc-500">14-day activity</span>
+              </div>
+              <Sparkline data={sparklineData} color={agent.color} fill height={28} />
+            </div>
+          )}
 
           {/* Token usage bar */}
           {totalTokens > 0 && (

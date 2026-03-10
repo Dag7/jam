@@ -119,4 +119,37 @@ export function registerTaskHandlers(deps: TaskHandlerDeps): void {
     }
     return { success: true };
   });
+
+  // --- Task Dependencies ---
+
+  ipcMain.handle('tasks:addDependency', async (_, taskId: string, dependsOnTaskId: string) => {
+    try {
+      const task = await taskStore.get(taskId);
+      if (!task) return { success: false, error: 'Task not found' };
+      const deps = task.dependsOn ?? [];
+      if (deps.includes(dependsOnTaskId)) return { success: true, task };
+      const updated = await taskStore.update(taskId, {
+        dependsOn: [...deps, dependsOnTaskId],
+      });
+      return { success: true, task: updated };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+
+  ipcMain.handle('tasks:removeDependency', async (_, taskId: string, dependsOnTaskId: string) => {
+    try {
+      const task = await taskStore.get(taskId);
+      if (!task) return { success: false, error: 'Task not found' };
+      const deps = (task.dependsOn ?? []).filter((id: string) => id !== dependsOnTaskId);
+      const updated = await taskStore.update(taskId, { dependsOn: deps });
+      return { success: true, task: updated };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  });
+
+  ipcMain.handle('tasks:getBlocked', async () => {
+    return taskStore.list({ status: 'blocked' as TaskFilter['status'] });
+  });
 }
