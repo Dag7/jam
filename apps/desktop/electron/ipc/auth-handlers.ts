@@ -3,32 +3,85 @@ import { spawn, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { createLogger } from '@jam/core';
+import type { RuntimeRegistry } from '@jam/agent-runtime';
+import type { AppStore } from '../storage/store';
 
 const log = createLogger('AuthHandlers');
 
 export interface AuthHandlerDeps {
+  runtimeRegistry: RuntimeRegistry;
+  appStore: AppStore;
   getSandboxTier: () => string;
 }
 
+/** Per-runtime auth status check. Returns { authenticated, expired? } */
+async function checkRuntimeAuth(runtimeId: string, home: string): Promise<{ authenticated: boolean; expired?: boolean }> {
+  switch (runtimeId) {
+    case 'claude-code': {
+      // Check .credentials.json for OAuth tokens
+      try {
+        const credPath = join(home, '.claude', '.credentials.json');
+        const content = await readFile(credPath, 'utf-8');
+        const creds = JSON.parse(content);
+        if (creds.claudeAiOauth?.accessToken) {
+          const expired = creds.claudeAiOauth.expiresAt ? Date.now() > creds.claudeAiOauth.expiresAt : false;
+          return { authenticated: true, expired };
+        }
+      } catch { /* no file or invalid */ }
+      // Also check Keychain on macOS (host may be authenticated even if file is stale)
+      if (process.platform === 'darwin') {
+        try {
+          execFileSync('security', ['find-generic-password', '-s', 'Claude Code-credentials'], {
+            stdio: ['pipe', 'pipe', 'pipe'], timeout: 3000,
+          });
+          return { authenticated: true, expired: false };
+        } catch { /* not in keychain */ }
+      }
+      return { authenticated: false };
+    }
+    case 'cursor': {
+      if (process.env.CURSOR_API_KEY) return { authenticated: true };
+      if (existsSync(join(home, '.cursor', 'cli-config.json'))) return { authenticated: true };
+      return { authenticated: false };
+    }
+    case 'opencode': {
+      if (existsSync(join(home, '.opencode', 'config.json'))) return { authenticated: true };
+      return { authenticated: false };
+    }
+    case 'codex': {
+      if (process.env.OPENAI_API_KEY) return { authenticated: true };
+      if (existsSync(join(home, '.codex', 'config.toml'))) return { authenticated: true };
+      return { authenticated: false };
+    }
+    default:
+      return { authenticated: false };
+  }
+}
+
 export function registerAuthHandlers(deps: AuthHandlerDeps): void {
+  const { runtimeRegistry, appStore } = deps;
+
   /**
-   * OAuth login for a given runtime (e.g. 'claude-code').
-   *
-   * Runs `claude auth login` on the HOST. On macOS, Claude Code stores tokens
-   * in the system Keychain. After a successful login we sync the Keychain
-   * credentials to `~/.claude/.credentials.json` so Docker containers
-   * (which can't access Keychain) pick them up via the bind mount.
+   * Run interactive login for any runtime that supports it.
+   * Uses the runtime's cliCommand + authCommand (e.g. `claude auth login`).
+   * Captures auth URLs from output and opens them in the system browser.
+   * On macOS with Docker mode, syncs Keychain → file for container access.
    */
-  ipcMain.handle('auth:login', async (_e, runtime: string) => {
-    if (runtime !== 'claude-code') {
-      return { success: false, error: `OAuth not yet supported for "${runtime}"` };
+  ipcMain.handle('auth:login', async (_e, runtimeId: string) => {
+    const runtime = runtimeRegistry.get(runtimeId);
+    if (!runtime) return { success: false, error: `Unknown runtime: ${runtimeId}` };
+
+    const { authCommand, cliCommand } = runtime.metadata;
+    if (!authCommand || authCommand.length === 0) {
+      return { success: false, error: `${runtime.metadata.displayName} does not support interactive login` };
     }
 
-    const command = 'claude';
-    const args = ['auth', 'login'];
+    const command = cliCommand;
+    const args = authCommand;
 
-    log.info(`Starting OAuth login: ${command} ${args.join(' ')}`);
+    log.info(`Starting auth login: ${command} ${args.join(' ')} (runtime: ${runtimeId})`);
 
     const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
       const proc = spawn(command, args, {
@@ -44,7 +97,9 @@ export function registerAuthHandlers(deps: AuthHandlerDeps): void {
         const urls = text.match(/https?:\/\/[^\s"'<>]+/g);
         if (!urls) return;
         for (const url of urls) {
-          if (url.includes('anthropic') || url.includes('claude') || url.includes('oauth')) {
+          // Open any URL that looks like an auth/login redirect
+          if (url.includes('oauth') || url.includes('auth') || url.includes('login')
+              || url.includes('anthropic') || url.includes('cursor') || url.includes('openai')) {
             shell.openExternal(url);
             urlOpened = true;
             log.info(`Opened auth URL in browser: ${url.slice(0, 80)}...`);
@@ -88,76 +143,95 @@ export function registerAuthHandlers(deps: AuthHandlerDeps): void {
 
     if (!result.success) return result;
 
-    // On macOS: sync Keychain → .credentials.json so Docker containers can read them.
-    // Claude Code stores tokens in macOS Keychain ("Claude Code-credentials"),
-    // but containers only have access to the bind-mounted ~/.claude directory.
-    if (process.platform === 'darwin' && deps.getSandboxTier() === 'docker') {
-      try {
-        const keychainData = execFileSync('security', [
-          'find-generic-password', '-s', 'Claude Code-credentials', '-w',
-        ], { encoding: 'utf-8', timeout: 5000 }).trim();
-
-        if (keychainData) {
-          const credPath = join(homedir(), '.claude', '.credentials.json');
-          await writeFile(credPath, keychainData, { mode: 0o600 });
-          log.info('Synced credentials from Keychain → .credentials.json for container access');
-        }
-      } catch (err) {
-        log.warn(`Failed to sync Keychain to .credentials.json: ${String(err)}`);
-        // Not fatal — login still succeeded on host
-      }
+    // On macOS + Docker: sync Keychain → .credentials.json for container access
+    if (runtimeId === 'claude-code' && process.platform === 'darwin' && deps.getSandboxTier() === 'docker') {
+      await syncClaudeKeychain();
     }
 
     return { success: true };
   });
 
-  /** Check authentication status by reading the credentials file. */
-  ipcMain.handle('auth:status', async (_e, runtime: string) => {
-    if (runtime !== 'claude-code') {
-      return { authenticated: false };
-    }
+  /**
+   * Set an API key for a runtime. Stores in encrypted AppStore and makes
+   * it available as an env var (via the runtime's authEnvVar) at spawn time.
+   */
+  ipcMain.handle('auth:setApiKey', async (_e, runtimeId: string, apiKey: string) => {
+    const runtime = runtimeRegistry.get(runtimeId);
+    if (!runtime) return { success: false, error: `Unknown runtime: ${runtimeId}` };
 
-    try {
-      const credPath = join(homedir(), '.claude', '.credentials.json');
-      const content = await readFile(credPath, 'utf-8');
-      const creds = JSON.parse(content);
+    const envVar = runtime.metadata.authEnvVar;
+    if (!envVar) return { success: false, error: `${runtime.metadata.displayName} does not accept API keys` };
 
-      if (creds.claudeAiOauth?.accessToken) {
-        const expiresAt = creds.claudeAiOauth.expiresAt;
-        const expired = expiresAt ? Date.now() > expiresAt : false;
-        return { authenticated: true, expired };
-      }
-      return { authenticated: false };
-    } catch {
-      return { authenticated: false };
-    }
+    // Store as a secret so it gets redacted from agent output
+    appStore.setSecret(`runtime-${runtimeId}`, `${runtime.metadata.displayName} API Key`, 'api-key', apiKey);
+    log.info(`API key set for ${runtimeId} (env: ${envVar})`);
+    return { success: true, envVar };
   });
 
-  /**
-   * Force-sync Keychain credentials to .credentials.json (macOS only).
-   * Useful when the user has already authenticated on the host but the
-   * credentials file is stale or missing.
-   */
+  /** Remove a stored API key for a runtime */
+  ipcMain.handle('auth:removeApiKey', async (_e, runtimeId: string) => {
+    appStore.deleteSecret(`runtime-${runtimeId}`);
+    log.info(`API key removed for ${runtimeId}`);
+    return { success: true };
+  });
+
+  /** Check auth status for all runtimes at once */
+  ipcMain.handle('auth:statusAll', async () => {
+    const home = homedir();
+    const runtimes = runtimeRegistry.listMetadata();
+    const results: Array<{
+      runtimeId: string;
+      displayName: string;
+      authType: string;
+      authEnvVar?: string;
+      hasAuthCommand: boolean;
+      authenticated: boolean;
+      expired?: boolean;
+      hasApiKey: boolean;
+    }> = [];
+
+    for (const meta of runtimes) {
+      const status = await checkRuntimeAuth(meta.id, home);
+      const hasApiKey = appStore.getApiKey(`secret:runtime-${meta.id}`) !== null;
+      results.push({
+        runtimeId: meta.id,
+        displayName: meta.displayName,
+        authType: meta.authType,
+        authEnvVar: meta.authEnvVar,
+        hasAuthCommand: !!meta.authCommand && meta.authCommand.length > 0,
+        authenticated: status.authenticated || hasApiKey,
+        expired: status.expired,
+        hasApiKey,
+      });
+    }
+
+    return results;
+  });
+
+  /** Force-sync Keychain → .credentials.json (macOS + Claude Code only) */
   ipcMain.handle('auth:syncCredentials', async () => {
     if (process.platform !== 'darwin') {
       return { success: true, message: 'No sync needed on this platform' };
     }
-
-    try {
-      const keychainData = execFileSync('security', [
-        'find-generic-password', '-s', 'Claude Code-credentials', '-w',
-      ], { encoding: 'utf-8', timeout: 5000 }).trim();
-
-      if (!keychainData) {
-        return { success: false, error: 'No credentials found in Keychain' };
-      }
-
-      const credPath = join(homedir(), '.claude', '.credentials.json');
-      await writeFile(credPath, keychainData, { mode: 0o600 });
-      log.info('Synced credentials from Keychain → .credentials.json');
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: String(err) };
-    }
+    return syncClaudeKeychain();
   });
+}
+
+async function syncClaudeKeychain(): Promise<{ success: boolean; error?: string }> {
+  try {
+    const keychainData = execFileSync('security', [
+      'find-generic-password', '-s', 'Claude Code-credentials', '-w',
+    ], { encoding: 'utf-8', timeout: 5000 }).trim();
+
+    if (!keychainData) {
+      return { success: false, error: 'No credentials found in Keychain' };
+    }
+
+    const credPath = join(homedir(), '.claude', '.credentials.json');
+    await writeFile(credPath, keychainData, { mode: 0o600 });
+    log.info('Synced credentials from Keychain → .credentials.json');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  }
 }

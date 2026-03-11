@@ -30,6 +30,9 @@ export class RuntimeRegistry {
       supportsFullAccess: r.metadata.supportsFullAccess,
       nodeVersionRequired: r.metadata.nodeVersionRequired,
       authHint: r.metadata.getAuthHint(),
+      authType: r.metadata.authType,
+      authEnvVar: r.metadata.authEnvVar,
+      authCommand: r.metadata.authCommand,
     }));
   }
 

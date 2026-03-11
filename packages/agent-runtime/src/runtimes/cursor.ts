@@ -37,6 +37,9 @@ export class CursorRuntime extends BaseAgentRuntime {
     },
     supportsFullAccess: true,
     getAuthHint: () => 'Run "cursor-agent" in your terminal to authenticate',
+    authType: 'oauth',
+    authEnvVar: 'CURSOR_API_KEY',
+    authCommand: ['auth', 'login'],
   };
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {

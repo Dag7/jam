@@ -442,8 +442,19 @@ export interface JamAPI {
   };
 
   auth: {
-    login: (runtime: string) => Promise<{ success: boolean; error?: string }>;
-    status: (runtime: string) => Promise<{ authenticated: boolean; expired?: boolean }>;
+    login: (runtimeId: string) => Promise<{ success: boolean; error?: string }>;
+    setApiKey: (runtimeId: string, apiKey: string) => Promise<{ success: boolean; envVar?: string; error?: string }>;
+    removeApiKey: (runtimeId: string) => Promise<{ success: boolean }>;
+    statusAll: () => Promise<Array<{
+      runtimeId: string;
+      displayName: string;
+      authType: string;
+      authEnvVar?: string;
+      hasAuthCommand: boolean;
+      authenticated: boolean;
+      expired?: boolean;
+      hasApiKey: boolean;
+    }>>;
     syncCredentials: () => Promise<{ success: boolean; error?: string; message?: string }>;
   };
 
@@ -679,8 +690,10 @@ contextBridge.exposeInMainWorld('jam', {
   },
 
   auth: {
-    login: (runtime: string) => ipcRenderer.invoke('auth:login', runtime),
-    status: (runtime: string) => ipcRenderer.invoke('auth:status', runtime),
+    login: (runtimeId: string) => ipcRenderer.invoke('auth:login', runtimeId),
+    setApiKey: (runtimeId: string, apiKey: string) => ipcRenderer.invoke('auth:setApiKey', runtimeId, apiKey),
+    removeApiKey: (runtimeId: string) => ipcRenderer.invoke('auth:removeApiKey', runtimeId),
+    statusAll: () => ipcRenderer.invoke('auth:statusAll'),
     syncCredentials: () => ipcRenderer.invoke('auth:syncCredentials'),
   },
 

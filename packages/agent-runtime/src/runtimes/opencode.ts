@@ -34,6 +34,8 @@ export class OpenCodeRuntime extends BaseAgentRuntime {
       return existsSync(`${homedir}/.opencode/config.json`);
     },
     getAuthHint: () => 'Run "opencode" in your terminal to configure',
+    authType: 'config',
+    authEnvVar: 'ANTHROPIC_API_KEY',
   };
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {

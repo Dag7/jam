@@ -319,6 +319,8 @@ function registerIpcHandlers(): void {
       : null,
   });
   registerAuthHandlers({
+    runtimeRegistry: orchestrator.runtimeRegistry,
+    appStore: orchestrator.appStore,
     getSandboxTier: () => orchestrator.config.sandboxTier,
   });
 

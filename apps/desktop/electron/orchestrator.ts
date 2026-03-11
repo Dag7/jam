@@ -417,7 +417,7 @@ export class Orchestrator {
       contextBuilder,
       taskTracker,
       (bindings) => this.appStore.resolveSecretBindings(bindings),
-      () => this.appStore.getAllSecretValues(),
+      () => [...this.appStore.getAllSecretValues(), ...this.getOAuthTokenValues()],
       sharedSkillsDir,
       this.statsStore,
     );
@@ -814,6 +814,26 @@ export class Orchestrator {
   }
 
   /** Safely send IPC to renderer — guards against destroyed window during HMR */
+  /** Extract OAuth token values from credential files for redaction.
+   *  Prevents agents from leaking access/refresh tokens in their output. */
+  private getOAuthTokenValues(): string[] {
+    const tokens: string[] = [];
+    try {
+      const credPath = join(homedir(), '.claude', '.credentials.json');
+      if (existsSync(credPath)) {
+        const content = readFileSync(credPath, 'utf-8');
+        const creds = JSON.parse(content);
+        if (creds.claudeAiOauth?.accessToken) tokens.push(creds.claudeAiOauth.accessToken);
+        if (creds.claudeAiOauth?.refreshToken) tokens.push(creds.claudeAiOauth.refreshToken);
+      }
+    } catch { /* best-effort */ }
+    // Also redact any ANTHROPIC_API_KEY / OPENAI_API_KEY from process.env
+    for (const envVar of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'CURSOR_API_KEY']) {
+      if (process.env[envVar]) tokens.push(process.env[envVar]!);
+    }
+    return tokens;
+  }
+
   private sendToRenderer(channel: string, data: unknown): void {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       try {

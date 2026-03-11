@@ -14,6 +14,7 @@ function createMockRuntime(id: string, overrides?: Partial<RuntimeMetadata>): IA
       supportsFullAccess: false,
       detectAuth: () => true,
       getAuthHint: () => `Configure ${id}`,
+      authType: 'api-key' as const,
       ...overrides,
     },
     buildSpawnConfig: () => ({ command: id, args: [], env: {} }),
@@ -92,6 +93,9 @@ describe('RuntimeRegistry', () => {
       supportsFullAccess: true,
       nodeVersionRequired: undefined,
       authHint: 'Configure claude',
+      authType: 'api-key',
+      authEnvVar: undefined,
+      authCommand: undefined,
     });
     // Ensure no functions leaked into serialized form
     expect(typeof meta[0].authHint).toBe('string');

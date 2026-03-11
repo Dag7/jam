@@ -41,6 +41,8 @@ export class CodexCLIRuntime extends BaseAgentRuntime {
         !!process.env.OPENAI_API_KEY;
     },
     getAuthHint: () => 'Set OPENAI_API_KEY or run "codex" to configure',
+    authType: 'api-key',
+    authEnvVar: 'OPENAI_API_KEY',
   };
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {

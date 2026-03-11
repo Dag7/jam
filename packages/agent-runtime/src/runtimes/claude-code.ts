@@ -40,6 +40,9 @@ export class ClaudeCodeRuntime extends BaseAgentRuntime {
           readdirSync(`${claudeDir}/projects`).length > 0);
     },
     getAuthHint: () => 'Run "claude" in your terminal to authenticate via browser',
+    authType: 'oauth',
+    authEnvVar: 'ANTHROPIC_API_KEY',
+    authCommand: ['auth', 'login'],
   };
 
   buildSpawnConfig(profile: AgentProfile): SpawnConfig {

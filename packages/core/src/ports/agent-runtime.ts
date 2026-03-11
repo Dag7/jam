@@ -58,6 +58,9 @@ export interface RuntimeModel {
   group: string;
 }
 
+/** How a runtime authenticates: OAuth flow, API key env var, or local config file */
+export type RuntimeAuthType = 'oauth' | 'api-key' | 'config';
+
 /** Self-describing metadata for a runtime — used by UI, onboarding, and setup detection */
 export interface RuntimeMetadata {
   id: string;
@@ -69,6 +72,13 @@ export interface RuntimeMetadata {
   nodeVersionRequired?: number;
   detectAuth(homedir: string): boolean;
   getAuthHint(): string;
+  /** Primary auth method: 'oauth' (browser login), 'api-key' (env var), 'config' (local file) */
+  authType: RuntimeAuthType;
+  /** Env var name for API key auth (e.g. 'OPENAI_API_KEY'). Runtimes that accept an API key
+   *  should set this even if authType is 'oauth' (as an alternative auth path). */
+  authEnvVar?: string;
+  /** CLI args for interactive login (e.g. ['auth', 'login']). Appended to cliCommand. */
+  authCommand?: string[];
 }
 
 /** Serializable subset of RuntimeMetadata (no functions) for IPC transport */
@@ -81,6 +91,9 @@ export interface SerializedRuntimeMetadata {
   supportsFullAccess?: boolean;
   nodeVersionRequired?: number;
   authHint: string;
+  authType: RuntimeAuthType;
+  authEnvVar?: string;
+  authCommand?: string[];
 }
 
 export interface IAgentRuntime {
