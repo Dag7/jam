@@ -28,6 +28,7 @@ import { registerTaskHandlers } from './ipc/task-handlers';
 import { registerTeamHandlers } from './ipc/team-handlers';
 import { registerBrainHandlers } from './ipc/brain-handlers';
 import { registerSandboxHandlers } from './ipc/sandbox-handlers';
+import { registerAuthHandlers } from './ipc/auth-handlers';
 
 const log = createLogger('Main');
 
@@ -316,6 +317,9 @@ function registerIpcHandlers(): void {
     desktopPortResolver: orchestrator.containerManager && 'getNoVncPort' in orchestrator.containerManager
       ? orchestrator.containerManager as unknown as { getNoVncPort(agentId: string): number | undefined }
       : null,
+  });
+  registerAuthHandlers({
+    getSandboxTier: () => orchestrator.config.sandboxTier,
   });
 
   // App + Logs (trivial, kept inline)

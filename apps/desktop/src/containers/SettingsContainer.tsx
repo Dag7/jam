@@ -33,10 +33,13 @@ interface WorktreeSettings {
   worktreeDir: string;
 }
 
+type AgentExecution = 'host' | 'container';
+
 interface SandboxDockerSettings {
   containerExitBehavior: ContainerExitBehavior;
   computerUseEnabled: boolean;
   computerUseResolution: string;
+  agentExecution: AgentExecution;
 }
 
 interface BrainConfig {
@@ -93,7 +96,7 @@ const DEFAULT_CONFIG: Config = {
     denyWrite: ['.env', '*.pem', '*.key'],
   },
   worktree: { autoCreate: true, worktreeDir: '.jam-worktrees' },
-  sandbox: { containerExitBehavior: 'stop', computerUseEnabled: false, computerUseResolution: '1920x1080' },
+  sandbox: { containerExitBehavior: 'stop', computerUseEnabled: false, computerUseResolution: '1920x1080', agentExecution: 'container' },
   brain: { enabled: false, url: 'http://localhost:8080' },
 };
 
@@ -120,12 +123,13 @@ export const SettingsContainer: React.FC<{
     window.jam.config.get().then((c) => {
       const loaded = c as unknown as Partial<Config> & { sandbox?: Record<string, unknown> };
       // Map nested computerUse back to flat keys for UI
-      const sandboxLoaded = loaded.sandbox ?? {};
+      const sandboxLoaded = loaded.sandbox ?? {} as typeof loaded.sandbox & { computerUse?: Record<string, unknown> };
       const computerUse = sandboxLoaded.computerUse as { enabled?: boolean; resolution?: string } | undefined;
       const dockerSettings: Partial<SandboxDockerSettings> = {
         containerExitBehavior: sandboxLoaded.containerExitBehavior as ContainerExitBehavior | undefined,
         computerUseEnabled: computerUse?.enabled ?? (sandboxLoaded.computerUseEnabled as boolean | undefined) ?? false,
         computerUseResolution: computerUse?.resolution ?? (sandboxLoaded.computerUseResolution as string | undefined) ?? '1920x1080',
+        agentExecution: (sandboxLoaded.agentExecution as AgentExecution | undefined) ?? 'container',
       };
       setConfig((prev) => ({
         ...prev,

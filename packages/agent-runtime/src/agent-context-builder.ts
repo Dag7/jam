@@ -31,14 +31,18 @@ const SKILLS_DIR = 'skills';
 const SOUL_FILE = 'SOUL.md';
 
 export interface ExecutionEnvironment {
-  /** 'sandbox' = Docker container, 'host' = native on user's machine */
-  mode: 'sandbox' | 'host';
+  /** 'sandbox' = agent inside Docker, 'host' = no sandbox, 'docker-host' = agent on host with Docker services */
+  mode: 'sandbox' | 'host' | 'docker-host';
   /** Container workspace path (e.g. /workspace) — only relevant in sandbox mode */
   containerWorkdir?: string;
   /** Host bridge URL for sandbox agents to call host operations */
   hostBridgeUrl?: string;
   /** Paths mounted into the container */
   mounts?: { containerPath: string; description: string; readOnly?: boolean }[];
+  /** For docker-host mode: URLs to reach container services from the host */
+  containerServiceUrls?: { computerUse?: string; noVnc?: string };
+  /** Docker container name (e.g. "jam-charlie") — for docker-host mode */
+  containerName?: string;
 }
 
 export class AgentContextBuilder {
@@ -329,8 +333,32 @@ export class AgentContextBuilder {
       }
       envLines.push('--- END EXECUTION ENVIRONMENT ---');
       sections.push(envLines.join('\n'));
+    } else if (this.executionEnv.mode === 'docker-host') {
+      // Agent runs on host, but has a Docker container running services
+      if (profile.cwd) {
+        sections.push(
+          `Your workspace directory is: ${profile.cwd}`,
+          'All files you create should be placed in this directory unless the user specifies otherwise.',
+        );
+      }
+      const envLines = [
+        '--- EXECUTION ENVIRONMENT ---',
+        'You are running on the host machine with Docker container services.',
+        'Your Bash tool executes on the host natively.',
+      ];
+      if (this.executionEnv.containerName) {
+        envLines.push(
+          `Docker container "${this.executionEnv.containerName}" is running services for you.`,
+          `To run commands inside the container: docker exec ${this.executionEnv.containerName} <command>`,
+        );
+      }
+      if (this.executionEnv.containerServiceUrls?.computerUse) {
+        envLines.push(`Virtual desktop API: ${this.executionEnv.containerServiceUrls.computerUse}`);
+      }
+      envLines.push('--- END EXECUTION ENVIRONMENT ---');
+      sections.push(envLines.join('\n'));
     } else {
-      // Host mode — show the actual host path
+      // Plain host mode — no Docker at all
       if (profile.cwd) {
         sections.push(
           `Your workspace directory is: ${profile.cwd}`,

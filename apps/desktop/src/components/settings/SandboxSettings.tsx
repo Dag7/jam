@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 type SandboxTier = 'none' | 'os' | 'docker';
 type ContainerExitBehavior = 'stop' | 'delete' | 'keep-running';
+type AgentExecution = 'host' | 'container';
 
 interface OsSandboxConfig {
   enabled: boolean;
@@ -20,6 +21,7 @@ interface DockerConfig {
   containerExitBehavior: ContainerExitBehavior;
   computerUseEnabled: boolean;
   computerUseResolution: string;
+  agentExecution: AgentExecution;
 }
 
 interface SandboxSettingsProps {
@@ -55,6 +57,55 @@ export const SandboxSettings: React.FC<SandboxSettingsProps> = ({
   onWorktreeChange,
   onDockerChange,
 }) => {
+  const [authStatus, setAuthStatus] = useState<{ authenticated: boolean; expired?: boolean } | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+
+  const checkAuthStatus = useCallback(async () => {
+    const status = await window.jam.auth.status('claude-code');
+    setAuthStatus(status);
+  }, []);
+
+  useEffect(() => {
+    if (sandboxTier === 'docker') {
+      checkAuthStatus();
+    }
+  }, [sandboxTier, checkAuthStatus]);
+
+  const handleLogin = async () => {
+    setAuthLoading(true);
+    setAuthError(null);
+    try {
+      const result = await window.jam.auth.login('claude-code');
+      if (result.success) {
+        await checkAuthStatus();
+      } else {
+        setAuthError(result.error ?? 'Login failed');
+      }
+    } catch (err) {
+      setAuthError(String(err));
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSyncCredentials = async () => {
+    setSyncLoading(true);
+    setAuthError(null);
+    try {
+      const result = await window.jam.auth.syncCredentials();
+      if (result.success) {
+        await checkAuthStatus();
+      } else {
+        setAuthError(result.error ?? 'Sync failed');
+      }
+    } catch (err) {
+      setAuthError(String(err));
+    } finally {
+      setSyncLoading(false);
+    }
+  };
   return (
     <section>
       <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
@@ -152,6 +203,34 @@ export const SandboxSettings: React.FC<SandboxSettingsProps> = ({
               </p>
             </div>
 
+            {/* Agent Execution Mode */}
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Agent Execution</label>
+              <div className="flex gap-1">
+                {([
+                  { id: 'container' as AgentExecution, label: 'Container', desc: 'Full isolation — agent CLI runs inside Docker container' },
+                  { id: 'host' as AgentExecution, label: 'Host', desc: 'Semi isolation — agent runs natively, container provides services' },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => onDockerChange({ agentExecution: opt.id })}
+                    className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                      docker.agentExecution === opt.id
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-zinc-600 mt-1">
+                {docker.agentExecution === 'host'
+                  ? 'Agent runs natively on host — container provides services (desktop, web servers)'
+                  : 'Agent runs inside Docker container — full process and filesystem isolation'}
+              </p>
+            </div>
+
             {/* Computer Use */}
             <div className="pt-3 border-t border-zinc-700/50">
               <div className="flex items-center justify-between">
@@ -185,6 +264,53 @@ export const SandboxSettings: React.FC<SandboxSettingsProps> = ({
                     <option value="2560x1440">2560x1440</option>
                   </select>
                 </div>
+              )}
+            </div>
+
+            {/* Runtime Authentication */}
+            <div className="pt-3 border-t border-zinc-700/50">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <label className="block text-xs text-zinc-400">Runtime Authentication</label>
+                  <p className="text-[10px] text-zinc-600">
+                    OAuth login for agent runtimes running in containers
+                  </p>
+                </div>
+                {authStatus && (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    authStatus.authenticated && !authStatus.expired
+                      ? 'bg-green-900/50 text-green-400'
+                      : authStatus.expired
+                        ? 'bg-yellow-900/50 text-yellow-400'
+                        : 'bg-red-900/50 text-red-400'
+                  }`}>
+                    {authStatus.authenticated && !authStatus.expired
+                      ? 'authenticated'
+                      : authStatus.expired
+                        ? 'expired'
+                        : 'not authenticated'}
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleLogin}
+                  disabled={authLoading}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors bg-zinc-800 border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {authLoading ? 'Authenticating...' : 'Login with OAuth'}
+                </button>
+                <button
+                  onClick={handleSyncCredentials}
+                  disabled={syncLoading}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Sync host Keychain credentials to file for container access"
+                >
+                  {syncLoading ? 'Syncing...' : 'Sync Credentials'}
+                </button>
+              </div>
+              {authError && (
+                <p className="text-[10px] text-red-400 mt-1">{authError}</p>
               )}
             </div>
           </div>

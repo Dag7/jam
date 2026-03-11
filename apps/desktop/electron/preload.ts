@@ -325,6 +325,9 @@ export interface JamAPI {
         command: string;
       }) => void,
     ) => () => void;
+    onSystemNotification: (
+      callback: (data: { agentId: string; message: string }) => void,
+    ) => () => void;
   };
 
   tasks: {
@@ -342,6 +345,7 @@ export interface JamAPI {
       updates: Record<string, unknown>,
     ) => Promise<{ success: boolean; task?: Record<string, unknown>; error?: string }>;
     delete: (taskId: string) => Promise<{ success: boolean; error?: string }>;
+    cancel: (taskId: string) => Promise<{ success: boolean; error?: string }>;
     createRecurring: (input: {
       title: string;
       description: string;
@@ -435,6 +439,12 @@ export interface JamAPI {
       read: (topic: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
       publish: (agentId: string, topic: string, artifact: Record<string, unknown>) => Promise<{ success: boolean; artifact?: Record<string, unknown>; error?: string }>;
     };
+  };
+
+  auth: {
+    login: (runtime: string) => Promise<{ success: boolean; error?: string }>;
+    status: (runtime: string) => Promise<{ authenticated: boolean; expired?: boolean }>;
+    syncCredentials: () => Promise<{ success: boolean; error?: string; message?: string }>;
   };
 
   sandbox: {
@@ -666,6 +676,12 @@ contextBridge.exposeInMainWorld('jam', {
       read: (topic, limit) => ipcRenderer.invoke('blackboard:read', topic, limit),
       publish: (agentId, topic, artifact) => ipcRenderer.invoke('blackboard:publish', agentId, topic, artifact),
     },
+  },
+
+  auth: {
+    login: (runtime: string) => ipcRenderer.invoke('auth:login', runtime),
+    status: (runtime: string) => ipcRenderer.invoke('auth:status', runtime),
+    syncCredentials: () => ipcRenderer.invoke('auth:syncCredentials'),
   },
 
   sandbox: {

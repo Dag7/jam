@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -54,6 +54,12 @@ export class ContainerManager implements IContainerManager {
     // If container already exists, return it
     const existing = this.containers.get(agentId);
     if (existing && existing.status === 'running') {
+      // For desktop containers (reclaimed or reused), verify the computer-use
+      // server is still reachable — it may have crashed or not yet started after
+      // a container reclaim (hot-reload).
+      if (existing.portMappings.has(COMPUTER_USE_CONTAINER_PORT)) {
+        await this.waitForComputerUse(existing.containerId, COMPUTER_USE_CONTAINER_PORT);
+      }
       return existing;
     }
 
@@ -86,28 +92,36 @@ export class ContainerManager implements IContainerManager {
 
     // Auto-detect common credential directories
     // Container runs as 'agent' user (home = /home/agent), not root
+    // These are read-write so agent CLIs can refresh tokens, save sessions, etc.
     const home = homedir();
     const agentHome = '/home/agent';
+    // Note: ~/.claude.json is NOT mounted — single-file Docker bind mounts get stale
+    // when the host atomically rewrites the file (new inode). Claude Code recreates it.
     const credentialDirs = [
       { host: join(home, '.claude'), container: `${agentHome}/.claude` },
-      { host: join(home, '.claude.json'), container: `${agentHome}/.claude.json` },
       { host: join(home, '.config', 'opencode'), container: `${agentHome}/.config/opencode` },
+      { host: join(home, '.codex'), container: `${agentHome}/.codex` },
+      { host: join(home, '.cursor-agent'), container: `${agentHome}/.cursor-agent` },
     ];
     for (const cred of credentialDirs) {
       try {
         const { existsSync } = await import('node:fs');
         if (existsSync(cred.host)) {
-          volumes.push({ hostPath: cred.host, containerPath: cred.container, readOnly: true });
+          volumes.push({ hostPath: cred.host, containerPath: cred.container });
         }
       } catch { /* skip if not accessible */ }
     }
 
-    // Desktop containers: add noVNC port mapping (replaces last standard port)
+    // Desktop containers: replace standard port slots with well-known desktop ports
     // Must happen BEFORE creating the ContainerInfo Map snapshot
-    if (isDesktop && this.config.computerUse.noVncEnabled) {
-      const lastMapping = portMappings[portMappings.length - 1];
-      if (lastMapping) {
-        lastMapping.containerPort = NOVNC_CONTAINER_PORT;
+    if (isDesktop) {
+      // Computer-use API (3100) — replace second-to-last slot
+      if (portMappings.length >= 2) {
+        portMappings[portMappings.length - 2].containerPort = COMPUTER_USE_CONTAINER_PORT;
+      }
+      // noVNC viewer (6080) — replace last slot
+      if (this.config.computerUse.noVncEnabled && portMappings.length >= 1) {
+        portMappings[portMappings.length - 1].containerPort = NOVNC_CONTAINER_PORT;
       }
     }
 
@@ -249,28 +263,49 @@ export class ContainerManager implements IContainerManager {
   }
 
   /** Wait for the computer-use HTTP server inside a desktop container to be ready.
-   *  Non-blocking: spawns a single `docker exec` that polls internally, resolves on exit. */
-  private waitForComputerUse(containerId: string, port: number): Promise<void> {
+   *  If the server is not responding, attempt to restart it (handles reclaimed
+   *  containers where the server may have crashed). */
+  private async waitForComputerUse(containerId: string, port: number): Promise<void> {
+    const ready = await this.pollComputerUse(containerId, port, 10);
+    if (ready) return;
+
+    // Server not responding — try restarting it (e.g. reclaimed container where it crashed)
+    log.warn('Computer-use server not responding — attempting restart');
+    try {
+      execFileSync('docker', [
+        'exec', '-d', containerId, 'sh', '-c',
+        `cd /opt/computer-use && npx tsx src/cli.ts --port ${port} --display 99 &`,
+      ], { timeout: 5000, stdio: 'ignore' });
+    } catch {
+      log.warn('Failed to restart computer-use server');
+    }
+
+    // Wait again after restart attempt
+    const readyAfterRestart = await this.pollComputerUse(containerId, port, 20);
+    if (!readyAfterRestart) {
+      log.warn('Computer-use server did not become ready after restart — agent will start anyway');
+    }
+  }
+
+  /** Poll the computer-use server inside a container. Returns true if it responds. */
+  private pollComputerUse(containerId: string, port: number, attempts: number): Promise<boolean> {
     return new Promise((resolve) => {
       const proc = spawn('docker', [
         'exec', containerId, 'sh', '-c',
-        `for i in $(seq 1 30); do curl -sf http://127.0.0.1:${port}/status >/dev/null 2>&1 && exit 0; sleep 0.5; done; exit 1`,
+        `for i in $(seq 1 ${attempts}); do curl -sf http://127.0.0.1:${port}/status >/dev/null 2>&1 && exit 0; sleep 0.5; done; exit 1`,
       ], { stdio: 'ignore' });
 
       const timeout = setTimeout(() => {
         proc.kill();
-        log.warn('Computer-use readiness check timed out — agent will start anyway');
-        resolve();
-      }, 20_000);
+        resolve(false);
+      }, (attempts + 2) * 500);
 
       proc.on('close', (code) => {
         clearTimeout(timeout);
         if (code === 0) {
           log.info('Computer-use server ready');
-        } else {
-          log.warn('Computer-use server did not become ready — agent will start anyway');
         }
-        resolve();
+        resolve(code === 0);
       });
     });
   }

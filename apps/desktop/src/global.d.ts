@@ -470,6 +470,12 @@ export interface JamAPI {
     };
   };
 
+  auth: {
+    login: (runtime: string) => Promise<{ success: boolean; error?: string }>;
+    status: (runtime: string) => Promise<{ authenticated: boolean; expired?: boolean }>;
+    syncCredentials: () => Promise<{ success: boolean; error?: string; message?: string }>;
+  };
+
   sandbox: {
     getTier: () => Promise<string>;
     listWorktrees: () => Promise<Array<{

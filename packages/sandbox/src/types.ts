@@ -5,6 +5,9 @@ export type ContainerExitBehavior = 'stop' | 'delete' | 'keep-running';
 
 export type NetworkPolicy = 'unrestricted' | 'host-bridge-only';
 
+/** Where agent CLI processes run when Docker sandbox is active */
+export type AgentExecution = 'host' | 'container';
+
 /** Virtual desktop configuration for computer-use agents */
 export interface ComputerUseConfig {
   /** Enable virtual desktop in Docker containers (default: false) */
@@ -46,6 +49,8 @@ export interface SandboxConfig {
   auditLogPath: string;
   /** Virtual desktop configuration for computer-use agents */
   computerUse: ComputerUseConfig;
+  /** Where agent CLI runs: 'container' (full isolation via docker exec) or 'host' (native, services in container) */
+  agentExecution: AgentExecution;
 }
 
 export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
@@ -68,4 +73,5 @@ export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
     resolution: '1920x1080',
     noVncEnabled: true,
   },
+  agentExecution: 'container',
 };

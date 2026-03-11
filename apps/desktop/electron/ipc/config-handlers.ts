@@ -39,13 +39,13 @@ export function registerConfigHandlers(deps: ConfigHandlerDeps): void {
     for (const key of Object.keys(sanitized)) {
       const val = sanitized[key];
       if (val && typeof val === 'object' && !Array.isArray(val) && key in config) {
-        const existing = (config as Record<string, unknown>)[key];
+        const existing = (config as unknown as Record<string, unknown>)[key];
         if (existing && typeof existing === 'object' && !Array.isArray(existing)) {
-          (config as Record<string, unknown>)[key] = { ...existing, ...val };
+          (config as unknown as Record<string, unknown>)[key] = { ...existing, ...val };
           continue;
         }
       }
-      (config as Record<string, unknown>)[key] = val;
+      (config as unknown as Record<string, unknown>)[key] = val;
     }
     saveConfig(config);
     initVoice();

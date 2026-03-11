@@ -214,17 +214,37 @@ export class Orchestrator {
     log.info(`Sandbox tier: ${sandboxTier}`);
 
     if (sandboxTier === 'docker') {
-      // Docker sandbox — full container isolation
+      // Docker sandbox — container always runs (services + optional agent isolation)
       const docker = new DockerClient();
       this.docker = docker;
       if (docker.isAvailable()) {
-        log.info('Docker available — enabling container sandbox mode');
+        const agentExecution = this.config.sandbox.agentExecution ?? 'container';
+        log.info(`Docker available — agent execution: ${agentExecution}`);
         this.portAllocator = new PortAllocator(
           this.config.sandbox.portRangeStart,
           this.config.sandbox.portsPerAgent,
         );
         this.containerManager = new ContainerManager(docker, this.portAllocator, this.config.sandbox);
-        this.ptyManager = new SandboxedPtyManager(this.containerManager, docker);
+
+        // PTY manager: 'container' → docker exec -it, 'host' → native zsh
+        if (agentExecution === 'host') {
+          this.ptyManager = new PtyManager();
+          log.info('Semi-isolation: agent CLI runs on host, services in Docker container');
+        } else {
+          this.ptyManager = new SandboxedPtyManager(this.containerManager, docker);
+          log.info('Full isolation: agent CLI runs inside Docker container');
+
+          // Set Docker executor for one-shot execute() calls (voiceCommand, tasks).
+          // Without this, runtime.execute() spawns directly on the host, bypassing the container.
+          const cm = this.containerManager;
+          const dockerForExecute = docker;
+          BaseAgentRuntime.setDockerExecutor((agentId, command, args, env) => {
+            const containerId = cm.getContainerId(agentId);
+            if (!containerId) return null; // No container → fall back to host
+            const execArgs = dockerForExecute.execPipedArgs(containerId, [command, ...args], env);
+            return { command: 'docker', args: execArgs, cwd: '/' };
+          });
+        }
 
         // Reclaim running containers from a previous session (e.g. hot reload)
         this.reclaimedAgentIds = this.containerManager.reclaimExisting();
@@ -259,24 +279,27 @@ export class Orchestrator {
           throw err; // Re-throw so startAutoStartAgents knows the image is NOT ready
         });
 
-        // Start host bridge
-        this.hostBridge = new HostBridge(this.config.sandbox.hostBridgePort, {
-          openExternal: (url) => shell.openExternal(url),
-          readClipboard: () => clipboard.readText(),
-          writeClipboard: (text) => clipboard.writeText(text),
-          openPath: (path) => shell.openPath(path),
-          showNotification: (title, body) => new Notification({ title, body }).show(),
-        });
-        const bridgeToken = randomBytes(32).toString('hex');
-        this.hostBridge.start(bridgeToken).then(({ port }) => {
-          log.info(`Host bridge listening on port ${port}`);
-          this.agentManager.setExtraEnv({
-            JAM_HOST_BRIDGE_URL: `http://host.docker.internal:${port}/bridge`,
-            JAM_HOST_BRIDGE_TOKEN: bridgeToken,
+        // Start host bridge — only needed when agent runs inside the container
+        // (host-mode agents can access host resources directly)
+        if (agentExecution === 'container') {
+          this.hostBridge = new HostBridge(this.config.sandbox.hostBridgePort, {
+            openExternal: (url) => shell.openExternal(url),
+            readClipboard: () => clipboard.readText(),
+            writeClipboard: (text) => clipboard.writeText(text),
+            openPath: (path) => shell.openPath(path),
+            showNotification: (title, body) => new Notification({ title, body }).show(),
           });
-        }).catch((err) => {
-          log.error(`Failed to start host bridge: ${String(err)}`);
-        });
+          const bridgeToken = randomBytes(32).toString('hex');
+          this.hostBridge.start(bridgeToken).then(({ port }) => {
+            log.info(`Host bridge listening on port ${port}`);
+            this.agentManager.setExtraEnv({
+              JAM_HOST_BRIDGE_URL: `http://host.docker.internal:${port}/bridge`,
+              JAM_HOST_BRIDGE_TOKEN: bridgeToken,
+            });
+          }).catch((err) => {
+            log.error(`Failed to start host bridge: ${String(err)}`);
+          });
+        }
       } else {
         log.warn('Docker not available — falling back to native execution');
         this.eventBus.emit('sandbox:unavailable', { reason: 'Docker Desktop is not running or not installed' });
@@ -362,16 +385,26 @@ export class Orchestrator {
 
     // Tell agents whether they're running in sandbox or on host
     if (this.containerManager) {
-      contextBuilder.setExecutionEnvironment({
-        mode: 'sandbox',
-        containerWorkdir: '/workspace',
-        hostBridgeUrl: `http://host.docker.internal:${this.config.sandbox.hostBridgePort}/bridge`,
-        mounts: [
-          { containerPath: '/workspace', description: 'Agent workspace (bind-mounted from host)' },
-          { containerPath: '/shared-skills', description: 'Shared skills directory', readOnly: true },
-          { containerPath: '/home/agent/.claude', description: 'Claude Code credentials', readOnly: true },
-        ],
-      });
+      const agentExecution = this.config.sandbox.agentExecution ?? 'container';
+      if (agentExecution === 'host') {
+        // Semi-isolation: agent runs on host, container provides services
+        contextBuilder.setExecutionEnvironment({
+          mode: 'docker-host',
+          // containerServiceUrls set dynamically in pre-start hook (per-agent port mapping)
+        });
+      } else {
+        // Full isolation: agent runs inside the container
+        contextBuilder.setExecutionEnvironment({
+          mode: 'sandbox',
+          containerWorkdir: '/workspace',
+          hostBridgeUrl: `http://host.docker.internal:${this.config.sandbox.hostBridgePort}/bridge`,
+          mounts: [
+            { containerPath: '/workspace', description: 'Agent workspace (bind-mounted from host)' },
+            { containerPath: '/shared-skills', description: 'Shared skills directory', readOnly: true },
+            { containerPath: '/home/agent/.claude', description: 'Claude Code credentials', readOnly: true },
+          ],
+        });
+      }
     } else {
       contextBuilder.setExecutionEnvironment({ mode: 'host' });
     }
@@ -407,15 +440,52 @@ export class Orchestrator {
       const cm = this.containerManager;
       const pa = this.portAllocator;
 
-      // Pre-start: create container before PTY spawn
+      // Pre-start: create container before PTY spawn (both modes need the container)
+      // createAndStart() already waits for the computer-use server to be ready via
+      // waitForComputerUse() — no extra health check needed here.
+      const agentExec = this.config.sandbox.agentExecution ?? 'container';
       this.agentManager.setPreStartHook(async (agentId, profile) => {
-        await cm.createAndStart({
+        const containerInfo = await cm.createAndStart({
           agentId,
           agentName: profile.name,
           workspacePath: profile.cwd ?? join(homedir(), '.jam', 'agents', profile.name),
           sharedSkillsPath: sharedSkillsDir,
           computerUse: profile.allowComputerUse,
         });
+
+        // When computer-use is enabled in container mode, set DISPLAY so any GUI
+        // processes (including Playwright MCP's browser) render on the virtual desktop.
+        if (profile.allowComputerUse && agentExec === 'container') {
+          profile.env = {
+            ...profile.env,
+            DISPLAY: ':99',
+          };
+          log.info(`Set DISPLAY=:99 for "${profile.name}" (computer-use container agent)`, undefined, agentId);
+        }
+
+        // In docker-host mode, update the execution environment with per-agent container info
+        // and inject the computer-use URL as an env var for the skill to reference
+        if (agentExec === 'host') {
+          const computerUseHostPort = containerInfo.portMappings.get(3100);
+          const noVncHostPort = containerInfo.portMappings.get(6080);
+          const containerName = `jam-${profile.name.toLowerCase().replace(/[^a-z0-9_.-]/g, '-')}`;
+          contextBuilder.setExecutionEnvironment({
+            mode: 'docker-host',
+            containerName,
+            containerServiceUrls: {
+              computerUse: computerUseHostPort ? `http://localhost:${computerUseHostPort}` : undefined,
+              noVnc: noVncHostPort ? `http://localhost:${noVncHostPort}` : undefined,
+            },
+          });
+
+          // Inject per-agent env vars so the skill's $JAM_COMPUTER_USE_URL resolves at runtime
+          if (computerUseHostPort) {
+            profile.env = {
+              ...profile.env,
+              JAM_COMPUTER_USE_URL: `http://localhost:${computerUseHostPort}`,
+            };
+          }
+        }
       });
 
       // Port resolver: map container ports to host ports for health checks
@@ -667,16 +737,24 @@ export class Orchestrator {
     const teamSkill = this.buildTeamCommunicationSkill();
     await writeFile(teamSkillPath, teamSkill, 'utf-8');
 
-    // Host bridge skill — only in Docker sandbox mode (teaches agents how to call host operations)
-    if (this.config.sandboxTier === 'docker' && this.hostBridge) {
+    // Host bridge skill — only when agent runs inside the container (needs bridge to reach host)
+    const agentExecution = this.config.sandbox?.agentExecution ?? 'container';
+    if (this.config.sandboxTier === 'docker' && agentExecution === 'container' && this.hostBridge) {
       const bridgeSkillPath = join(dir, 'host-bridge.md');
       await writeFile(bridgeSkillPath, HOST_BRIDGE_SKILL, 'utf-8');
+    } else {
+      // Remove stale host-bridge skill if switching to host mode
+      const staleBridgePath = join(dir, 'host-bridge.md');
+      await unlink(staleBridgePath).catch(() => {});
     }
 
     // Computer use skill — only when Docker + computer use is globally enabled
     if (this.config.sandboxTier === 'docker' && this.config.sandbox?.computerUse?.enabled) {
       const computerUseSkillPath = join(dir, 'computer-use.md');
-      await writeFile(computerUseSkillPath, COMPUTER_USE_SKILL, 'utf-8');
+      const skillContent = agentExecution === 'host'
+        ? buildComputerUseSkill('host')
+        : buildComputerUseSkill('container');
+      await writeFile(computerUseSkillPath, skillContent, 'utf-8');
     }
   }
 
@@ -1372,6 +1450,7 @@ export class Orchestrator {
     // Do this BEFORE any async work so processes die even if later steps hang.
     this.agentManager.stopAll();
     this.ptyManager.killAll();
+    BaseAgentRuntime.setDockerExecutor(null);
 
     // --- Phase 2: Best-effort async cleanup (timeout-guarded) ---
     // Each operation is individually guarded so a single hang doesn't block everything.
@@ -1753,68 +1832,90 @@ const HOST_BRIDGE_SKILL = [
   '- Always check the response `success` field before assuming the operation worked',
 ].join('\n');
 
-const COMPUTER_USE_SKILL = [
-  '---',
-  'name: computer-use',
-  'description: Control the virtual desktop — screenshots, clicks, typing, browser automation',
-  'triggers: screenshot, click, screen, browser, desktop, window, type text, scroll, gui, ui, button, menu, navigate, launch, computer use, automate, observe, open, url, website, web, page, site, yahoo, google, search',
-  'alwaysInject: true',
-  '---',
-  '',
-  '# Computer Use — Your Sandboxed Virtual Desktop',
-  '',
-  'IMPORTANT: You are running inside an isolated Docker container (Ubuntu Linux).',
-  'Your Bash tool executes commands INSIDE the container — not on the host machine.',
-  'You have your own virtual Linux desktop with a display server, window manager, and browser.',
-  'For ALL browser, GUI, desktop, screenshot, and visual tasks, use the HTTP API below.',
-  'Do NOT use MCP Playwright tools, host bridge openExternal, or any host-side browser.',
-  'Those operate on the HOST machine — your desktop is at 127.0.0.1:3100 inside your sandbox.',
-  '',
-  'You have a virtual Linux desktop. Control it via HTTP API at 127.0.0.1:3100.',
-  '',
-  '## Quick Reference',
-  '',
-  '### Observe (see the full screen state)',
-  '```bash',
-  'curl -s 127.0.0.1:3100/observe | jq',
-  'curl -s 127.0.0.1:3100/screenshot > /tmp/screen.png',
-  'curl -s 127.0.0.1:3100/status | jq',
-  '```',
-  '',
-  '### Click & Type',
-  '```bash',
-  'curl -s -X POST 127.0.0.1:3100/click -H \'Content-Type: application/json\' -d \'{"x":500,"y":300}\'',
-  'curl -s -X POST 127.0.0.1:3100/type -H \'Content-Type: application/json\' -d \'{"text":"hello world"}\'',
-  'curl -s -X POST 127.0.0.1:3100/key -H \'Content-Type: application/json\' -d \'{"key":"ctrl+s"}\'',
-  'curl -s -X POST 127.0.0.1:3100/scroll -H \'Content-Type: application/json\' -d \'{"direction":"down","amount":3}\'',
-  '```',
-  '',
-  '### Windows',
-  '```bash',
-  'curl -s 127.0.0.1:3100/windows | jq',
-  'curl -s -X POST 127.0.0.1:3100/focus -H \'Content-Type: application/json\' -d \'{"title":"Chromium"}\'',
-  'curl -s -X POST 127.0.0.1:3100/launch -H \'Content-Type: application/json\' -d \'{"command":"xterm"}\'',
-  '```',
-  '',
-  '### Browser (Playwright)',
-  '```bash',
-  'curl -s -X POST 127.0.0.1:3100/browser/launch -H \'Content-Type: application/json\' -d \'{"url":"https://example.com"}\'',
-  'curl -s 127.0.0.1:3100/browser/snapshot | jq',
-  'curl -s -X POST 127.0.0.1:3100/browser/click -H \'Content-Type: application/json\' -d \'{"text":"Sign in"}\'',
-  'curl -s -X POST 127.0.0.1:3100/browser/type -H \'Content-Type: application/json\' -d \'{"selector":"#email","text":"user@example.com"}\'',
-  'curl -s -X POST 127.0.0.1:3100/browser/eval -H \'Content-Type: application/json\' -d \'{"expression":"document.title"}\'',
-  'curl -s 127.0.0.1:3100/browser/screenshot | jq',
-  '```',
-  '',
-  '### Wait for changes',
-  '```bash',
-  'curl -s -X POST 127.0.0.1:3100/wait -H \'Content-Type: application/json\' -d \'{"change":true,"timeout":5}\'',
-  '```',
-  '',
-  '## Tips',
-  '- Use /observe first to see the full screen state',
-  '- Screenshots are base64 PNG by default, add ?format=jpeg&quality=60 for smaller payloads',
-  '- Browser commands use Playwright (fastest, most reliable for web automation)',
-  '- For native Linux GUI apps, use /click + /type + /key with coordinates from /screenshot',
-  '- All responses are JSON: {"success": true, "data": {...}, "duration_ms": N}',
-].join('\n');
+/** Build computer-use skill with the correct API URL based on execution mode.
+ *  Container mode: 127.0.0.1:3100 (loopback inside Docker).
+ *  Host mode: uses $JAM_COMPUTER_USE_URL env var (set per-agent with the mapped host port). */
+function buildComputerUseSkill(mode: 'container' | 'host'): string {
+  const isContainer = mode === 'container';
+  // In container mode: hardcoded loopback. In host mode: env var resolved at runtime.
+  const baseUrl = isContainer ? '127.0.0.1:3100' : '$JAM_COMPUTER_USE_URL';
+
+  const envPreamble = isContainer
+    ? [
+        'IMPORTANT: You are running inside an isolated Docker container (Ubuntu Linux).',
+        'Your Bash tool executes commands INSIDE the container — not on the host machine.',
+        'You have your own virtual Linux desktop with a display server, window manager, and browser.',
+        'For ALL browser, GUI, desktop, screenshot, and visual tasks, use the HTTP API below.',
+        'Do NOT use MCP Playwright tools, host bridge openExternal, or any host-side browser.',
+        `Those operate on the HOST machine — your desktop is at ${baseUrl} inside your sandbox.`,
+      ].join('\n')
+    : [
+        'You have access to a virtual Linux desktop running in a Docker container.',
+        'Your Bash tool executes on the HOST machine — the desktop runs in a container.',
+        'The computer-use API is available at the URL in $JAM_COMPUTER_USE_URL.',
+        'For ALL browser, GUI, desktop, screenshot, and visual tasks, use the HTTP API below.',
+        'Do NOT use MCP Playwright tools or host browser — use the virtual desktop API.',
+      ].join('\n');
+
+  return [
+    '---',
+    'name: computer-use',
+    'description: Control the virtual desktop — screenshots, clicks, typing, browser automation',
+    'triggers: screenshot, click, screen, browser, desktop, window, type text, scroll, gui, ui, button, menu, navigate, launch, computer use, automate, observe, open, url, website, web, page, site, yahoo, google, search',
+    'alwaysInject: true',
+    '---',
+    '',
+    '# Computer Use — Virtual Desktop',
+    '',
+    envPreamble,
+    '',
+    `Control the virtual desktop via HTTP API at ${baseUrl}.`,
+    '',
+    '## Quick Reference',
+    '',
+    '### Observe (see the full screen state)',
+    '```bash',
+    `curl -s ${baseUrl}/observe | jq`,
+    `curl -s ${baseUrl}/screenshot > /tmp/screen.png`,
+    `curl -s ${baseUrl}/status | jq`,
+    '```',
+    '',
+    '### Click & Type',
+    '```bash',
+    `curl -s -X POST ${baseUrl}/click -H 'Content-Type: application/json' -d '{"x":500,"y":300}'`,
+    `curl -s -X POST ${baseUrl}/type -H 'Content-Type: application/json' -d '{"text":"hello world"}'`,
+    `curl -s -X POST ${baseUrl}/key -H 'Content-Type: application/json' -d '{"key":"ctrl+s"}'`,
+    `curl -s -X POST ${baseUrl}/scroll -H 'Content-Type: application/json' -d '{"direction":"down","amount":3}'`,
+    '```',
+    '',
+    '### Windows',
+    '```bash',
+    `curl -s ${baseUrl}/windows | jq`,
+    `curl -s -X POST ${baseUrl}/focus -H 'Content-Type: application/json' -d '{"title":"Chromium"}'`,
+    `curl -s -X POST ${baseUrl}/launch -H 'Content-Type: application/json' -d '{"command":"xterm"}'`,
+    '```',
+    '',
+    '### Browser (Playwright)',
+    '```bash',
+    `curl -s -X POST ${baseUrl}/browser/launch -H 'Content-Type: application/json' -d '{"url":"https://example.com"}'`,
+    `curl -s ${baseUrl}/browser/snapshot | jq`,
+    `curl -s -X POST ${baseUrl}/browser/click -H 'Content-Type: application/json' -d '{"text":"Sign in"}'`,
+    `curl -s -X POST ${baseUrl}/browser/type -H 'Content-Type: application/json' -d '{"selector":"#email","text":"user@example.com"}'`,
+    `curl -s -X POST ${baseUrl}/browser/eval -H 'Content-Type: application/json' -d '{"expression":"document.title"}'`,
+    `curl -s ${baseUrl}/browser/screenshot | jq`,
+    '```',
+    '',
+    '### Wait for changes',
+    '```bash',
+    `curl -s -X POST ${baseUrl}/wait -H 'Content-Type: application/json' -d '{"change":true,"timeout":5}'`,
+    '```',
+    '',
+    '## Tips',
+    '- Use /observe first to see the full screen state',
+    '- Screenshots are base64 PNG by default, add ?format=jpeg&quality=60 for smaller payloads',
+    '- Browser commands use Playwright (fastest, most reliable for web automation)',
+    '- For native Linux GUI apps, use /click + /type + /key with coordinates from /screenshot',
+    '- All responses are JSON: {"success": true, "data": {...}, "duration_ms": N}',
+  ].join('\n');
+}
+
