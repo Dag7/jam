@@ -116,9 +116,12 @@ export class CommandParser {
   }
 
   private extractAgentName(trimmed: string, lower: string): string | null {
+    // NOTE: All regexes use the `s` (dotAll) flag so `.` matches newlines,
+    // preserving multiline input after stripping the agent name prefix.
+
     // Strategy 1: "hey/hi/ok/yo [,] <name>" prefix — with optional comma/punctuation
     const greetingMatch = trimmed.match(
-      /^(?:hey|hi|ok|yo|hello)[,.]?\s+(\w+)[,.]?\s*(.*)/i,
+      /^(?:hey|hi|ok|yo|hello)[,.]?\s+(\w+)[,.]?\s*(.*)/is,
     );
     if (greetingMatch) {
       const possibleName = greetingMatch[1].toLowerCase();
@@ -126,7 +129,7 @@ export class CommandParser {
     }
 
     // Strategy 2: "<name>, ..." or "<name> ..." as the first word
-    const firstWordMatch = trimmed.match(/^(\w+)[,.]?\s+(.*)/i);
+    const firstWordMatch = trimmed.match(/^(\w+)[,.]?\s+(.*)/is);
     if (firstWordMatch) {
       const possibleName = firstWordMatch[1].toLowerCase();
       if (this.agentNames.has(possibleName)) return possibleName;
@@ -134,7 +137,7 @@ export class CommandParser {
 
     // Strategy 3: "ask/tell <name> ..." or "ask <name> to ..."
     const askTellMatch = trimmed.match(
-      /^(?:ask|tell)\s+(\w+)[,.]?\s+(?:to\s+)?(.*)/i,
+      /^(?:ask|tell)\s+(\w+)[,.]?\s+(?:to\s+)?(.*)/is,
     );
     if (askTellMatch) {
       const possibleName = askTellMatch[1].toLowerCase();
@@ -151,19 +154,22 @@ export class CommandParser {
   }
 
   private stripAgentPrefix(trimmed: string, _agentName: string): string {
+    // NOTE: All regexes use the `s` (dotAll) flag so `.` matches newlines,
+    // preserving multiline input after stripping the agent name prefix.
+
     // Try to strip greeting + name prefix
     const greetingMatch = trimmed.match(
-      /^(?:hey|hi|ok|yo|hello)[,.]?\s+\w+[,.]?\s*(.*)/i,
+      /^(?:hey|hi|ok|yo|hello)[,.]?\s+\w+[,.]?\s*(.*)/is,
     );
     if (greetingMatch && greetingMatch[1].trim()) return greetingMatch[1].trim();
 
     // Try to strip name as first word
-    const firstWordMatch = trimmed.match(/^\w+[,.]?\s+(.*)/i);
+    const firstWordMatch = trimmed.match(/^\w+[,.]?\s+(.*)/is);
     if (firstWordMatch && firstWordMatch[1].trim()) return firstWordMatch[1].trim();
 
     // Try ask/tell pattern
     const askTellMatch = trimmed.match(
-      /^(?:ask|tell)\s+\w+[,.]?\s+(?:to\s+)?(.*)/i,
+      /^(?:ask|tell)\s+\w+[,.]?\s+(?:to\s+)?(.*)/is,
     );
     if (askTellMatch && askTellMatch[1].trim()) return askTellMatch[1].trim();
 

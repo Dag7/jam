@@ -349,7 +349,14 @@ export class AgentManager {
     const formatted = runtime.formatInput(text);
     log.info(`Sending input to "${state.profile.name}": "${formatted.slice(0, 100)}${formatted.length > 100 ? '...' : ''}"`, undefined, agentId);
 
-    this.ptyManager.write(agentId, formatted + '\r');
+    // Multiline text: wrap in bracket paste mode so the PTY treats \n as
+    // literal characters instead of individual Enter keypresses.
+    const hasNewlines = formatted.includes('\n');
+    if (hasNewlines) {
+      this.ptyManager.write(agentId, `\x1b[200~${formatted}\x1b[201~\r`);
+    } else {
+      this.ptyManager.write(agentId, formatted + '\r');
+    }
     this.updateVisualState(agentId, 'listening');
     this.updateLastActivity(agentId);
   }
