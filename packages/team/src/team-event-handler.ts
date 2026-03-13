@@ -134,11 +134,17 @@ export class TeamEventHandler {
     // Load full task once for trust, broadcast, and reply-back
     const fullTask = task.assignedTo ? await this.taskStore.get(task.id) : null;
 
-    // Update trust if this was a delegated task
+    // Update trust if this was a delegated task (bidirectional — both agents track the relationship)
     if (task.assignedTo && task.createdBy !== task.assignedTo) {
       const rel = await this.relationshipStore.updateTrust(
         task.createdBy,
         task.assignedTo,
+        success ? 'success' : 'failure',
+      );
+      // Reciprocal: assignee also tracks trust with the delegator
+      await this.relationshipStore.updateTrust(
+        task.assignedTo,
+        task.createdBy,
         success ? 'success' : 'failure',
       );
 
