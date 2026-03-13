@@ -83,6 +83,14 @@ export class ContainerManager implements IContainerManager {
       volumes.push({ hostPath: options.sharedSkillsPath, containerPath: '/shared-skills', readOnly: true });
     }
 
+    // Shared team directory — inter-agent communication (blackboard, channels)
+    if (options.teamDirPath) {
+      if (!existsSync(options.teamDirPath)) {
+        mkdirSync(options.teamDirPath, { recursive: true });
+      }
+      volumes.push({ hostPath: options.teamDirPath, containerPath: '/team' });
+    }
+
     // Credential mounts (read-only)
     if (options.credentialMounts) {
       for (const mount of options.credentialMounts) {

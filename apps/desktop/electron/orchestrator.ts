@@ -2,7 +2,7 @@ import { app, BrowserWindow, shell, clipboard, Notification } from 'electron';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { readFile, readdir, stat, mkdir, writeFile, unlink } from 'node:fs/promises';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, mkdirSync } from 'node:fs';
 import { EventBus } from '@jam/eventbus';
 import {
   PtyManager,
@@ -185,6 +185,7 @@ export class Orchestrator {
   readonly blackboard: FileBlackboard;
   readonly negotiationHandler: TaskNegotiationHandler;
   private readonly sharedSkillsDir: string;
+  private readonly teamDir: string;
   private readonly imageReady: Promise<void> = Promise.resolve();
   private readonly reclaimedAgentIds: Set<string> = new Set();
   /** Set to true once all auto-start agents have been launched */
@@ -288,6 +289,22 @@ export class Orchestrator {
             writeClipboard: (text) => clipboard.writeText(text),
             openPath: (path) => shell.openPath(path),
             showNotification: (title, body) => new Notification({ title, body }).show(),
+            // Inter-agent inbox: resolve target by name, append JSONL to their inbox file
+            writeInbox: async (targetAgent, senderAgentId, entry) => {
+              const agents = this.agentManager.list();
+              const target = agents.find(a => a.profile.name.toLowerCase() === targetAgent.toLowerCase());
+              if (!target?.profile.cwd) {
+                return { success: false, error: `Agent "${targetAgent}" has no workspace` };
+              }
+              const inboxPath = join(target.profile.cwd, 'inbox.jsonl');
+              const { appendFile } = await import('node:fs/promises');
+              await appendFile(inboxPath, JSON.stringify(entry) + '\n', 'utf-8');
+              log.info(`Bridge inbox-write: ${senderAgentId.slice(0, 8)} → "${targetAgent}": "${entry.title}"`);
+              return { success: true };
+            },
+            listAgentNames: () => this.agentManager.list()
+              .filter(a => !a.profile.isSystem)
+              .map(a => a.profile.name),
           });
           const bridgeToken = randomBytes(32).toString('hex');
           this.hostBridge.start(bridgeToken).then(({ port }) => {
@@ -371,7 +388,24 @@ export class Orchestrator {
       log.info('Brain memory disabled — using file-based memory only');
     }
 
-    const teamDir = join(app.getPath('userData'), 'team');
+    // Team directory lives under ~/.jam/ so it can be bind-mounted into Docker containers
+    const teamDir = join(homedir(), '.jam', 'team');
+    // Migrate from old Electron-specific path if needed (one-time)
+    const oldTeamDir = join(app.getPath('userData'), 'team');
+    if (existsSync(oldTeamDir) && !existsSync(teamDir)) {
+      try {
+        mkdirSync(join(homedir(), '.jam'), { recursive: true });
+        renameSync(oldTeamDir, teamDir);
+        log.info(`Migrated team directory: ${oldTeamDir} → ${teamDir}`);
+      } catch {
+        // Cross-device move not supported — copy instead
+        const { cpSync } = require('node:fs');
+        mkdirSync(teamDir, { recursive: true });
+        cpSync(oldTeamDir, teamDir, { recursive: true });
+        log.info(`Copied team directory: ${oldTeamDir} → ${teamDir}`);
+      }
+    }
+    this.teamDir = teamDir;
     this.taskStore = new FileTaskStore(teamDir);
     this.blackboard = new FileBlackboard(teamDir, this.eventBus);
     this.negotiationHandler = new TaskNegotiationHandler(this.taskStore, this.eventBus);
@@ -400,6 +434,7 @@ export class Orchestrator {
           hostBridgeUrl: `http://host.docker.internal:${this.config.sandbox.hostBridgePort}/bridge`,
           mounts: [
             { containerPath: '/workspace', description: 'Agent workspace (bind-mounted from host)' },
+            { containerPath: '/team', description: 'Shared team directory (blackboard, channels — shared across all agents)' },
             { containerPath: '/shared-skills', description: 'Shared skills directory', readOnly: true },
             { containerPath: '/home/agent/.claude', description: 'Claude Code credentials', readOnly: true },
           ],
@@ -450,6 +485,7 @@ export class Orchestrator {
           agentName: profile.name,
           workspacePath: profile.cwd ?? join(homedir(), '.jam', 'agents', profile.name),
           sharedSkillsPath: sharedSkillsDir,
+          teamDirPath: this.teamDir,
           computerUse: profile.allowComputerUse,
         });
 
@@ -767,12 +803,25 @@ export class Orchestrator {
   /** Build the team communication skill with the current agent roster */
   private buildTeamCommunicationSkill(): string {
     const agents = this.agentManager.list();
+    const isSandboxContainer = this.config.sandboxTier === 'docker'
+      && (this.config.sandbox?.agentExecution ?? 'container') === 'container';
+
+    if (isSandboxContainer) {
+      // Sandbox mode: agents use host bridge for inbox, /team for blackboard/channels
+      const roster = agents
+        .filter(a => !a.profile.isSystem)
+        .map(a => `- **${a.profile.name}** (ID: ${a.profile.id})`)
+        .join('\n');
+      return TEAM_COMMUNICATION_SKILL_SANDBOX
+        .replace('{{AGENT_ROSTER}}', roster || '- No other agents yet');
+    }
+
+    // Host mode: agents use direct file paths
     const roster = agents
       .filter(a => !a.profile.isSystem)
       .map(a => `- **${a.profile.name}** (ID: ${a.profile.id}) — workspace: ${a.profile.cwd ?? 'unknown'}`)
       .join('\n');
 
-    // Resolve the JAM system agent's inbox path for work-sharing updates
     const systemAgent = agents.find(a => a.profile.isSystem);
     const systemInbox = systemAgent?.profile.cwd
       ? `${systemAgent.profile.cwd}/inbox.jsonl`
@@ -1711,6 +1760,76 @@ const TEAM_COMMUNICATION_SKILL = [
   '- After writing to the inbox, tell the user you\'ve delegated the task',
 ].join('\n');
 
+/** Sandbox-mode variant: agents use host bridge for inbox writes and /team for shared data */
+const TEAM_COMMUNICATION_SKILL_SANDBOX = [
+  '---',
+  'name: team-communication',
+  'description: How to send tasks, delegate work, and share updates with other agents',
+  'triggers: ask, tell, send, delegate, message, request, assign, inbox, agent, team, teammate, share, update, broadcast, sync, publish, done, finished, completed',
+  '---',
+  '',
+  '# Team Communication (Sandbox Mode)',
+  '',
+  'You are part of a team of AI agents managed by Jam. Each agent runs in its own Docker container.',
+  '',
+  '## Your Teammates',
+  '{{AGENT_ROSTER}}',
+  '',
+  '## Delegating Tasks',
+  '',
+  'To send a task to another agent, use the **host bridge** `inbox-write` operation.',
+  'You CANNOT write directly to other agents\' workspaces — each container is isolated.',
+  '',
+  '```bash',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "X-Jam-Agent-Id: $JAM_AGENT_ID" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"operation":"inbox-write","params":{"targetAgent":"AgentName","title":"Task title","description":"Detailed description of what to do","priority":"normal"}}\'',
+  '```',
+  '',
+  'For longer descriptions, use a variable:',
+  '```bash',
+  'BODY=$(cat <<\'ENDJSON\'',
+  '{"operation":"inbox-write","params":{"targetAgent":"AgentName","title":"Research brokerage APIs","description":"Find platforms with API access for automated trading. Compare fees, supported markets, and rate limits.","priority":"high"}}',
+  'ENDJSON',
+  ')',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "X-Jam-Agent-Id: $JAM_AGENT_ID" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d "$BODY"',
+  '```',
+  '',
+  '**Parameters:**',
+  '- `targetAgent` (required): The agent\'s name from the roster above',
+  '- `title` (required): Short task title',
+  '- `description` (required): Detailed task description',
+  '- `priority` (optional): low / normal / high / critical',
+  '- `tags` (optional): string array for categorization',
+  '',
+  '## Shared Team Directory',
+  '',
+  'All agents share a `/team` directory (mounted read-write in every container):',
+  '',
+  '- `/team/blackboard/{topic}/` — publish artifacts for other agents to read',
+  '- `/team/channels/{channelId}/` — read shared channel messages',
+  '',
+  'To publish an artifact:',
+  '```bash',
+  'mkdir -p /team/blackboard/my-topic',
+  'echo \'{"agentId":"\'$JAM_AGENT_ID\'","topic":"my-topic","type":"text","content":"Dashboard deployed on port 8085"}\' >> /team/blackboard/my-topic/artifacts.jsonl',
+  '```',
+  '',
+  '## Rules',
+  '- Use `inbox-write` via the host bridge — do NOT try to write to other agents\' `/workspace`',
+  '- Always include the `X-Jam-Agent-Id` header (set from `$JAM_AGENT_ID`)',
+  '- Your agent ID is available as the `JAM_AGENT_ID` environment variable',
+  '- The inbox is processed automatically — do NOT wait for a response',
+  '- Keep task descriptions clear and actionable',
+  '- After sending an inbox message, tell the user you\'ve delegated the task',
+].join('\n');
+
 const SECRETS_HANDLING_SKILL = [
   '---',
   'name: secrets-handling',
@@ -1845,10 +1964,20 @@ const HOST_BRIDGE_SKILL = [
   '  -d \'{"operation":"file-open","params":{"path":"/path/to/file.pdf"}}\'',
   '```',
   '',
+  '### Send a task to another agent (inbox-write)',
+  '```bash',
+  'curl -s -X POST "$JAM_HOST_BRIDGE_URL" \\',
+  '  -H "Authorization: Bearer $JAM_HOST_BRIDGE_TOKEN" \\',
+  '  -H "X-Jam-Agent-Id: $JAM_AGENT_ID" \\',
+  '  -H "Content-Type: application/json" \\',
+  '  -d \'{"operation":"inbox-write","params":{"targetAgent":"AgentName","title":"Task title","description":"What to do"}}\'',
+  '```',
+  '',
   '## Rules',
   '- Only use the bridge when `JAM_HOST_BRIDGE_URL` is set',
   '- The bridge only allows whitelisted operations — arbitrary commands are not supported',
   '- AppleScript: `do shell script` and keystroke simulation are blocked for security',
+  '- Always include the `X-Jam-Agent-Id` header for operations that identify the sender (inbox-write)',
   '- Always check the response `success` field before assuming the operation worked',
 ].join('\n');
 

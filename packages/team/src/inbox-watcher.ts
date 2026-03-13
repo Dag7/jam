@@ -1,4 +1,4 @@
-import { watch, type FSWatcher } from 'node:fs';
+import { watch, writeFileSync, statSync, type FSWatcher } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ITaskStore, IEventBus, AgentProfile } from '@jam/core';
@@ -31,6 +31,14 @@ export class InboxWatcher {
     if (this.watchers.has(agentId)) return;
 
     const inboxPath = join(cwd, 'inbox.jsonl');
+
+    // Ensure the inbox file exists so fs.watch() can attach.
+    // flag 'a' creates the file if missing but never truncates existing content.
+    try { writeFileSync(inboxPath, '', { flag: 'a' }); } catch { /* dir may not exist yet */ }
+
+    // Start offset at current file size — processInbox below handles any existing content
+    let initialSize = 0;
+    try { initialSize = statSync(inboxPath).size; } catch { /* just created, size is 0 */ }
     this.offsets.set(inboxPath, 0);
 
     try {
@@ -43,8 +51,13 @@ export class InboxWatcher {
         debouncer.schedule(() => this.processInbox(agentId, inboxPath));
       });
       this.watchers.set(agentId, watcher);
-    } catch {
-      // File may not exist yet — that's fine, we'll create on first write
+
+      // Process any entries already in the inbox (e.g. messages received before app started)
+      if (initialSize > 0) {
+        debouncer.schedule(() => this.processInbox(agentId, inboxPath));
+      }
+    } catch (err) {
+      log.warn(`Failed to watch inbox for agent ${agentId}: ${String(err)}`);
     }
   }
 

@@ -14,6 +14,10 @@ export interface HostBridgeDeps {
   writeClipboard: (text: string) => void;
   openPath: (path: string) => Promise<string>;
   showNotification: (title: string, body: string) => void;
+  /** Write a structured message to another agent's inbox (inter-agent communication) */
+  writeInbox?: (targetAgent: string, senderAgentId: string, entry: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+  /** List known agent names (for inbox-write target validation) */
+  listAgentNames?: () => string[];
 }
 
 interface BridgeRequest {
@@ -27,9 +31,14 @@ interface BridgeResponse {
   error?: string;
 }
 
+/** Context passed to bridge operations — identifies the calling agent */
+interface BridgeContext {
+  agentId?: string;
+}
+
 interface BridgeOperation {
   validate: (params: Record<string, unknown>) => string | null;
-  execute: (params: Record<string, unknown>) => Promise<BridgeResponse>;
+  execute: (params: Record<string, unknown>, context: BridgeContext) => Promise<BridgeResponse>;
 }
 
 /**
@@ -144,8 +153,9 @@ export class HostBridge implements IHostBridge {
           return;
         }
 
-        log.info(`Executing operation: ${request.operation}`);
-        const result = await operation.execute(params);
+        const agentId = req.headers['x-jam-agent-id'] as string | undefined;
+        log.info(`Executing operation: ${request.operation}${agentId ? ` (agent: ${agentId.slice(0, 8)})` : ''}`);
+        const result = await operation.execute(params, { agentId });
         res.writeHead(200);
         res.end(JSON.stringify(result));
       } catch (err) {
@@ -242,6 +252,43 @@ export class HostBridge implements IHostBridge {
         execute: async (params) => {
           const result = await this.deps.openPath(params.path as string);
           return result ? { success: false, error: result } : { success: true };
+        },
+      }],
+
+      // Inter-agent communication: write a structured message to another agent's inbox
+      ['inbox-write', {
+        validate: (params) => {
+          if (typeof params.targetAgent !== 'string' || !params.targetAgent) {
+            return 'Missing "targetAgent" parameter (agent name)';
+          }
+          if (typeof params.title !== 'string' || !params.title) {
+            return 'Missing "title" parameter';
+          }
+          if (typeof params.description !== 'string' || !params.description) {
+            return 'Missing "description" parameter';
+          }
+          // Validate target exists (prevents path traversal — host resolves the path)
+          const known = this.deps.listAgentNames?.() ?? [];
+          if (!known.some(n => n.toLowerCase() === (params.targetAgent as string).toLowerCase())) {
+            return `Unknown agent "${params.targetAgent}". Known agents: ${known.join(', ')}`;
+          }
+          return null;
+        },
+        execute: async (params, context) => {
+          if (!this.deps.writeInbox) {
+            return { success: false, error: 'inbox-write not configured' };
+          }
+          if (!context.agentId) {
+            return { success: false, error: 'Missing X-Jam-Agent-Id header — cannot identify sender' };
+          }
+          const entry = {
+            title: params.title as string,
+            description: params.description as string,
+            from: context.agentId,
+            priority: (params.priority as string) ?? 'normal',
+            tags: (params.tags as string[]) ?? [],
+          };
+          return this.deps.writeInbox(params.targetAgent as string, context.agentId, entry);
         },
       }],
     ]);
