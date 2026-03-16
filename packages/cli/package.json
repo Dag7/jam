@@ -1,0 +1,20 @@
+{
+  "name": "@jam/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build:bundle": "esbuild src/main.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/jam.cjs",
+    "build:embed": "node scripts/generate-embed.mjs",
+    "build": "yarn build:bundle && yarn build:embed",
+    "typecheck": "tsc --noEmit",
+    "clean": "rimraf dist"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.9.3"
+  }
+}

@@ -3,6 +3,16 @@ import { Events, createLogger, JAM_SYSTEM_AGENT_ID, IntervalTimer } from '@jam/c
 import { nextCronRun } from './cron-parser.js';
 import type { FileScheduleStore, PersistedSchedule } from './stores/file-schedule-store.js';
 
+/** Agent-defined cron entry (from .cron.json files scanned by CronScanner) */
+export interface AgentCronEntry {
+  agentId: string;
+  name: string;
+  schedule: string;
+  command: string;
+  cwd: string;
+  enabled: boolean;
+}
+
 const log = createLogger('TaskScheduler');
 
 export interface SchedulePattern {
@@ -205,6 +215,84 @@ export class TaskScheduler {
         // Code-side pattern changed — update the persisted schedule to match
         log.info(`Updating system schedule pattern: "${def.name}" → ${def.pattern.cron ?? JSON.stringify(def.pattern)}`);
         await this.scheduleStore.update(existing.id, { pattern: def.pattern });
+      }
+    }
+  }
+
+  /**
+   * Sync agent-defined cron entries from .cron.json into the schedule store.
+   * - Creates new schedules for entries not yet persisted
+   * - Updates schedules whose cron expression changed
+   * - Removes schedules for entries no longer in .cron.json
+   * - Respects enable/disable state from .cron.json
+   */
+  async syncAgentCronEntries(cronEntries: AgentCronEntry[]): Promise<void> {
+    if (!this.scheduleStore) return;
+
+    const persisted = await this.scheduleStore.list();
+    const agentSchedules = persisted.filter((s) => s.source === 'agent');
+
+    // Build lookup: "agentId:name" → persisted schedule
+    const existingByKey = new Map(agentSchedules.map((s) => {
+      // Extract agentId from taskTemplate.createdBy
+      const key = `${s.taskTemplate.createdBy}:${s.name}`;
+      return [key, s];
+    }));
+
+    // Track which persisted schedules are still active
+    const activeKeys = new Set<string>();
+
+    for (const entry of cronEntries) {
+      const key = `${entry.agentId}:${entry.name}`;
+      activeKeys.add(key);
+
+      const existing = existingByKey.get(key);
+      const pattern = { cron: entry.schedule };
+      const taskTemplate = {
+        title: `[cron] ${entry.name}`,
+        description: `Run: ${entry.command}\nCwd: ${entry.cwd}`,
+        priority: 'normal' as const,
+        source: 'agent' as const,
+        createdBy: entry.agentId,
+        assignedTo: entry.agentId,
+        tags: ['agent-cron'],
+      };
+
+      if (!existing) {
+        log.info(`Syncing agent cron "${entry.name}" from ${entry.agentId}`);
+        await this.scheduleStore.create({
+          name: entry.name,
+          pattern,
+          taskTemplate,
+          enabled: entry.enabled,
+          lastRun: new Date().toISOString(), // don't fire immediately on first sync
+          source: 'agent',
+        });
+      } else {
+        // Update if schedule or enabled state changed
+        const updates: Partial<Pick<PersistedSchedule, 'pattern' | 'enabled' | 'taskTemplate'>> = {};
+        if (JSON.stringify(existing.pattern) !== JSON.stringify(pattern)) {
+          updates.pattern = pattern;
+        }
+        if (existing.enabled !== entry.enabled) {
+          updates.enabled = entry.enabled;
+        }
+        if (existing.taskTemplate.description !== taskTemplate.description) {
+          updates.taskTemplate = { ...existing.taskTemplate, description: taskTemplate.description };
+        }
+        if (Object.keys(updates).length > 0) {
+          log.info(`Updating agent cron "${entry.name}" from ${entry.agentId}`);
+          await this.scheduleStore.update(existing.id, updates);
+        }
+      }
+    }
+
+    // Remove persisted agent schedules that are no longer in any .cron.json
+    for (const existing of agentSchedules) {
+      const key = `${existing.taskTemplate.createdBy}:${existing.name}`;
+      if (!activeKeys.has(key)) {
+        log.info(`Removing stale agent cron "${existing.name}" from ${existing.taskTemplate.createdBy}`);
+        await this.scheduleStore.forceDelete(existing.id);
       }
     }
   }

@@ -21,6 +21,7 @@
   "dependencies": {
     "@jam/agent-runtime": "workspace:*",
     "@jam/brain": "workspace:*",
+    "@jam/cli": "workspace:*",
     "@jam/core": "workspace:*",
     "@jam/eventbus": "workspace:*",
     "@jam/memory": "workspace:*",

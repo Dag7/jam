@@ -15,6 +15,7 @@ import {
   CodexCLIRuntime,
   CursorRuntime,
   ServiceRegistry,
+  CronScanner,
 } from '@jam/agent-runtime';
 import type { IPtyManager } from '@jam/agent-runtime';
 import { BaseAgentRuntime } from '@jam/agent-runtime';
@@ -71,6 +72,7 @@ import {
 import type { ITeamExecutor } from '@jam/team';
 import { AppStore } from './storage/store';
 import { loadConfig, type JamConfig, type STTProviderType, type TTSProviderType } from './config';
+import { JAM_CLI_SCRIPT } from '@jam/cli';
 
 const log = createLogger('Orchestrator');
 
@@ -153,6 +155,7 @@ export class Orchestrator {
   readonly runtimeRegistry: RuntimeRegistry;
   readonly agentManager: AgentManager;
   readonly serviceRegistry: ServiceRegistry;
+  readonly cronScanner: CronScanner;
   readonly containerManager: IContainerManager | null = null;
   private readonly portAllocator: PortAllocator | null = null;
   private readonly docker: DockerClient | null = null;
@@ -194,6 +197,8 @@ export class Orchestrator {
   /** IPC batchers — stored for disposal during shutdown */
   private readonly batchers: Array<{ dispose(): void }> = [];
   private windowEventCleanups: Array<() => void> = [];
+  /** fs.watch handle for ~/.jam/.rescan — triggers service/cron re-scan */
+  private rescanWatcher: import('node:fs').FSWatcher | null = null;
 
   private mainWindow: BrowserWindow | null = null;
 
@@ -204,6 +209,7 @@ export class Orchestrator {
     this.appStore = new AppStore();
     this.commandParser = new CommandParser();
     this.serviceRegistry = new ServiceRegistry();
+    this.cronScanner = new CronScanner();
 
     // Forward service status changes to renderer for real-time UI updates
     this.serviceRegistry.onChange((services) => {
@@ -480,6 +486,9 @@ export class Orchestrator {
       // waitForComputerUse() — no extra health check needed here.
       const agentExec = this.config.sandbox.agentExecution ?? 'container';
       this.agentManager.setPreStartHook(async (agentId, profile) => {
+        const jamBinDir = join(homedir(), '.jam', 'bin');
+        const jamIpcDir = join(homedir(), '.jam', 'ipc');
+        mkdirSync(jamIpcDir, { recursive: true });
         const containerInfo = await cm.createAndStart({
           agentId,
           agentName: profile.name,
@@ -487,6 +496,10 @@ export class Orchestrator {
           sharedSkillsPath: sharedSkillsDir,
           teamDirPath: this.teamDir,
           computerUse: profile.allowComputerUse,
+          credentialMounts: [
+            { hostPath: jamBinDir, containerPath: '/home/agent/.jam/bin' },
+            { hostPath: jamIpcDir, containerPath: '/home/agent/.jam/ipc' },
+          ],
         });
 
         // When computer-use is enabled in container mode, set DISPLAY so any GUI
@@ -561,6 +574,23 @@ export class Orchestrator {
           child.unref();
           return true;
         },
+        healthCheckInContainer: async (agentId, port, healthPath) => {
+          const cid = cm.getContainerId(agentId);
+          if (!cid) return false;
+          // Run curl/TCP check inside the container — avoids host port mapping issues
+          const cmd = healthPath
+            ? `curl -sf -o /dev/null -m 2 http://127.0.0.1:${port}${healthPath}`
+            : `(echo > /dev/tcp/127.0.0.1/${port}) 2>/dev/null`;
+          try {
+            const child = docker.execSpawn(cid, ['sh', '-c', cmd], {});
+            const exitCode = await new Promise<number>((res) =>
+              child.on('close', (code) => res(code ?? 1)),
+            );
+            return exitCode === 0;
+          } catch {
+            return false;
+          }
+        },
       });
     }
 
@@ -594,6 +624,14 @@ export class Orchestrator {
       this.scheduleStore,
       this.config.scheduleCheckIntervalMs,
     );
+
+    // Sync agent cron entries into the schedule store when .cron.json files change
+    this.cronScanner.onChange((entries) => {
+      this.taskScheduler.syncAgentCronEntries(entries).catch((err) =>
+        log.warn(`Failed to sync agent cron entries: ${String(err)}`),
+      );
+    });
+
     this.selfImprovement = new SelfImprovementEngine(
       this.taskStore,
       this.statsStore,
@@ -760,6 +798,11 @@ export class Orchestrator {
   private async bootstrapSharedSkills(dir: string): Promise<void> {
     await mkdir(dir, { recursive: true });
 
+    // Bootstrap jam CLI into ~/.jam/bin/ so agents have it in PATH
+    await this.bootstrapJamCli().catch(err =>
+      log.warn(`Failed to bootstrap jam CLI: ${String(err)}`),
+    );
+
     // Always overwrite — ensures agents get the latest skill instructions
     const processSkillPath = join(dir, 'process-management.md');
     await writeFile(processSkillPath, PROCESS_MANAGEMENT_SKILL, 'utf-8');
@@ -792,6 +835,19 @@ export class Orchestrator {
         : buildComputerUseSkill('container');
       await writeFile(computerUseSkillPath, skillContent, 'utf-8');
     }
+  }
+
+  /** Write the `jam` CLI script to ~/.jam/bin/jam and make it executable */
+  private async bootstrapJamCli(): Promise<void> {
+    const { chmod } = await import('node:fs/promises');
+    const binDir = join(homedir(), '.jam', 'bin');
+    await mkdir(binDir, { recursive: true });
+
+    const cliPath = join(binDir, 'jam');
+    await writeFile(cliPath, JAM_CLI_SCRIPT, { mode: 0o755 });
+    // Ensure executable on Unix
+    await chmod(cliPath, 0o755).catch(() => {});
+    log.info(`jam CLI bootstrapped → ${cliPath}`);
   }
 
   /** Rebuild the team communication skill file when agents change */
@@ -1403,11 +1459,13 @@ export class Orchestrator {
     this.cleanupOrphanServices().then(() => {
       phase(`orphan cleanup done (${Date.now() - cleanupT0}ms)`);
       this.serviceRegistry.startHealthMonitor();
-      phase('health monitor started');
+      this.startRescanWatcher();
+      phase('health monitor + rescan watcher started');
     }).catch((err) => {
       log.warn(`Deferred cleanup failed: ${String(err)}`);
       // Start health monitor anyway — it will discover services on its own
       this.serviceRegistry.startHealthMonitor();
+      this.startRescanWatcher();
     });
 
     phase('startAutoStartAgents complete (background tasks still running)');
@@ -1489,16 +1547,54 @@ export class Orchestrator {
     }
   }
 
-  /** Scan all agent workspaces for .services.json and update the registry */
+  /**
+   * Watch ~/.jam/ipc/.rescan for changes — the `jam` CLI touches this file
+   * after any mutation (svc register, cron add, etc.) so the orchestrator can
+   * re-scan without polling on an interval. The ipc/ directory is a dedicated
+   * shared mount, keeping agent workspaces isolated in Docker mode.
+   */
+  private startRescanWatcher(): void {
+    const { watch, mkdirSync, writeFileSync } = require('node:fs') as typeof import('node:fs');
+    const rescanDir = join(homedir(), '.jam', 'ipc');
+    const rescanPath = join(rescanDir, '.rescan');
+
+    // Ensure the file exists so fs.watch doesn't error
+    try {
+      mkdirSync(rescanDir, { recursive: true });
+      if (!existsSync(rescanPath)) writeFileSync(rescanPath, '0', 'utf-8');
+    } catch { return; }
+
+    try {
+      let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+      this.rescanWatcher = watch(rescanPath, () => {
+        // Debounce rapid-fire changes (e.g. agent runs multiple jam CLI commands)
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          log.info('Rescan triggered by jam CLI');
+          this.scanServices().catch((err) =>
+            log.warn(`Rescan failed: ${String(err)}`),
+          );
+        }, 500);
+      });
+      log.info(`Watching ${rescanPath} for CLI-triggered rescans`);
+    } catch (err) {
+      log.warn(`Failed to start rescan watcher: ${String(err)}`);
+    }
+  }
+
+  /** Scan all agent workspaces for .services.json and .cron.json, update registries */
   async scanServices(): Promise<void> {
     const agents = this.agentManager.list().map(a => ({
       id: a.profile.id,
       cwd: a.profile.cwd,
     }));
     try {
-      await this.serviceRegistry.scanAll(agents);
+      await Promise.all([
+        this.serviceRegistry.scanAll(agents),
+        this.cronScanner.scanAll(agents),
+      ]);
     } catch (err) {
-      log.warn(`Service scan failed: ${String(err)}`);
+      log.warn(`Service/cron scan failed: ${String(err)}`);
     }
   }
 
@@ -1516,6 +1612,8 @@ export class Orchestrator {
     this.taskScheduler.stop();
     this.inboxWatcher.stopAll();
     this.agentManager.stopHealthCheck();
+    this.rescanWatcher?.close();
+    this.rescanWatcher = null;
     for (const batcher of this.batchers) batcher.dispose();
     this.batchers.length = 0;
 
@@ -1588,7 +1686,7 @@ const PROCESS_MANAGEMENT_SKILL = [
   '---',
   'name: process-management',
   'description: How to run servers, UIs, and background processes safely',
-  'triggers: server, run, start, dev, npm run, yarn dev, build, serve, deploy, ui, app, dashboard, website, localhost, port, project, create',
+  'triggers: server, run, start, dev, npm run, yarn dev, build, serve, deploy, ui, app, dashboard, website, localhost, port, project, create, cron, schedule, healthcheck',
   '---',
   '',
   '# Background Process Management',
@@ -1606,13 +1704,56 @@ const PROCESS_MANAGEMENT_SKILL = [
   '  conversations/       # Chat history (managed by Jam)',
   '  projects/            # All project work goes here',
   '    my-app/            # One directory per project',
-  '      .services.json   # Service registry for this project',
+  '      .services.json   # Service registry (managed by `jam svc`)',
+  '      .cron.json       # Cron jobs (managed by `jam cron`)',
   '      src/',
   '      logs/',
   '  inbox.jsonl          # Incoming tasks (managed by Jam)',
   '```',
   '',
   'IMPORTANT: Always create projects inside `projects/`. Never dump files or markdown docs in the workspace root.',
+  '',
+  '## The `jam` CLI Tool',
+  '',
+  'You have the `jam` CLI available in your PATH. Use it to register services and cron jobs.',
+  'It validates inputs and writes the correct JSON format — prefer it over hand-writing JSON.',
+  '',
+  '### Service Management',
+  '',
+  '```bash',
+  '# Register a service (writes/updates .services.json atomically)',
+  'jam svc register --name my-api --port 3010 --command "node server.js" --health /healthz --log logs/server.log',
+  '',
+  '# Remove a service entry',
+  'jam svc deregister --name my-api',
+  '',
+  '# List registered services',
+  'jam svc list',
+  '',
+  '# Check service health',
+  'jam svc check --name my-api',
+  'jam svc check --port 3010',
+  '```',
+  '',
+  '### Cron Job Management',
+  '',
+  'Use `jam cron` to schedule recurring work. Jam picks up `.cron.json` automatically and runs your jobs on schedule.',
+  '',
+  '```bash',
+  '# Add a cron job (5-field cron: minute hour dom month dow)',
+  'jam cron add --name cleanup-logs --schedule "0 2 * * *" --command "node scripts/cleanup.js"',
+  'jam cron add --name sync-data --schedule "*/30 * * * *" --command "node scripts/sync.js"',
+  '',
+  '# List cron jobs',
+  'jam cron list',
+  '',
+  '# Pause/resume a cron job',
+  'jam cron disable --name cleanup-logs',
+  'jam cron enable --name cleanup-logs',
+  '',
+  '# Remove a cron job',
+  'jam cron remove --name cleanup-logs',
+  '```',
   '',
   '## Port Assignment',
   '',
@@ -1622,19 +1763,24 @@ const PROCESS_MANAGEMENT_SKILL = [
   '- 3020-3029: Database UIs, admin panels',
   '- 3030+: Other services',
   '',
+  '## Healthcheck Convention',
+  '',
+  'For HTTP services, implement a `GET /healthz` endpoint that returns `200 OK` when healthy.',
+  'Register the service with `--health /healthz` so Jam uses HTTP checks instead of basic TCP port probing.',
+  'This lets Jam detect when your service is alive but not functional (e.g., crashed handler, stuck event loop).',
+  '',
   '## FORBIDDEN — Do NOT Create System Daemons',
   '',
   'You are **strictly prohibited** from creating persistent system-level services that survive outside of Jam:',
   '',
   '- **NO** `launchctl`, `launchd`, or LaunchAgent/LaunchDaemon plist files',
   '- **NO** `systemctl`, `systemd`, or `.service` unit files',
-  '- **NO** `crontab` entries or cron jobs',
+  '- **NO** `crontab` entries (use `jam cron` instead)',
   '- **NO** writing to `~/Library/LaunchAgents/`, `/Library/LaunchDaemons/`, or `/etc/systemd/`',
   '- **NO** watchdog scripts, monitor scripts, or health-check daemons',
   '- **NO** auto-restart wrappers that respawn processes independently of Jam',
   '',
-  'Jam manages your service lifecycle. If a service needs to be restarted, Jam handles it.',
-  'If you need scheduled tasks, ask the user to set them up through Jam\'s task scheduler.',
+  'Jam manages your service lifecycle. Use `jam svc` for services and `jam cron` for scheduled work.',
   'Creating system daemons causes orphan processes that consume resources indefinitely.',
   '',
   '## Rules',
@@ -1642,9 +1788,10 @@ const PROCESS_MANAGEMENT_SKILL = [
   '2. **NEVER** use `tail -f`, `watch`, or stream logs — they consume infinite tokens',
   '3. **ALWAYS** run processes in the background with output redirected to a log file',
   '4. **ALWAYS** return control after confirming the process started successfully',
-  '5. **ALWAYS** register the service in `.services.json` so Jam can track and manage it',
+  '5. **ALWAYS** register the service with `jam svc register` so Jam can track and manage it',
   '6. **ALWAYS** use a port in the range 3000-3099 so Jam can detect and reach it',
   '7. **NEVER** create LaunchAgents, systemd units, cron jobs, or any persistent daemon',
+  '8. **ALWAYS** implement `GET /healthz` for HTTP services and register with `--health /healthz`',
   '',
   '## How to Start a Background Process',
   '',
@@ -1661,24 +1808,18 @@ const PROCESS_MANAGEMENT_SKILL = [
   '',
   '# Verify it\'s running by checking the port',
   'lsof -i :3000 -sTCP:LISTEN -t 2>/dev/null && echo "Server is running on port 3000" || echo "Server failed to start"',
+  '',
+  '# Register with Jam (REQUIRED)',
+  'jam svc register --name dev-server --port 3000 --command "npm run dev -- --port 3000" --health /healthz --log logs/server.log',
   '```',
-  '',
-  '## Register the Service (REQUIRED)',
-  '',
-  'After starting a background process, write a JSON line to `.services.json` in the project directory so Jam can track and restart it.',
-  'Jam tracks services by **port** — do NOT include PID (it goes stale). You MUST include `port`, `name`, `command`, and `cwd`:',
-  '',
-  '```bash',
-  'echo \'{"port":3000,"name":"dev-server","command":"npm run dev -- --port 3000","cwd":"\'$(pwd)\'","logFile":"logs/server.log","startedAt":"\'$(date -u +%FT%TZ)\'"}\' >> .services.json',
-  '```',
-  '',
-  'Required fields: `port`, `name`, `command`, `cwd`, `startedAt`',
-  'Optional fields: `logFile`',
   '',
   '## How to Check if a Process is Running',
   '',
   '```bash',
-  '# Check by port (preferred)',
+  '# Check via jam CLI (preferred — uses healthcheck if configured)',
+  'jam svc check --name dev-server',
+  '',
+  '# Check by port (fallback)',
   'lsof -i :3000 -sTCP:LISTEN -t 2>/dev/null && echo "Running" || echo "Stopped"',
   '```',
   '',

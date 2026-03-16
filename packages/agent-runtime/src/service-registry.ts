@@ -34,6 +34,8 @@ export interface TrackedService {
   command?: string;
   /** Working directory the service was started from */
   cwd?: string;
+  /** HTTP healthcheck path (e.g. "/healthz"). When set, health checks use HTTP GET instead of TCP connect. */
+  healthPath?: string;
 }
 
 /** Resolves container ports to host ports (for Docker sandbox mode).
@@ -46,6 +48,8 @@ export interface ContainerOps {
   killInContainer(agentId: string, containerPort: number): Promise<boolean>;
   /** Restart a command inside the agent's container (detached) */
   restartInContainer(agentId: string, command: string, cwd: string): Promise<boolean>;
+  /** Health-check a port inside the container (avoids host port mapping issues) */
+  healthCheckInContainer(agentId: string, port: number, healthPath?: string): Promise<boolean>;
 }
 
 /** Listener for service status changes */
@@ -127,8 +131,17 @@ export class ServiceRegistry {
         for (const raw of rawEntries) {
           if (!raw.port || !raw.name) continue;
 
-          const checkPort = this.portResolver(agentId, raw.port as number);
-          let alive = await isPortAlive(checkPort);
+          const containerPort = raw.port as number;
+          const checkPort = this.portResolver(agentId, containerPort);
+          const healthPath = (raw.healthPath as string) ?? undefined;
+          let alive: boolean;
+          if (this.containerOps) {
+            alive = await this.containerOps.healthCheckInContainer(agentId, containerPort, healthPath);
+          } else {
+            alive = healthPath
+              ? await isHttpHealthy(checkPort, healthPath)
+              : await isPortAlive(checkPort);
+          }
 
           const restartedAt = this.recentRestarts.get(raw.name as string);
           if (!alive && restartedAt && Date.now() - restartedAt < RESTART_GRACE_MS) {
@@ -145,6 +158,7 @@ export class ServiceRegistry {
             alive,
             command: (raw.command as string) ?? undefined,
             cwd: (raw.cwd as string) ?? serviceCwd,
+            healthPath: (raw.healthPath as string) ?? undefined,
           });
         }
       } catch (err) {
@@ -252,21 +266,8 @@ export class ServiceRegistry {
   }
 
   /** Recursively find .services.json files up to MAX_SCAN_DEPTH */
-  private async findServiceFiles(dir: string, depth: number): Promise<string[]> {
-    const results: string[] = [];
-    const filePath = join(dir, SERVICES_FILE);
-    try { await access(filePath); results.push(filePath); } catch { /* not found */ }
-    if (depth >= MAX_SCAN_DEPTH) return results;
-
-    try {
-      const entries = await readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (!entry.isDirectory() || entry.name.startsWith('.') || SCAN_SKIP.has(entry.name)) continue;
-        const subResults = await this.findServiceFiles(join(dir, entry.name), depth + 1);
-        results.push(...subResults);
-      }
-    } catch { /* dir might not exist or be unreadable */ }
-    return results;
+  private findServiceFiles(dir: string, depth: number): Promise<string[]> {
+    return findFiles(dir, SERVICES_FILE, depth);
   }
 
   /** Find a tracked service entry by its container port */
@@ -278,11 +279,11 @@ export class ServiceRegistry {
     return undefined;
   }
 
-  /** Shallow compare two service lists by port, name, and alive status */
+  /** Shallow compare two service lists by port, name, alive status, and healthPath */
   private servicesEqual(a: TrackedService[], b: TrackedService[]): boolean {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) {
-      if (a[i].port !== b[i].port || a[i].hostPort !== b[i].hostPort || a[i].name !== b[i].name || a[i].alive !== b[i].alive) return false;
+      if (a[i].port !== b[i].port || a[i].hostPort !== b[i].hostPort || a[i].name !== b[i].name || a[i].alive !== b[i].alive || a[i].healthPath !== b[i].healthPath) return false;
     }
     return true;
   }
@@ -331,14 +332,16 @@ export class ServiceRegistry {
 
       // Append new entry to .services.json (port-based, no PID)
       const servicesFile = join(cwd, SERVICES_FILE);
-      const line = JSON.stringify({
+      const record: Record<string, unknown> = {
         port: entry.port,
         name: entry.name,
         command: entry.command,
         cwd,
         logFile,
         startedAt: entry.startedAt,
-      });
+      };
+      if (entry.healthPath) record.healthPath = entry.healthPath;
+      const line = JSON.stringify(record);
       writeFile(servicesFile, line + '\n', { flag: 'a' }).catch(() => {});
 
       return { success: true };
@@ -401,9 +404,17 @@ export class ServiceRegistry {
           continue;
         }
 
-        // Port-based health check — resolve to host port in sandbox mode
-        const checkPort = this.portResolver(svc.agentId, svc.port);
-        const healthy = await isPortAlive(checkPort);
+        // Health check — in sandbox mode, check INSIDE the container to avoid
+        // host port mapping issues. In native mode, check from the host directly.
+        let healthy: boolean;
+        if (this.containerOps) {
+          healthy = await this.containerOps.healthCheckInContainer(svc.agentId, svc.port, svc.healthPath);
+        } else {
+          const checkPort = this.portResolver(svc.agentId, svc.port);
+          healthy = svc.healthPath
+            ? await isHttpHealthy(checkPort, svc.healthPath)
+            : await isPortAlive(checkPort);
+        }
 
         if (healthy) {
           // Service is up — reset failure count and mark alive
@@ -472,6 +483,174 @@ export class ServiceRegistry {
   }
 }
 
+// ── Cron Scanner ───────────────────────────────────────────────
+
+const CRON_FILE = '.cron.json';
+
+/** An agent-defined cron entry read from .cron.json */
+export interface AgentCronEntry {
+  agentId: string;
+  name: string;
+  schedule: string;
+  command: string;
+  cwd: string;
+  enabled: boolean;
+  createdAt: string;
+}
+
+/** Listener for cron definition changes */
+export type CronChangeListener = (entries: AgentCronEntry[]) => void;
+
+/**
+ * Scans agent workspaces for `.cron.json` files.
+ * Reuses the same recursive scanning pattern as ServiceRegistry.
+ */
+export class CronScanner {
+  private entries = new Map<string, AgentCronEntry[]>();
+  private changeListeners: CronChangeListener[] = [];
+  private readonly notifyTimer = new TimeoutTimer();
+
+  onChange(listener: CronChangeListener): void {
+    this.changeListeners.push(listener);
+  }
+
+  private notifyChange(): void {
+    if (this.changeListeners.length === 0) return;
+    this.notifyTimer.setIfNotSet(() => {
+      const all = this.list();
+      for (const listener of this.changeListeners) {
+        listener(all);
+      }
+    }, 250);
+  }
+
+  /** Scan an agent's workspace for .cron.json files */
+  async scan(agentId: string, cwd: string): Promise<AgentCronEntry[]> {
+    const cronPaths = await findFiles(cwd, CRON_FILE, 0);
+
+    if (cronPaths.length === 0) {
+      this.entries.delete(agentId);
+      return [];
+    }
+
+    const allEntries: AgentCronEntry[] = [];
+
+    for (const filePath of cronPaths) {
+      try {
+        const content = await readFile(filePath, 'utf-8');
+        const cronCwd = filePath.replace(/[/\\]\.cron\.json$/, '');
+        const rawEntries = parseCronEntries(content);
+
+        for (const raw of rawEntries) {
+          if (!raw.name || !raw.schedule || !raw.command) continue;
+
+          allEntries.push({
+            agentId,
+            name: raw.name as string,
+            schedule: raw.schedule as string,
+            command: raw.command as string,
+            cwd: (raw.cwd as string) ?? cronCwd,
+            enabled: raw.enabled !== false,
+            createdAt: (raw.createdAt as string) ?? new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        log.warn(`Failed to read ${filePath}: ${String(err)}`);
+      }
+    }
+
+    // Deduplicate by name (last wins)
+    const byName = new Map<string, AgentCronEntry>();
+    for (const entry of allEntries) {
+      byName.set(entry.name, entry);
+    }
+    const deduped = Array.from(byName.values());
+
+    const prev = this.entries.get(agentId) ?? [];
+    this.entries.set(agentId, deduped);
+    if (!this.cronEntriesEqual(prev, deduped)) {
+      this.notifyChange();
+    }
+    return deduped;
+  }
+
+  /** Scan all agents' workspaces */
+  async scanAll(agents: Array<{ id: string; cwd?: string }>): Promise<void> {
+    await Promise.all(
+      agents.filter(a => a.cwd).map(a => this.scan(a.id, a.cwd!)),
+    );
+  }
+
+  /** List all cron entries across all agents */
+  list(): AgentCronEntry[] {
+    const all: AgentCronEntry[] = [];
+    for (const entries of this.entries.values()) {
+      all.push(...entries);
+    }
+    return all;
+  }
+
+  /** List cron entries for a specific agent */
+  listForAgent(agentId: string): AgentCronEntry[] {
+    return this.entries.get(agentId) ?? [];
+  }
+
+  /** Remove all entries for an agent (cleanup on delete) */
+  removeForAgent(agentId: string): void {
+    this.entries.delete(agentId);
+  }
+
+  private cronEntriesEqual(a: AgentCronEntry[], b: AgentCronEntry[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].name !== b[i].name || a[i].schedule !== b[i].schedule || a[i].enabled !== b[i].enabled || a[i].command !== b[i].command) return false;
+    }
+    return true;
+  }
+}
+
+/** Parse .cron.json content — same format flexibility as services */
+function parseCronEntries(content: string): Array<Record<string, unknown>> {
+  const trimmed = content.trim();
+  if (!trimmed) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed.crons)) return parsed.crons;
+    if (parsed.name && parsed.schedule) return [parsed];
+    return [];
+  } catch {
+    const entries: Array<Record<string, unknown>> = [];
+    for (const line of trimmed.split('\n')) {
+      const l = line.trim();
+      if (!l) continue;
+      try { entries.push(JSON.parse(l)); } catch { /* skip */ }
+    }
+    return entries;
+  }
+}
+
+/** Recursively find files by name up to MAX_SCAN_DEPTH */
+async function findFiles(dir: string, fileName: string, depth: number): Promise<string[]> {
+  const results: string[] = [];
+  const filePath = join(dir, fileName);
+  try { await access(filePath); results.push(filePath); } catch { /* not found */ }
+  if (depth >= MAX_SCAN_DEPTH) return results;
+
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith('.') || SCAN_SKIP.has(entry.name)) continue;
+      const subResults = await findFiles(join(dir, entry.name), fileName, depth + 1);
+      results.push(...subResults);
+    }
+  } catch { /* dir might not exist or be unreadable */ }
+  return results;
+}
+
+// ── Parsing Helpers ────────────────────────────────────────────
+
 /** Parse .services.json content into an array of service entries.
  *  Handles: JSON object with `services` array, plain JSON array,
  *  single JSON object, or JSONL (one JSON object per line). */
@@ -509,6 +688,19 @@ function isPortAlive(port: number, timeoutMs = 2000): Promise<boolean> {
     socket.setTimeout(timeoutMs);
     socket.on('timeout', () => { socket.destroy(); resolve(false); });
     socket.on('error', () => { resolve(false); });
+  });
+}
+
+/** Check service health via HTTP GET — returns true if status 2xx/3xx */
+function isHttpHealthy(port: number, path: string, timeoutMs = 3000): Promise<boolean> {
+  const http = require('node:http') as typeof import('node:http');
+  return new Promise((resolve) => {
+    const req = http.get({ hostname: '127.0.0.1', port, path, timeout: timeoutMs }, (res) => {
+      resolve(res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 400);
+      res.resume(); // drain response body
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
   });
 }
 

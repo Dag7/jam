@@ -94,6 +94,9 @@ RUN chown agent:agent /workspace
 
 USER agent
 
+# Jam CLI tool (mounted from host at runtime) — add to PATH
+ENV PATH="/home/agent/.jam/bin:\${PATH}"
+
 # Default command: idle process (container stays alive, commands via docker exec)
 # Desktop agents override this with start-desktop.sh
 CMD ["sleep", "infinity"]

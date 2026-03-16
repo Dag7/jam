@@ -8,7 +8,7 @@ export { CodexCLIRuntime } from './runtimes/codex-cli.js';
 export { CursorRuntime } from './runtimes/cursor.js';
 export { BaseAgentRuntime } from './runtimes/base-runtime.js';
 export { TaskTracker } from './task-tracker.js';
-export { ServiceRegistry } from './service-registry.js';
+export { ServiceRegistry, CronScanner } from './service-registry.js';
 
 export type { OutputStrategy } from './runtimes/output-strategy.js';
 export { JsonlOutputStrategy, ThrottledOutputStrategy } from './runtimes/output-strategy.js';
@@ -18,7 +18,7 @@ export { shellEscape } from './pty-manager.js';
 export type { AgentStore, SecretResolver, SecretValuesProvider } from './agent-manager.js';
 export type { ConversationEntry, SkillDefinition, ExecutionEnvironment } from './agent-context-builder.js';
 export type { TaskInfo, TaskStep } from './task-tracker.js';
-export type { TrackedService, PortResolver, ContainerOps } from './service-registry.js';
+export type { TrackedService, PortResolver, ContainerOps, AgentCronEntry } from './service-registry.js';
 export { buildCleanEnv } from './utils.js';
 export { PtyDataHandler, getPtyDataRate } from './pty-utils.js';
 export type { WritablePty } from './pty-utils.js';

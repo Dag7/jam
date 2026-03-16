@@ -10,7 +10,8 @@ import {
   protocol,
   systemPreferences,
 } from 'electron';
-import path from 'node:path';
+import path, { join } from 'node:path';
+import { homedir } from 'node:os';
 import { appendFileSync, renameSync, statSync, mkdirSync } from 'node:fs';
 import { createLogger, addLogTransport, Batcher, TimeoutTimer, type LogEntry } from '@jam/core';
 import { Orchestrator } from './orchestrator';
@@ -34,6 +35,11 @@ const log = createLogger('Main');
 
 // --- Fix PATH for macOS/Linux GUI apps ---
 fixPath();
+
+// Prepend ~/.jam/bin so agents can use the `jam` CLI tool
+const jamBinDir = join(homedir(), '.jam', 'bin');
+process.env.PATH = `${jamBinDir}:${process.env.PATH}`;
+
 log.debug(`PATH resolved: ${process.env.PATH}`);
 
 let mainWindow: BrowserWindow | null = null;
