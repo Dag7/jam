@@ -17,7 +17,7 @@ const FAILURE_THRESHOLD = 3;
 /** Maximum directory depth when scanning for .services.json */
 const MAX_SCAN_DEPTH = 3;
 /** Directories to skip during recursive scan */
-const SCAN_SKIP = new Set(['node_modules', '.git', '__pycache__', 'conversations', 'venv', '.venv', 'dist', 'build']);
+const SCAN_SKIP = new Set(['node_modules', '.git', '__pycache__', 'conversations', 'venv', '.venv', 'dist', 'build', 'agents', 'team', 'shared-skills']);
 
 export interface TrackedService {
   agentId: string;
