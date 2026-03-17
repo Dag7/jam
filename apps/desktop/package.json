@@ -74,7 +74,7 @@
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
-      "icon": "assets/icon.icns",
+      "icon": "assets/icon-dark.icns",
       "target": [
         "dmg",
         "zip"
@@ -89,14 +89,14 @@
       }
     },
     "win": {
-      "icon": "assets/icon.ico",
+      "icon": "assets/icon-dark.ico",
       "target": [
         "nsis",
         "portable"
       ]
     },
     "linux": {
-      "icon": "assets/icon.png",
+      "icon": "assets/icon-dark.png",
       "target": [
         "AppImage",
         "deb"

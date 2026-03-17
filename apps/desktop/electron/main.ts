@@ -156,7 +156,7 @@ function createWindow(): void {
     titleBarStyle: 'hidden',
     trafficLightPosition: { x: 15, y: 12 },
     backgroundColor: '#09090b',
-    icon: path.join(__dirname, '../assets/icon.png'),
+    icon: path.join(__dirname, '../assets/icon-dark.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -352,6 +352,13 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   registerIpcHandlers();
+
+  // Set dock icon explicitly — in dev mode macOS shows the Electron default icon
+  // because the app isn't packaged with an .icns bundle. Production builds use
+  // the icon-dark.icns from electron-builder config.
+  if (process.platform === 'darwin') {
+    app.dock?.setIcon(path.join(__dirname, '../assets/icon-dark.png'));
+  }
 
   if (mainWindow) {
     orchestrator.setMainWindow(mainWindow);
