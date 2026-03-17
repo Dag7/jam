@@ -874,6 +874,7 @@ __metadata:
     electron: "npm:40.4.1"
     electron-builder: "npm:^26.7.0"
     electron-store: "npm:^8.1.0"
+    electron-updater: "npm:^6.8.3"
     motion: "npm:^12.0.0"
     postcss: "npm:^8.4.33"
     react: "npm:^18.2.0"
@@ -3172,6 +3173,22 @@ __metadata:
   languageName: node
   linkType: hard
 
+"electron-updater@npm:^6.8.3":
+  version: 6.8.3
+  resolution: "electron-updater@npm:6.8.3"
+  dependencies:
+    builder-util-runtime: "npm:9.5.1"
+    fs-extra: "npm:^10.1.0"
+    js-yaml: "npm:^4.1.0"
+    lazy-val: "npm:^1.0.5"
+    lodash.escaperegexp: "npm:^4.1.2"
+    lodash.isequal: "npm:^4.5.0"
+    semver: "npm:~7.7.3"
+    tiny-typed-emitter: "npm:^2.1.0"
+  checksum: 10/6d58db495cd9192c7f02697a6c3d2173343b9613bf5e2c21eeda3714ae0ea5b862795281f66562713525293fabed115f89d63b66226c34adf38ca19a977719c6
+  languageName: node
+  linkType: hard
+
 "electron@npm:40.4.1":
   version: 40.4.1
   resolution: "electron@npm:40.4.1"
@@ -4784,6 +4801,20 @@ __metadata:
     p-locate: "npm:^3.0.0"
     path-exists: "npm:^3.0.0"
   checksum: 10/53db3996672f21f8b0bf2a2c645ae2c13ffdae1eeecfcd399a583bce8516c0b88dcb4222ca6efbbbeb6949df7e46860895be2c02e8d3219abd373ace3bfb4e11
+  languageName: node
+  linkType: hard
+
+"lodash.escaperegexp@npm:^4.1.2":
+  version: 4.1.2
+  resolution: "lodash.escaperegexp@npm:4.1.2"
+  checksum: 10/6d99452b1cfd6073175a9b741a9b09ece159eac463f86f02ea3bee2e2092923fce812c8d2bf446309cc52d1d61bf9af51c8118b0d7421388e6cead7bd3798f0f
+  languageName: node
+  linkType: hard
+
+"lodash.isequal@npm:^4.5.0":
+  version: 4.5.0
+  resolution: "lodash.isequal@npm:4.5.0"
+  checksum: 10/82fc58a83a1555f8df34ca9a2cd300995ff94018ac12cc47c349655f0ae1d4d92ba346db4c19bbfc90510764e0c00ddcc985a358bdcd4b3b965abf8f2a48a214
   languageName: node
   linkType: hard
 
@@ -7510,6 +7541,13 @@ __metadata:
   dependencies:
     semver: "npm:^5.5.0"
   checksum: 10/d51630522317b82355afa32b79ac3a02bcc29ef81e8045a95a2e4dfa736525bf4bcba1394abfb4169188fe42e3a9d9e4b378367f46daeb6b4b945d7cb727f860
+  languageName: node
+  linkType: hard
+
+"tiny-typed-emitter@npm:^2.1.0":
+  version: 2.1.0
+  resolution: "tiny-typed-emitter@npm:2.1.0"
+  checksum: 10/709bca410054e08df4dc29d5ea0916328bb2900d60245c6a743068ea223887d9fd2c945b6070eb20336275a557a36c2808e5c87d2ed4b60633458632be4a3e10
   languageName: node
   linkType: hard
 

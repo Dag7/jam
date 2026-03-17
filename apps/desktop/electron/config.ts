@@ -72,6 +72,8 @@ export interface JamConfig {
   sandbox: SandboxConfig;
   // Kalanu Brain memory server (opt-in)
   brain: BrainConfig;
+  // Auto-update
+  autoUpdate: boolean;
   // Logging
   logLevel: 'debug' | 'info' | 'warn' | 'error';
 }
@@ -139,6 +141,8 @@ const DEFAULT_CONFIG: JamConfig = {
     enabled: false,
     url: 'http://localhost:8080',
   },
+  // Auto-update: on by default
+  autoUpdate: true,
   // Logging
   logLevel: 'info',
 };

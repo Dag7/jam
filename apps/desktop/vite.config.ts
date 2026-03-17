@@ -12,6 +12,7 @@ const external = [
   ...builtinModules.map((m) => `node:${m}`),
   'node-pty',
   'electron-store',
+  'electron-updater',
 ];
 
 export default defineConfig({

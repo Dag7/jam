@@ -114,4 +114,6 @@ jobs:
             artifacts/**/*.zip \
             artifacts/**/*.exe \
             artifacts/**/*.AppImage \
-            artifacts/**/*.deb
+            artifacts/**/*.deb \
+            artifacts/**/*.yml \
+            artifacts/**/*.blockmap

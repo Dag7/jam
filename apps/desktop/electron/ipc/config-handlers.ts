@@ -19,7 +19,7 @@ const ALLOWED_CONFIG_KEYS = new Set<string>([
   'defaultModel', 'defaultRuntime', 'theme', 'voiceSensitivity',
   'minRecordingMs', 'noSpeechThreshold', 'noiseBlocklist',
   'modelTiers', 'teamRuntime', 'scheduleCheckIntervalMs',
-  'codeImprovement', 'sandbox', 'brain',
+  'codeImprovement', 'sandbox', 'brain', 'autoUpdate',
 ]);
 
 export function registerConfigHandlers(deps: ConfigHandlerDeps): void {

@@ -201,6 +201,18 @@ export interface JamAPI {
     onSystemResumed: (callback: () => void) => () => void;
   };
 
+  updater: {
+    check: () => Promise<{ success: boolean; version?: string; error?: string }>;
+    download: () => Promise<{ success: boolean; error?: string }>;
+    install: () => void;
+    getAutoUpdate: () => Promise<boolean>;
+    onAvailable: (callback: (data: { version: string; releaseNotes: string; releaseDate: string }) => void) => () => void;
+    onNotAvailable: (callback: () => void) => () => void;
+    onProgress: (callback: (data: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => () => void;
+    onDownloaded: (callback: (data: { version: string }) => void) => () => void;
+    onError: (callback: (data: { message: string }) => void) => () => void;
+  };
+
   logs: {
     get: () => Promise<
       Array<{ timestamp: string; level: string; message: string; agentId?: string }>
@@ -588,6 +600,22 @@ contextBridge.exposeInMainWorld('jam', {
     getVersion: () => ipcRenderer.invoke('app:getVersion'),
     onSandboxProgress: (cb) => createEventListener('sandbox:progress', cb),
     onSystemResumed: (cb) => createEventListener('system:resumed', cb),
+  },
+
+  updater: {
+    check: () => ipcRenderer.invoke('updater:check'),
+    download: () => ipcRenderer.invoke('updater:download'),
+    install: () => ipcRenderer.invoke('updater:install'),
+    getAutoUpdate: () => ipcRenderer.invoke('updater:getAutoUpdate'),
+    onAvailable: (cb: (data: { version: string; releaseNotes: string; releaseDate: string }) => void) =>
+      createEventListener('updater:available', cb),
+    onNotAvailable: (cb: () => void) => createEventListener('updater:not-available', cb),
+    onProgress: (cb: (data: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) =>
+      createEventListener('updater:progress', cb),
+    onDownloaded: (cb: (data: { version: string }) => void) =>
+      createEventListener('updater:downloaded', cb),
+    onError: (cb: (data: { message: string }) => void) =>
+      createEventListener('updater:error', cb),
   },
 
   logs: {

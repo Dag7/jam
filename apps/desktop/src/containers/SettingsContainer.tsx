@@ -3,6 +3,7 @@ import { SecretsManager } from '@/components/settings/SecretsManager';
 import { VoiceSettings, ComboSelect } from '@/components/settings/VoiceSettings';
 import { SandboxSettings } from '@/components/settings/SandboxSettings';
 import { BrainSettings } from '@/components/settings/BrainSettings';
+import { AboutSection } from '@/components/settings/AboutSection';
 import {
   type STTProvider,
   type TTSProvider,
@@ -437,6 +438,9 @@ export const SettingsContainer: React.FC<{
           onWorktreeChange={(updates) => updateConfig({ worktree: { ...config.worktree, ...updates } })}
           onDockerChange={(updates) => updateConfig({ sandbox: { ...config.sandbox, ...updates } })}
         />
+
+        {/* About & Updates */}
+        <AboutSection />
 
         {/* Re-run Setup */}
         {onRerunSetup && (

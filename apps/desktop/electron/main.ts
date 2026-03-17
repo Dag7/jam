@@ -30,6 +30,7 @@ import { registerTeamHandlers } from './ipc/team-handlers';
 import { registerBrainHandlers } from './ipc/brain-handlers';
 import { registerSandboxHandlers } from './ipc/sandbox-handlers';
 import { registerAuthHandlers } from './ipc/auth-handlers';
+import { registerUpdateHandlers } from './ipc/update-handlers';
 
 const log = createLogger('Main');
 
@@ -328,6 +329,10 @@ function registerIpcHandlers(): void {
     runtimeRegistry: orchestrator.runtimeRegistry,
     appStore: orchestrator.appStore,
     getSandboxTier: () => orchestrator.config.sandboxTier,
+  });
+  registerUpdateHandlers({
+    getWindow,
+    config: orchestrator.config,
   });
 
   // App + Logs (trivial, kept inline)

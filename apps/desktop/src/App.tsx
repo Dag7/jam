@@ -13,6 +13,7 @@ import { DashboardContainer } from '@/containers/dashboard/DashboardContainer';
 import { CompactViewContainer } from '@/containers/CompactViewContainer';
 import { OnboardingContainer } from '@/containers/OnboardingContainer';
 import { SetupBanner } from '@/components/SetupBanner';
+import { UpdateBanner } from '@/components/UpdateBanner';
 import { ThreadDrawer } from '@/components/chat/ThreadDrawer';
 import { LogsDrawer } from '@/components/LogsDrawer';
 import { useTTSQueue } from '@/hooks/useTTSQueue';
@@ -184,6 +185,7 @@ export default function App() {
         )}
 
         <div className="flex-1 flex flex-col min-w-0">
+          <UpdateBanner />
           <SetupBanner onOpenSettings={() => setActiveTab('settings')} />
           <div className="flex-1 flex min-h-0">
             <div className="flex-1 flex flex-col min-w-0">

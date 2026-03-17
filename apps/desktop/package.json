@@ -33,6 +33,7 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "electron-store": "^8.1.0",
+    "electron-updater": "^6.8.3",
     "motion": "^12.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -107,6 +108,11 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Dag7",
+      "repo": "jam"
     }
   }
 }

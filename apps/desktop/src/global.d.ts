@@ -196,6 +196,18 @@ export interface JamAPI {
     onSystemResumed: (callback: () => void) => () => void;
   };
 
+  updater: {
+    check: () => Promise<{ success: boolean; version?: string; error?: string }>;
+    download: () => Promise<{ success: boolean; error?: string }>;
+    install: () => void;
+    getAutoUpdate: () => Promise<boolean>;
+    onAvailable: (callback: (data: { version: string; releaseNotes: string; releaseDate: string }) => void) => () => void;
+    onNotAvailable: (callback: () => void) => () => void;
+    onProgress: (callback: (data: { percent: number; bytesPerSecond: number; transferred: number; total: number }) => void) => () => void;
+    onDownloaded: (callback: (data: { version: string }) => void) => () => void;
+    onError: (callback: (data: { message: string }) => void) => () => void;
+  };
+
   logs: {
     get: () => Promise<
       Array<{
