@@ -50,9 +50,17 @@ export class ContainerManager implements IContainerManager {
   ) {}
 
   /** Build a config fingerprint from container options.
-   *  Used to detect when a reclaimed container's configuration is stale. */
+   *  Used to detect when a reclaimed container's configuration is stale.
+   *  Covers all fields that affect bind mounts or entrypoint. */
   private static buildConfigKey(options: CreateContainerOptions): string {
-    return `ws=${options.workspacePath}|cu=${options.computerUse ?? false}`;
+    const cm = (options.credentialMounts ?? []).map(m => m.hostPath).sort().join(',');
+    return [
+      `ws=${options.workspacePath}`,
+      `cu=${options.computerUse ?? false}`,
+      `ss=${options.sharedSkillsPath ?? ''}`,
+      `td=${options.teamDirPath ?? ''}`,
+      `cm=${cm}`,
+    ].join('|');
   }
 
   /** Create and start a container for an agent */

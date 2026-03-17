@@ -497,7 +497,9 @@ export class Orchestrator {
         const containerInfo = await cm.createAndStart({
           agentId,
           agentName: profile.name,
-          workspacePath: profile.cwd ?? join(homedir(), '.jam', 'agents', profile.name),
+          workspacePath: isSystemAgent
+            ? join(homedir(), '.jam')
+            : (profile.cwd ?? join(homedir(), '.jam', 'agents', profile.name)),
           sharedSkillsPath: isSystemAgent ? undefined : sharedSkillsDir,
           teamDirPath: isSystemAgent ? undefined : this.teamDir,
           computerUse: profile.allowComputerUse,
