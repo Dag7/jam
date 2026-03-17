@@ -115,5 +115,5 @@ jobs:
             artifacts/**/*.exe \
             artifacts/**/*.AppImage \
             artifacts/**/*.deb \
-            artifacts/**/*.yml \
+            artifacts/**/latest*.yml \
             artifacts/**/*.blockmap
