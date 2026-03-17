@@ -19,7 +19,10 @@ function createMockTaskStore(): ITaskStore {
       tasks[idx] = { ...tasks[idx], ...updates, id };
       return tasks[idx];
     }),
-    list: vi.fn(async () => tasks),
+    list: vi.fn(async (filter?: { status?: string }) => {
+      if (filter?.status) return tasks.filter((t) => t.status === filter.status);
+      return tasks;
+    }),
     delete: vi.fn(async (id: string) => {
       const idx = tasks.findIndex((t) => t.id === id);
       if (idx >= 0) tasks.splice(idx, 1);
@@ -111,6 +114,10 @@ describe('TaskScheduler', () => {
       await vi.advanceTimersByTimeAsync(100);
       const firstCallCount = (taskStore.create as ReturnType<typeof vi.fn>).mock.calls.length;
       expect(firstCallCount).toBeGreaterThan(0);
+
+      // Complete the first task so dedup doesn't block the next one
+      const tasks = await taskStore.list();
+      for (const t of tasks) await taskStore.update(t.id, { status: 'completed' });
 
       // Advance 2s for next tick (checkIntervalMs = 2000)
       await vi.advanceTimersByTimeAsync(2000);
