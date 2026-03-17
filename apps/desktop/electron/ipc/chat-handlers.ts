@@ -19,7 +19,7 @@ export function registerChatHandlers(
 ): void {
   const { commandParser, agentManager } = deps;
 
-  ipcMain.handle('chat:sendCommand', async (_, text: string) => {
+  ipcMain.handle('chat:sendCommand', async (_, text: string, _attachments?: Array<{ name: string; dataUrl: string; mimeType: string }>) => {
     // Handle /status command
     const statusMatch = text.match(/^\/status\s*(.*)/i);
     if (statusMatch) {

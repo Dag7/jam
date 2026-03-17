@@ -1,10 +1,12 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useVoice } from '@/hooks/useVoice';
 import { useOrchestrator } from '@/hooks/useOrchestrator';
+import { useFileAttachments } from '@/hooks/useFileAttachments';
 import { useAppStore } from '@/store';
 import { MicButton } from '@/components/voice/MicButton';
 import { Waveform } from '@/components/voice/Waveform';
 import { TranscriptOverlay } from '@/components/voice/TranscriptOverlay';
+import { AttachmentPreviewStrip } from '@/components/chat/AttachmentPreviewStrip';
 
 // Named selector — returns primitive (string|null) so Zustand's Object.is comparison
 // prevents re-renders when the value hasn't changed.
@@ -32,6 +34,15 @@ export const CommandBarContainer: React.FC = () => {
     toggleListening,
   } = useVoice();
   const { sendTextCommand, interruptAgent, clearChat } = useOrchestrator();
+  const {
+    attachments,
+    isDragging,
+    removeAttachment,
+    clearAttachments,
+    openFilePicker,
+    dragHandlers,
+    onPaste,
+  } = useFileAttachments();
   const isProcessing = useAppStore((s) => s.isProcessing);
   const viewMode = useAppStore((s) => s.viewMode);
   const setViewMode = useAppStore((s) => s.setViewMode);
@@ -41,26 +52,25 @@ export const CommandBarContainer: React.FC = () => {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const submitCommand = useCallback(() => {
+    if (!textInput.trim() && attachments.length === 0) return;
+    sendTextCommand(textInput.trim(), attachments.length > 0 ? attachments : undefined);
+    setTextInput('');
+    clearAttachments();
+    if (textareaRef.current) textareaRef.current.style.height = '';
+  }, [textInput, attachments, sendTextCommand, clearAttachments]);
+
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (textInput.trim()) {
-      sendTextCommand(textInput.trim());
-      setTextInput('');
-      // Reset textarea height after submit
-      if (textareaRef.current) textareaRef.current.style.height = '';
-    }
+    submitCommand();
   };
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (textInput.trim()) {
-        sendTextCommand(textInput.trim());
-        setTextInput('');
-        if (textareaRef.current) textareaRef.current.style.height = '';
-      }
+      submitCommand();
     }
-  }, [textInput, sendTextCommand]);
+  }, [submitCommand]);
 
   const handleInput = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setTextInput(e.target.value);
@@ -92,7 +102,12 @@ export const CommandBarContainer: React.FC = () => {
           : 'Type a command or click mic to listen...';
 
   return (
-    <div className="border-t border-zinc-800 bg-zinc-900/80 backdrop-blur-sm px-4 py-3 shrink-0">
+    <div
+      className={`border-t bg-zinc-900/80 backdrop-blur-sm px-4 py-3 shrink-0 transition-colors ${
+        isDragging ? 'border-blue-500 bg-blue-900/10' : 'border-zinc-800'
+      }`}
+      {...dragHandlers}
+    >
       <TranscriptOverlay
         text={transcript?.text ?? null}
         isFinal={transcript?.isFinal ?? false}
@@ -103,6 +118,14 @@ export const CommandBarContainer: React.FC = () => {
           {micError}
         </div>
       )}
+
+      {isDragging && (
+        <div className="mb-2 flex items-center justify-center py-4 border-2 border-dashed border-blue-500/50 rounded-lg bg-blue-900/10">
+          <span className="text-sm text-blue-400">Drop files here</span>
+        </div>
+      )}
+
+      <AttachmentPreviewStrip attachments={attachments} onRemove={removeAttachment} />
 
       <div className="flex items-end gap-3">
         <MicButton
@@ -123,12 +146,24 @@ export const CommandBarContainer: React.FC = () => {
             value={textInput}
             onChange={handleInput}
             onKeyDown={handleKeyDown}
+            onPaste={onPaste}
             placeholder={placeholder}
             disabled={isRecording}
             rows={1}
             className="w-full px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 disabled:opacity-50 resize-none overflow-hidden"
           />
         </form>
+
+        {/* Attach files */}
+        <button
+          onClick={openFilePicker}
+          className="px-3 py-2 rounded-lg text-xs font-medium transition-colors bg-zinc-800 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
+          title="Attach files"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+          </svg>
+        </button>
 
         {/* Cancel/interrupt button — shown when any agent is working */}
         {workingAgentId && (

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
-import type { ChatMessage } from '@/store/chatSlice';
+import type { ChatMessage, FileAttachment } from '@/store/chatSlice';
+import { isImageAttachment } from '@/hooks/useFileAttachments';
 import { formatTime } from '@/utils/format';
 
 interface ChatMessageProps {
@@ -25,6 +26,28 @@ const MemoizedStreamdown: React.FC<{ content: string }> = React.memo(({ content 
 ));
 MemoizedStreamdown.displayName = 'MemoizedStreamdown';
 
+
+const formatFileSize = (bytes: number): string => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const FileChip: React.FC<{ file: FileAttachment }> = ({ file }) => {
+  const ext = file.name.split('.').pop()?.toUpperCase() ?? '';
+  return (
+    <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-zinc-800/60 border border-zinc-600/40 rounded-lg">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-zinc-400 shrink-0">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+      </svg>
+      <div className="min-w-0">
+        <span className="text-[11px] text-zinc-300 block truncate max-w-[140px]">{file.name}</span>
+        <span className="text-[9px] text-zinc-500">{ext} &middot; {formatFileSize(file.size)}</span>
+      </div>
+    </div>
+  );
+};
 
 const DeleteButton: React.FC<{ onClick: () => void }> = ({ onClick }) => (
   <button
@@ -98,11 +121,35 @@ export const ChatMessageView: React.FC<ChatMessageProps> = React.memo(({ message
   }
 
   if (message.role === 'user') {
+    const files = message.attachments;
+    const images = files?.filter(isImageAttachment);
+    const nonImages = files?.filter((f) => !isImageAttachment(f));
     return (
       <div className="group flex justify-end items-start gap-1 mb-4">
         {handleDelete && <DeleteButton onClick={handleDelete} />}
         <div className="max-w-[80%] bg-blue-600/20 border border-blue-500/30 rounded-2xl rounded-tr-sm px-4 py-3">
-          <p className="text-sm text-zinc-200 whitespace-pre-wrap">{message.content}</p>
+          {images && images.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {images.map((img) => (
+                <img
+                  key={img.id}
+                  src={img.dataUrl}
+                  alt={img.name}
+                  className="max-h-40 max-w-[200px] rounded-lg object-cover border border-blue-500/20"
+                />
+              ))}
+            </div>
+          )}
+          {nonImages && nonImages.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {nonImages.map((f) => (
+                <FileChip key={f.id} file={f} />
+              ))}
+            </div>
+          )}
+          {message.content && (
+            <p className="text-sm text-zinc-200 whitespace-pre-wrap">{message.content}</p>
+          )}
           <div className="flex items-center justify-end gap-2 mt-1.5">
             <span className="text-[10px] text-zinc-500">
               {message.source === 'voice' ? 'Voice' : 'Text'}

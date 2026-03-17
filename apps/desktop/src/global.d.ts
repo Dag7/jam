@@ -268,7 +268,7 @@ export interface JamAPI {
   };
 
   chat: {
-    sendCommand: (text: string) => Promise<{
+    sendCommand: (text: string, attachments?: Array<{ name: string; dataUrl: string; mimeType: string }>) => Promise<{
       success: boolean;
       text?: string;
       error?: string;

@@ -4,6 +4,14 @@ import type { AppStore } from './index';
 export type ChatMessageRole = 'user' | 'agent' | 'system';
 export type ChatMessageStatus = 'sending' | 'complete' | 'error';
 
+export interface FileAttachment {
+  id: string;
+  name: string;
+  dataUrl: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: ChatMessageRole;
@@ -16,6 +24,7 @@ export interface ChatMessage {
   source: 'text' | 'voice';
   timestamp: number;
   error?: string;
+  attachments?: FileAttachment[];
   /** System task result — shown as compact notification with expandable output */
   taskResult?: {
     taskId: string;

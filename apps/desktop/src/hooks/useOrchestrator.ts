@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useAppStore } from '@/store';
-import type { ChatMessage } from '@/store/chatSlice';
+import type { ChatMessage, FileAttachment } from '@/store/chatSlice';
 
 export function useOrchestrator() {
   const setSelectedAgent = useAppStore((s) => s.setSelectedAgent);
@@ -57,10 +57,10 @@ export function useOrchestrator() {
     return window.jam.agents.update(agentId, updates);
   }, []);
 
-  const sendTextCommand = useCallback(async (text: string) => {
+  const sendTextCommand = useCallback(async (text: string, attachments?: FileAttachment[]) => {
     const { addMessage, setIsProcessing } = useAppStore.getState();
 
-    // Add user message to chat
+    // Add user message to chat (with optional image attachments)
     const userMsg: ChatMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -72,6 +72,7 @@ export function useOrchestrator() {
       status: 'complete',
       source: 'text',
       timestamp: Date.now(),
+      attachments,
     };
     addMessage(userMsg);
 
@@ -80,7 +81,8 @@ export function useOrchestrator() {
     setIsProcessing(true);
 
     try {
-      const result = await window.jam.chat.sendCommand(text);
+      const files = attachments?.map((a) => ({ name: a.name, dataUrl: a.dataUrl, mimeType: a.mimeType }));
+      const result = await window.jam.chat.sendCommand(text, files);
 
       // Add full agent response (ack message was already shown via event)
       if (result.success) {
