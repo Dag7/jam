@@ -72,6 +72,10 @@ export interface JamConfig {
   sandbox: SandboxConfig;
   // Kalanu Brain memory server (opt-in)
   brain: BrainConfig;
+  // Voice output
+  voiceEnabled: boolean;
+  ttsMaxChars: number;
+  ttsPlaybackTimeoutMs: number;
   // Auto-update
   autoUpdate: boolean;
   // Logging
@@ -141,6 +145,10 @@ const DEFAULT_CONFIG: JamConfig = {
     enabled: false,
     url: 'http://localhost:8080',
   },
+  // Voice output: enabled by default, 6k char limit, 2 min playback timeout
+  voiceEnabled: true,
+  ttsMaxChars: 6000,
+  ttsPlaybackTimeoutMs: 120_000,
   // Auto-update: on by default
   autoUpdate: true,
   // Logging

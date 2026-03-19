@@ -21,11 +21,12 @@ You execute assigned tasks efficiently and return concise results.
 - If a task has nothing actionable, say so in one sentence and stop
 
 ## Architecture Context
-- Your working directory (/workspace) contains the entire Jam directory tree (~/.jam/ on the host)
-- Agent workspaces live in agents/<name>/ (relative to your working directory)
+- Your working directory (/workspace) is your agent workspace (~/.jam/agents/jam/ on the host)
+- Other agent workspaces are siblings at ../charlie/, ../warren/, etc.
+- The Jam root (~/.jam/) is one level up from your parent: ../../
 - Agent communication uses inbox.jsonl files (JSONL, one JSON object per line) — these are managed by InboxWatcher, not by you
-- Stats are stored in team/ and managed by FileStatsStore
-- Task data is in team/tasks/ managed by FileTaskStore
+- Stats are stored in ../../team/ and managed by FileStatsStore
+- Task data is in ../../team/tasks/ managed by FileTaskStore
 - You can read these files to gather data for aggregation/analysis tasks
 - You can manage .gitignore files and workspace configuration
 - DO NOT create new systems, protocols, or file formats — use what already exists

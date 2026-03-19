@@ -62,6 +62,9 @@ interface Config {
   noiseBlocklist: string[];
   modelTiers: ModelTierConfig;
   teamRuntime: string;
+  voiceEnabled: boolean;
+  ttsMaxChars: number;
+  ttsPlaybackTimeoutMs: number;
   sandboxTier: SandboxTier;
   osSandbox: OsSandboxSettings;
   worktree: WorktreeSettings;
@@ -88,6 +91,9 @@ const DEFAULT_CONFIG: Config = {
     'hmm', 'uh', 'um', 'ah', 'oh',
     'okay', 'ok',
   ],
+  voiceEnabled: true,
+  ttsMaxChars: 6000,
+  ttsPlaybackTimeoutMs: 120_000,
   sandboxTier: 'os',
   osSandbox: {
     enabled: true,

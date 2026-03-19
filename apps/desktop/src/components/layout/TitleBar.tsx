@@ -9,6 +9,7 @@ export interface HeaderBarProps {
   logsOpen: boolean;
   onToggleNotifications: () => void;
   onToggleLogs: () => void;
+  onStopPlayback?: () => void;
 }
 
 const voiceColors: Record<string, string> = {
@@ -26,6 +27,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = React.memo(({
   logsOpen,
   onToggleNotifications,
   onToggleLogs,
+  onStopPlayback,
 }) => {
   return (
     <div className="titlebar-drag h-[38px] flex items-center justify-between px-4 bg-surface-raised border-b border-zinc-800 shrink-0">
@@ -60,20 +62,32 @@ export const HeaderBar: React.FC<HeaderBarProps> = React.memo(({
           </div>
         )}
 
-        {/* Voice indicator */}
-        <div
-          className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${voiceColors[voiceState] ?? voiceColors.idle} ${
-            voiceState === 'capturing' ? 'animate-pulse' : ''
-          }`}
-          title={`Voice: ${voiceState}`}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" y1="19" x2="12" y2="23" />
-            <line x1="8" y1="23" x2="16" y2="23" />
-          </svg>
-        </div>
+        {/* Voice indicator — clickable stop button when speaking */}
+        {voiceState === 'speaking' ? (
+          <button
+            onClick={onStopPlayback}
+            className="w-6 h-6 flex items-center justify-center rounded transition-colors text-green-400 hover:text-red-400 hover:bg-zinc-700"
+            title="Stop playback"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <rect x="6" y="6" width="12" height="12" rx="1" />
+            </svg>
+          </button>
+        ) : (
+          <div
+            className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${voiceColors[voiceState] ?? voiceColors.idle} ${
+              voiceState === 'capturing' ? 'animate-pulse' : ''
+            }`}
+            title={`Voice: ${voiceState}`}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          </div>
+        )}
 
         {/* Notifications bell */}
         <button

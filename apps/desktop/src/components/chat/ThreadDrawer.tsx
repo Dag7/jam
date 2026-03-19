@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 import { code } from '@streamdown/code';
 import { useAppStore } from '@/store';
+import type { ExecutionSegment } from '@/store/terminalSlice';
 import { useShallow } from 'zustand/react/shallow';
 
 interface ThreadDrawerProps {
@@ -10,6 +11,101 @@ interface ThreadDrawerProps {
 }
 
 const plugins = { code };
+
+/** Collapsible card for a single execution segment */
+const SegmentCard: React.FC<{
+  segment: ExecutionSegment;
+  defaultExpanded: boolean;
+}> = React.memo(({ segment, defaultExpanded }) => {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
+  const statusColor =
+    segment.status === 'running'
+      ? 'text-amber-400'
+      : segment.status === 'error'
+        ? 'text-red-400'
+        : 'text-emerald-400';
+
+  const statusIcon =
+    segment.status === 'running' ? (
+      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+    ) : segment.status === 'error' ? (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-red-400">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="15" y1="9" x2="9" y2="15" />
+        <line x1="9" y1="9" x2="15" y2="15" />
+      </svg>
+    ) : (
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400">
+        <polyline points="20 6 9 17 4 12" />
+      </svg>
+    );
+
+  const timeStr = new Date(segment.timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  return (
+    <div className="border border-zinc-800 rounded-lg overflow-hidden">
+      {/* Card header — clickable to toggle */}
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 bg-zinc-900/50 hover:bg-zinc-800/50 transition-colors text-left"
+      >
+        {/* Expand/collapse chevron */}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`text-zinc-500 transition-transform shrink-0 ${expanded ? 'rotate-90' : ''}`}
+        >
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+
+        {/* Status icon */}
+        <span className={`shrink-0 flex items-center ${statusColor}`}>
+          {statusIcon}
+        </span>
+
+        {/* Command preview */}
+        <span className="flex-1 min-w-0 text-xs font-mono text-zinc-300 truncate">
+          {segment.command || 'Execution'}
+        </span>
+
+        {/* Timestamp */}
+        <span className="text-[10px] text-zinc-600 shrink-0">{timeStr}</span>
+      </button>
+
+      {/* Card body — collapsible markdown content */}
+      {expanded && (
+        <div className="px-3 py-2 border-t border-zinc-800/50 max-h-[60vh] overflow-y-auto">
+          {segment.content ? (
+            <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+              <Streamdown
+                mode={segment.status === 'running' ? 'streaming' : 'static'}
+                plugins={plugins}
+              >
+                {segment.content}
+              </Streamdown>
+            </div>
+          ) : (
+            <div className="text-xs text-zinc-600 italic">
+              {segment.status === 'running' ? 'Waiting for output...' : 'No output'}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
+SegmentCard.displayName = 'SegmentCard';
 
 export const ThreadDrawer: React.FC<ThreadDrawerProps> = React.memo(({ agentId, onClose }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -27,10 +123,10 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = React.memo(({ agentId, 
     }),
   );
 
-  // Execute output — streamed markdown from the agent's command execution
-  const content = useAppStore((s) => s.executeOutput[agentId] ?? '');
+  // Execution segments — each segment is one execute() invocation
+  const segments = useAppStore((s) => s.executeSegments[agentId] ?? []);
 
-  // Auto-scroll to bottom when new content arrives — only if already near bottom
+  // Auto-scroll to bottom when new segments arrive or latest segment updates
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
@@ -38,7 +134,7 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = React.memo(({ agentId, 
     if (distanceFromBottom < 100) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [content]);
+  }, [segments]);
 
   return (
     <div className="w-[480px] shrink-0 flex flex-col border-l border-zinc-800 bg-zinc-950">
@@ -67,7 +163,11 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = React.memo(({ agentId, 
               </span>
             )}
           </div>
-          <span className="text-[10px] text-zinc-500">Live output</span>
+          <span className="text-[10px] text-zinc-500">
+            {segments.length > 0
+              ? `${segments.length} execution${segments.length !== 1 ? 's' : ''}`
+              : 'Live output'}
+          </span>
         </div>
 
         {/* Close button */}
@@ -83,20 +183,19 @@ export const ThreadDrawer: React.FC<ThreadDrawerProps> = React.memo(({ agentId, 
         </button>
       </div>
 
-      {/* Streaming output */}
+      {/* Execution segments */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto px-4 py-3"
+        className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2"
       >
-        {content ? (
-          <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-            <Streamdown
-              mode="streaming"
-              plugins={plugins}
-            >
-              {content}
-            </Streamdown>
-          </div>
+        {segments.length > 0 ? (
+          segments.map((segment, i) => (
+            <SegmentCard
+              key={segment.id}
+              segment={segment}
+              defaultExpanded={i === segments.length - 1}
+            />
+          ))
         ) : (
           <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
             {isWorking ? 'Waiting for output...' : 'No output yet'}

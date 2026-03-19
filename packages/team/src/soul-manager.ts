@@ -47,6 +47,8 @@ function defaultSoul(): SoulStructure {
   };
 }
 
+const KNOWN_SECTIONS = new Set(['role', 'persona', 'traits', 'goals', 'strengths', 'weaknesses', 'learnings']);
+
 /** Parse YAML-like frontmatter from SOUL.md into SoulStructure. */
 function parseSoulMd(content: string): SoulStructure {
   const soul = defaultSoul();
@@ -54,6 +56,8 @@ function parseSoulMd(content: string): SoulStructure {
   const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
   if (fmMatch) {
     const frontmatter = fmMatch[1];
+    const extraFm: Record<string, string> = {};
+
     for (const line of frontmatter.split('\n')) {
       const [key, ...rest] = line.split(':');
       const value = rest.join(':').trim();
@@ -64,61 +68,91 @@ function parseSoulMd(content: string): SoulStructure {
       else if (k === 'lastReflection') soul.lastReflection = value;
       else if (k === 'persona') soul.persona = value;
       else if (k === 'role') soul.role = value;
+      else extraFm[k] = value;
+    }
+
+    if (Object.keys(extraFm).length > 0) {
+      soul.extraFrontmatter = extraFm;
     }
   }
 
-  // Parse markdown sections
+  // Parse markdown sections — split body into heading+content blocks
   const body = fmMatch ? content.slice(fmMatch[0].length).trim() : content;
-  let currentSection = '';
+  const sections: Array<{ heading: string; key: string; content: string }> = [];
+  let currentHeading = '';
+  let currentKey = '';
+  let currentLines: string[] = [];
 
   for (const line of body.split('\n')) {
-    const heading = line.match(/^##\s+(.+)/);
-    if (heading) {
-      currentSection = heading[1].toLowerCase();
+    const headingMatch = line.match(/^##\s+(.+)/);
+    if (headingMatch) {
+      // Flush previous section
+      if (currentHeading) {
+        sections.push({ heading: currentHeading, key: currentKey, content: currentLines.join('\n') });
+      }
+      currentHeading = line;
+      currentKey = headingMatch[1].toLowerCase().trim();
+      currentLines = [];
+      continue;
+    }
+    if (currentHeading) {
+      currentLines.push(line);
+    }
+  }
+  // Flush last section
+  if (currentHeading) {
+    sections.push({ heading: currentHeading, key: currentKey, content: currentLines.join('\n') });
+  }
+
+  const extraSections: Array<{ heading: string; content: string }> = [];
+
+  for (const section of sections) {
+    if (!KNOWN_SECTIONS.has(section.key)) {
+      extraSections.push({ heading: section.heading, content: section.content });
       continue;
     }
 
-    const bullet = line.match(/^[-*]\s+(.+)/);
-    if (!bullet) continue;
-    const item = bullet[1].trim();
+    // Parse known sections from their content lines
+    for (const line of section.content.split('\n')) {
+      const bullet = line.match(/^[-*]\s+(.+)/);
 
-    switch (currentSection) {
-      case 'goals':
-        soul.goals.push(item);
-        break;
-      case 'strengths':
-        soul.strengths.push(item);
-        break;
-      case 'weaknesses':
-        soul.weaknesses.push(item);
-        break;
-      case 'learnings':
-        soul.learnings.push(item);
-        break;
-      case 'traits': {
-        const traitMatch = item.match(/^(.+?):\s*([\d.]+)/);
-        if (traitMatch) {
-          soul.traits[traitMatch[1].trim()] = parseFloat(traitMatch[2]);
+      switch (section.key) {
+        case 'goals':
+          if (bullet) soul.goals.push(bullet[1].trim());
+          break;
+        case 'strengths':
+          if (bullet) soul.strengths.push(bullet[1].trim());
+          break;
+        case 'weaknesses':
+          if (bullet) soul.weaknesses.push(bullet[1].trim());
+          break;
+        case 'learnings':
+          if (bullet) soul.learnings.push(bullet[1].trim());
+          break;
+        case 'traits': {
+          if (!bullet) break;
+          const traitMatch = bullet[1].match(/^(.+?):\s*([\d.]+)/);
+          if (traitMatch) {
+            soul.traits[traitMatch[1].trim()] = parseFloat(traitMatch[2]);
+          }
+          break;
         }
-        break;
+        case 'persona':
+          if (!soul.persona && line.trim()) {
+            soul.persona = line.trim();
+          }
+          break;
+        case 'role':
+          if (!soul.role && line.trim()) {
+            soul.role = line.trim();
+          }
+          break;
       }
     }
   }
 
-  // If no persona in frontmatter, try to extract from body
-  if (!soul.persona) {
-    const personaSection = body.match(/##\s+Persona\n([\s\S]*?)(?=\n##|$)/);
-    if (personaSection) {
-      soul.persona = personaSection[1].trim();
-    }
-  }
-
-  // If no role in frontmatter, try to extract from body
-  if (!soul.role) {
-    const roleSection = body.match(/##\s+Role\n([\s\S]*?)(?=\n##|$)/);
-    if (roleSection) {
-      soul.role = roleSection[1].trim();
-    }
+  if (extraSections.length > 0) {
+    soul.extraSections = extraSections;
   }
 
   return soul;
@@ -132,8 +166,13 @@ function serializeSoulMd(soul: SoulStructure): string {
   lines.push('---');
   lines.push(`version: ${soul.version}`);
   lines.push(`lastReflection: ${soul.lastReflection}`);
-  if (soul.persona) lines.push(`persona: ${soul.persona}`);
   if (soul.role) lines.push(`role: ${soul.role}`);
+  if (soul.persona) lines.push(`persona: ${soul.persona}`);
+  if (soul.extraFrontmatter) {
+    for (const [key, value] of Object.entries(soul.extraFrontmatter)) {
+      lines.push(`${key}: ${value}`);
+    }
+  }
   lines.push('---');
   lines.push('');
 
@@ -181,17 +220,47 @@ function serializeSoulMd(soul: SoulStructure): string {
     lines.push('');
   }
 
+  // Preserve unknown sections through round-trips
+  if (soul.extraSections) {
+    for (const section of soul.extraSections) {
+      lines.push(section.heading);
+      lines.push(section.content);
+      if (!section.content.endsWith('\n')) lines.push('');
+    }
+  }
+
   return lines.join('\n');
 }
 
 export class SoulManager {
+  /**
+   * Optional resolver: maps agentId → directory containing SOUL.md.
+   * When set, SoulManager reads/writes from the agent's workspace CWD
+   * instead of the default `baseDir/{agentId}/` path. This eliminates
+   * drift between the workspace copy and the canonical store.
+   */
+  private cwdResolver: ((agentId: string) => string | undefined) | null = null;
+
   constructor(
     private readonly baseDir: string,
     private readonly eventBus: IEventBus,
   ) {}
 
+  /** Set a resolver that maps agent IDs to their workspace CWD.
+   *  When set, SOUL.md is read/written from the workspace, not userData. */
+  setCwdResolver(resolver: (agentId: string) => string | undefined): void {
+    this.cwdResolver = resolver;
+  }
+
+  /** Resolve the SOUL.md path for an agent — prefers workspace CWD if resolver is set */
+  private soulPath(agentId: string): string {
+    const cwd = this.cwdResolver?.(agentId);
+    if (cwd) return join(cwd, 'SOUL.md');
+    return join(this.baseDir, agentId, 'SOUL.md');
+  }
+
   async load(agentId: string): Promise<SoulStructure> {
-    const filePath = join(this.baseDir, agentId, 'SOUL.md');
+    const filePath = this.soulPath(agentId);
     try {
       const content = await readFile(filePath, 'utf-8');
       return parseSoulMd(content);
@@ -201,7 +270,7 @@ export class SoulManager {
   }
 
   async save(agentId: string, soul: SoulStructure): Promise<void> {
-    const filePath = join(this.baseDir, agentId, 'SOUL.md');
+    const filePath = this.soulPath(agentId);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, serializeSoulMd(soul), 'utf-8');
   }

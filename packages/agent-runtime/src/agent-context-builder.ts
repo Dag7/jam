@@ -154,59 +154,6 @@ export class AgentContextBuilder {
   }
 
   /** Write the root ~/.jam/.gitignore (idempotent — won't overwrite) */
-  async initializeRootGitignore(jamDir: string): Promise<void> {
-    const gitignorePath = join(jamDir, '.gitignore');
-    if (existsSync(gitignorePath)) return;
-
-    const content = [
-      '# Runtime / ephemeral data',
-      'conversations/',
-      '*.jsonl',
-      '*.log',
-      '*.pid',
-      '.alert_state.json',
-      '.alert_monitor.pid',
-      'process-registry.json',
-      '.rescan',
-      'ipc/',
-      '',
-      '# Python environments & packages (anywhere in tree)',
-      '**/.venv/',
-      '**/.pylibs/',
-      '**/.pylib/',
-      '**/.pip_packages/',
-      '**/__pycache__/',
-      '*.pyc',
-      '',
-      '# Node',
-      '**/node_modules/',
-      '',
-      '# Build artifacts',
-      '**/dist/',
-      '*.pack',
-      '',
-      '# Nested git repos (agent clones)',
-      '**/.git/',
-      '',
-      '# OS files',
-      '.DS_Store',
-      'Thumbs.db',
-      '',
-      '# Databases',
-      '*.db',
-      '*.db-journal',
-      '*.db-wal',
-      '',
-      '# Temporary files',
-      '*.tmp',
-      '',
-      '# Screenshots / browser artifacts',
-      '**/.playwright-mcp/screenshots/',
-      '',
-    ].join('\n');
-    await writeFile(gitignorePath, content, 'utf-8');
-  }
-
   /** Load conversation history with pagination (for chat UI).
    *  Returns entries in chronological order, oldest first. */
   async loadPaginatedConversations(
@@ -371,27 +318,41 @@ export class AgentContextBuilder {
   }
 
   private generateInitialSoul(profile: AgentProfile): string {
-    const sections: string[] = [
-      `# ${profile.name}`,
-      '',
-      '## Identity',
-      `You are ${profile.name}.`,
-    ];
+    const lines: string[] = [];
 
-    if (profile.systemPrompt) {
-      sections.push('', '## Core Directives', profile.systemPrompt);
-    }
+    // Frontmatter — matches parseSoulMd() expectations
+    lines.push('---');
+    lines.push('version: 1');
+    lines.push(`lastReflection: ${new Date().toISOString()}`);
+    if (profile.systemPrompt) lines.push(`role: ${profile.name}`);
+    lines.push('---');
+    lines.push('');
 
-    sections.push(
-      '',
-      '## Personality',
-      '<!-- Evolve this section over time as you develop preferences and style -->',
-      '',
-      '## Notes',
-      '<!-- Add observations, learned behaviors, and important context here -->',
-    );
+    // Structured sections that parseSoulMd() recognizes
+    lines.push('## Role');
+    lines.push(profile.name);
+    lines.push('');
 
-    return sections.join('\n') + '\n';
+    lines.push('## Persona');
+    lines.push(profile.systemPrompt || `You are ${profile.name}.`);
+    lines.push('');
+
+    lines.push('## Traits');
+    lines.push('');
+
+    lines.push('## Goals');
+    lines.push('');
+
+    lines.push('## Strengths');
+    lines.push('');
+
+    lines.push('## Weaknesses');
+    lines.push('');
+
+    lines.push('## Learnings');
+    lines.push('');
+
+    return lines.join('\n');
   }
 
   private composeSystemPrompt(

@@ -97,7 +97,7 @@ export default function App() {
   }, []);
 
   // TTS audio queue (sequential playback, interrupt support)
-  const { enqueueTTS } = useTTSQueue();
+  const { enqueueTTS, interruptTTS } = useTTSQueue();
 
   // IPC event subscriptions (agents, terminal, voice, chat, errors)
   useIPCSubscriptions(enqueueTTS);
@@ -170,6 +170,7 @@ export default function App() {
         logsOpen={logsDrawerOpen}
         onToggleNotifications={toggleNotifications}
         onToggleLogs={toggleLogs}
+        onStopPlayback={interruptTTS}
       />
 
       <div className="flex flex-1 min-h-0">

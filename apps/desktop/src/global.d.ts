@@ -81,7 +81,10 @@ export interface JamAPI {
       callback: (data: { agentId: string; exitCode: number }) => void,
     ) => () => void;
     onExecuteOutput: (
-      callback: (data: { agentId: string; output: string; clear: boolean }) => void,
+      callback: (data: { agentId: string; output: string; clear: boolean; command?: string }) => void,
+    ) => () => void;
+    onExecuteComplete: (
+      callback: (data: { agentId: string; status: 'done' | 'error' }) => void,
     ) => () => void;
     getScrollback: (agentId: string) => Promise<string>;
   };

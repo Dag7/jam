@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useAppStore } from '@/store';
 
+const DEFAULT_PLAYBACK_TIMEOUT_MS = 120_000;
+
 /**
  * Manages TTS audio playback queue.
  * Prevents agents from talking over each other by playing responses sequentially.
@@ -12,8 +14,19 @@ export function useTTSQueue() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
   const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playbackTimeoutRef = useRef(DEFAULT_PLAYBACK_TIMEOUT_MS);
 
-  const interruptTTS = () => {
+  // Load configurable playback timeout on mount
+  useEffect(() => {
+    window.jam.config.get().then((c) => {
+      const timeout = (c as { ttsPlaybackTimeoutMs?: number }).ttsPlaybackTimeoutMs;
+      if (typeof timeout === 'number' && timeout > 0) {
+        playbackTimeoutRef.current = timeout;
+      }
+    });
+  }, []);
+
+  const interruptTTS = useCallback(() => {
     if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
     queueRef.current.length = 0;
     if (audioRef.current) {
@@ -29,7 +42,7 @@ export function useTTSQueue() {
     playingRef.current = false;
     useAppStore.getState().setVoiceState('idle');
     window.jam.voice.notifyTTSState(false);
-  };
+  }, []);
 
   const playNextTTS = () => {
     if (queueRef.current.length === 0) {
@@ -78,7 +91,7 @@ export function useTTSQueue() {
       });
 
       // Safety timeout: if onended never fires (e.g., after system sleep),
-      // force-advance the queue after 30 seconds.
+      // force-advance the queue. Timeout is configurable (default 2 min).
       if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
       safetyTimerRef.current = setTimeout(() => {
         safetyTimerRef.current = null;
@@ -91,7 +104,7 @@ export function useTTSQueue() {
           audioRef.current = null;
           playNextTTS();
         }
-      }, 30_000);
+      }, playbackTimeoutRef.current);
 
       audio.onended = () => {
         if (safetyTimerRef.current) { clearTimeout(safetyTimerRef.current); safetyTimerRef.current = null; }
@@ -130,7 +143,7 @@ export function useTTSQueue() {
       window.removeEventListener('jam:interrupt-tts', interruptTTS);
       interruptTTS();
     };
-  }, []);
+  }, [interruptTTS]);
 
   return { enqueueTTS, interruptTTS };
 }

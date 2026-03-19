@@ -106,8 +106,14 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
     );
 
     const unsubExecuteOutput = window.jam.terminal.onExecuteOutput(
-      ({ agentId, output, clear }) => {
-        store().appendExecuteOutput(agentId, output, clear);
+      ({ agentId, output, clear, command }) => {
+        store().appendExecuteOutput(agentId, output, clear, command);
+      },
+    );
+
+    const unsubExecuteComplete = window.jam.terminal.onExecuteComplete(
+      ({ agentId, status }) => {
+        store().completeExecuteSegment(agentId, status);
       },
     );
 
@@ -308,6 +314,7 @@ export function useIPCSubscriptions(enqueueTTS: (data: string) => void): void {
       unsubVisualState();
       unsubTerminalData();
       unsubExecuteOutput();
+      unsubExecuteComplete();
       unsubTranscription();
       unsubVoiceState();
       unsubTTSAudio();

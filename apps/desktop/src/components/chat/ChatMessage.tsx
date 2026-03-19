@@ -18,6 +18,8 @@ interface ChatMessageProps {
 
 const plugins = { code };
 
+const MAX_CONTENT_LENGTH = 2000;
+
 /** Memoized wrapper — avoids re-parsing markdown when content hasn't changed */
 const MemoizedStreamdown: React.FC<{ content: string }> = React.memo(({ content }) => (
   <Streamdown mode="static" plugins={plugins}>
@@ -235,9 +237,32 @@ export const ChatMessageView: React.FC<ChatMessageProps> = React.memo(({ message
           ) : isError ? (
             <p className="text-sm text-red-400">{message.error ?? message.content}</p>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-              <MemoizedStreamdown content={message.content} />
-            </div>
+            <>
+              <div className="prose prose-invert prose-sm max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                <MemoizedStreamdown
+                  content={
+                    message.content.length > MAX_CONTENT_LENGTH && !expanded
+                      ? message.content.slice(0, MAX_CONTENT_LENGTH) + '\n\n...'
+                      : message.content
+                  }
+                />
+              </div>
+              {message.content.length > MAX_CONTENT_LENGTH && (
+                <button
+                  onClick={() => setExpanded(!expanded)}
+                  className="mt-2 flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  <svg
+                    width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                    strokeLinecap="round" strokeLinejoin="round"
+                    className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                  {expanded ? 'See less' : `See more (${formatFileSize(message.content.length)})`}
+                </button>
+              )}
+            </>
           )}
         </div>
 

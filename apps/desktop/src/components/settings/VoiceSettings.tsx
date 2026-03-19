@@ -17,6 +17,9 @@ interface VoiceConfig {
   voiceSensitivity: VoiceSensitivity;
   minRecordingMs: number;
   noSpeechThreshold: number;
+  voiceEnabled: boolean;
+  ttsMaxChars: number;
+  ttsPlaybackTimeoutMs: number;
 }
 
 interface VoiceSettingsProps {
@@ -38,6 +41,80 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({
 }) => {
   return (
     <>
+      {/* Voice Output */}
+      <section>
+        <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
+          Voice Output
+        </h3>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm text-zinc-200">Enable Voice</label>
+              <p className="text-xs text-zinc-500">When disabled, agents won't speak responses aloud</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onConfigChange({ voiceEnabled: !config.voiceEnabled })}
+              className={`relative w-10 h-5 rounded-full transition-colors ${
+                config.voiceEnabled ? 'bg-blue-600' : 'bg-zinc-700'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                  config.voiceEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1">
+              Max Characters <span className="text-zinc-500">({config.ttsMaxChars.toLocaleString()})</span>
+            </label>
+            <input
+              type="range"
+              min={500}
+              max={20000}
+              step={500}
+              value={config.ttsMaxChars}
+              onChange={(e) => onConfigChange({ ttsMaxChars: Number(e.target.value) })}
+              className="w-full accent-blue-500"
+            />
+            <div className="relative h-4 text-[10px] text-zinc-500 mt-0.5">
+              <span className="absolute left-0">500</span>
+              <span className="absolute" style={{ left: '28.2%' }}>6k</span>
+              <span className="absolute" style={{ left: '59%' }}>12k</span>
+              <span className="absolute right-0">20k</span>
+            </div>
+            <p className="text-xs text-zinc-600 mt-1">
+              Longer responses are truncated before synthesis. Default: 6,000
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1">
+              Playback Timeout <span className="text-zinc-500">({Math.round(config.ttsPlaybackTimeoutMs / 1000)}s)</span>
+            </label>
+            <input
+              type="range"
+              min={15000}
+              max={300000}
+              step={5000}
+              value={config.ttsPlaybackTimeoutMs}
+              onChange={(e) => onConfigChange({ ttsPlaybackTimeoutMs: Number(e.target.value) })}
+              className="w-full accent-blue-500"
+            />
+            <div className="relative h-4 text-[10px] text-zinc-500 mt-0.5">
+              <span className="absolute left-0">15s</span>
+              <span className="absolute" style={{ left: '15.8%' }}>1m</span>
+              <span className="absolute" style={{ left: '36.8%' }}>2m</span>
+              <span className="absolute right-0">5m</span>
+            </div>
+            <p className="text-xs text-zinc-600 mt-1">
+              Safety timeout — playback is stopped if it exceeds this duration. Default: 2 min
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* Speech-to-Text */}
       <section>
         <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-3">
@@ -118,7 +195,7 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({
           </div>
           <div>
             <label className="block text-xs text-zinc-400 mb-1">
-              Speech Speed <span className="text-zinc-600">({Math.round(config.ttsSpeed * 100)}%)</span>
+              Speech Speed <span className="text-zinc-500">({Math.round(config.ttsSpeed * 100)}%)</span>
             </label>
             <input
               type="range"
@@ -129,7 +206,7 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({
               onChange={(e) => onConfigChange({ ttsSpeed: Number(e.target.value) })}
               className="w-full accent-blue-500"
             />
-            <div className="flex justify-between text-[10px] text-zinc-600 mt-0.5">
+            <div className="flex justify-between text-[10px] text-zinc-500 mt-0.5">
               <span>50%</span>
               <span>100%</span>
               <span>150%</span>
@@ -175,7 +252,7 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({
 
           <div>
             <label className="block text-xs text-zinc-400 mb-1">
-              Min Recording Duration <span className="text-zinc-600">({config.minRecordingMs}ms)</span>
+              Min Recording Duration <span className="text-zinc-500">({config.minRecordingMs}ms)</span>
             </label>
             <input
               type="range"
@@ -193,7 +270,7 @@ export const VoiceSettings: React.FC<VoiceSettingsProps> = ({
 
           <div>
             <label className="block text-xs text-zinc-400 mb-1">
-              Speech Confidence Threshold <span className="text-zinc-600">({config.noSpeechThreshold.toFixed(1)})</span>
+              Speech Confidence Threshold <span className="text-zinc-500">({config.noSpeechThreshold.toFixed(1)})</span>
             </label>
             <input
               type="range"

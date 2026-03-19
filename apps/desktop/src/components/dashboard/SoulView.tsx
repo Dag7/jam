@@ -12,6 +12,8 @@ interface SoulViewProps {
     learnings: string[];
     version: number;
     lastReflection?: string;
+    extraFrontmatter?: Record<string, string>;
+    extraSections?: Array<{ heading: string; content: string }>;
   };
 }
 
@@ -103,6 +105,33 @@ export function SoulView({ soul }: SoulViewProps) {
           ))}
         </ul>
       </div>
+
+      {/* Extra Frontmatter (agent-specific metadata) */}
+      {soul.extraFrontmatter && Object.keys(soul.extraFrontmatter).length > 0 && (
+        <div>
+          <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1">Metadata</h4>
+          <div className="space-y-1">
+            {Object.entries(soul.extraFrontmatter).map(([key, value]) => (
+              <div key={key} className="flex items-baseline gap-2 text-sm">
+                <span className="text-zinc-500 font-mono text-xs">{key}:</span>
+                <span className="text-zinc-300">{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Extra Sections (agent-specific custom sections) */}
+      {soul.extraSections?.map((section, i) => (
+        <div key={i}>
+          <h4 className="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-1">
+            {section.heading.replace(/^##\s*/, '')}
+          </h4>
+          <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap">
+            {section.content.trim()}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }

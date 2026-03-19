@@ -64,23 +64,24 @@ export function emitJsonlTerminalLine(
     // Unwrap stream_event wrapper if present
     const event = raw.type === 'stream_event' && raw.event ? raw.event : raw;
 
-    // Tool use — show as inline code block
+    // Tool use — show tool name and input clearly
     if (event.type === 'tool_use' || event.tool_name) {
       const toolName = event.tool_name ?? event.name ?? 'tool';
       const input = event.input?.command ?? event.input?.file_path ?? '';
-      onOutput(`\n\`${toolName}\` ${input ? String(input).slice(0, 200) : ''}\n`);
+      const preview = input ? ` \`${String(input).slice(0, 120)}\`` : '';
+      onOutput(`\n**${toolName}**${preview}\n`);
       return;
     }
     if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
       const name = event.content_block.name ?? 'tool';
-      onOutput(`\n\`${name}\` `);
+      onOutput(`\n**${name}** `);
       return;
     }
 
-    // Tool result — show as code block
+    // Tool result — show output in a fenced code block
     if (event.type === 'tool_result' || event.content_type === 'tool_result') {
       const output = event.output ?? event.content ?? '';
-      if (output) onOutput(`\n\`\`\`\n${String(output).slice(0, 500)}\n\`\`\`\n`);
+      if (output) onOutput(`\n\`\`\`\n${String(output).slice(0, 800)}\n\`\`\`\n`);
       return;
     }
 

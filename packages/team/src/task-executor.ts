@@ -458,17 +458,6 @@ export class TaskExecutor {
   }
 
   private buildPrompt(task: Task): string {
-    // Task result notifications are informational — short acknowledgment, no full execution
-    if (task.tags.includes('task-result')) {
-      return [
-        'You received a task completion notification from a teammate.',
-        'Acknowledge this briefly. If relevant to your current work, note it.',
-        '',
-        task.title,
-        task.description,
-      ].join('\n');
-    }
-
     const parts = [
       'You have been assigned a task. Complete it and provide a summary of what you did.',
       '',
@@ -482,6 +471,15 @@ export class TaskExecutor {
 
     if (task.tags.length > 0) {
       parts.push(`Tags: ${task.tags.join(', ')}`);
+    }
+
+    // Prevent ACK ping-pong: when a task was delegated by another agent,
+    // the system already sends a completion notification to the sender.
+    // Tell the agent explicitly so it doesn't send a redundant manual reply.
+    if (task.createdBy && task.createdBy !== task.assignedTo
+        && task.createdBy !== 'user' && task.createdBy !== 'system') {
+      parts.push('');
+      parts.push('IMPORTANT: When you complete this task, the sender will be automatically notified of the result. Do NOT send a separate acknowledgment, receipt, or reply task to the sender — doing so creates unnecessary task chains.');
     }
 
     return parts.join('\n');

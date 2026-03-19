@@ -490,18 +490,12 @@ export class Orchestrator {
         const jamIpcDir = join(homedir(), '.jam', 'ipc');
         mkdirSync(jamIpcDir, { recursive: true });
 
-        // System agent mounts entire ~/.jam/ as workspace — skip separate
-        // shared-skills and team mounts (they're already inside the workspace).
-        const isSystemAgent = profile.isSystem === true;
-
         const containerInfo = await cm.createAndStart({
           agentId,
           agentName: profile.name,
-          workspacePath: isSystemAgent
-            ? join(homedir(), '.jam')
-            : (profile.cwd ?? join(homedir(), '.jam', 'agents', profile.name)),
-          sharedSkillsPath: isSystemAgent ? undefined : sharedSkillsDir,
-          teamDirPath: isSystemAgent ? undefined : this.teamDir,
+          workspacePath: profile.cwd ?? join(homedir(), '.jam', 'agents', profile.name),
+          sharedSkillsPath: sharedSkillsDir,
+          teamDirPath: this.teamDir,
           computerUse: profile.allowComputerUse,
           // jam CLI bin — read-only (PATH expects /home/agent/.jam/bin)
           credentialMounts: [
@@ -627,6 +621,20 @@ export class Orchestrator {
     // Bootstrap JAM system agent (creates if not already persisted)
     this.agentManager.ensureSystemAgent(JAM_SYSTEM_PROFILE);
     this.soulManager = new SoulManager(agentsDir, this.eventBus);
+    // Wire SoulManager to read/write from agent workspace CWDs instead of userData.
+    // This makes the workspace SOUL.md the single source of truth — agents can
+    // edit it directly, and the UI reads the same file. Falls back to userData
+    // for agents that don't have a CWD (shouldn't happen in practice).
+    this.soulManager.setCwdResolver((agentId) => {
+      const agent = this.agentManager.get(agentId);
+      return agent?.profile.cwd as string | undefined;
+    });
+    // One-time migration: copy SOUL.md from userData to agent workspace CWD.
+    // Previously SoulManager stored souls in userData/agents/{uuid}/SOUL.md,
+    // now it reads from the workspace CWD. Migrate existing evolved souls.
+    this.migrateSoulsToWorkspace(agentsDir).catch((e: unknown) =>
+      log.warn(`Soul migration: ${String(e)}`),
+    );
     this.taskAssigner = new SmartTaskAssigner();
     this.scheduleStore = new FileScheduleStore(teamDir);
     this.taskScheduler = new TaskScheduler(
@@ -892,7 +900,7 @@ export class Orchestrator {
     const systemAgent = agents.find(a => a.profile.isSystem);
     const systemInbox = systemAgent?.profile.cwd
       ? `${systemAgent.profile.cwd}/inbox.jsonl`
-      : '~/.jam/agents/jam-system/inbox.jsonl';
+      : '~/.jam/agents/jam/inbox.jsonl';
 
     return TEAM_COMMUNICATION_SKILL
       .replace('{{AGENT_ROSTER}}', roster || '- No other agents yet')
@@ -1049,20 +1057,21 @@ export class Orchestrator {
     });
 
     // Execute output arrives per-chunk with no upstream batching — coalesce at 50ms
-    const execBatcher = new Batcher<{ chunks: string[]; clear: boolean }>(
+    const execBatcher = new Batcher<{ chunks: string[]; clear: boolean; command?: string }>(
       50,
       (batch) => {
-        for (const [agentId, { chunks, clear }] of batch) {
+        for (const [agentId, { chunks, clear, command }] of batch) {
           this.sendToRenderer('terminal:executeOutput', {
             agentId,
             output: chunks.join(''),
             clear,
+            command,
           });
         }
       },
       (existing, incoming) => {
         if (incoming.clear) {
-          return { chunks: [...incoming.chunks], clear: true };
+          return { chunks: [...incoming.chunks], clear: true, command: incoming.command };
         }
         existing.chunks.push(...incoming.chunks);
         return existing;
@@ -1070,8 +1079,12 @@ export class Orchestrator {
     );
     this.batchers.push(execBatcher);
 
-    on<{ agentId: string; data: string; clear?: boolean }>('agent:executeOutput', (data) => {
-      execBatcher.add(data.agentId, { chunks: [data.data], clear: !!data.clear });
+    on<{ agentId: string; data: string; clear?: boolean; command?: string }>('agent:executeOutput', (data) => {
+      execBatcher.add(data.agentId, { chunks: [data.data], clear: !!data.clear, command: data.command });
+    });
+
+    on<{ agentId: string; status: 'done' | 'error' }>('agent:executeComplete', (data) => {
+      this.sendToRenderer('terminal:executeComplete', data);
     });
 
     on('voice:transcription', (data) => {
@@ -1245,6 +1258,7 @@ export class Orchestrator {
    *  Used by all TTS callers (ack, progress, death, response complete, status messages). */
   async speakToRenderer(agentId: string, text: string): Promise<void> {
     if (!this.voiceService) return;
+    if (this.config.voiceEnabled === false) return;
 
     const agent = this.agentManager.get(agentId);
     if (!agent) return;
@@ -1337,10 +1351,47 @@ export class Orchestrator {
     }
 
     let text = this.stripMarkdownForTTS(responseText);
-    if (text.length > 1500) text = text.slice(0, 1500) + '...';
+    const maxChars = this.config.ttsMaxChars ?? 6000;
+    if (text.length > maxChars) text = text.slice(0, maxChars) + '...';
 
     log.info(`Synthesizing TTS (${text.length} chars)`, undefined, agentId);
     await this.speakToRenderer(agentId, text);
+  }
+
+  /**
+   * One-time migration: copy evolved SOUL.md files from Electron userData
+   * to agent workspace CWDs. Previously SoulManager stored souls in
+   * `userData/agents/{uuid}/SOUL.md`, now it uses the workspace CWD.
+   * Only copies if the workspace doesn't already have a SOUL.md.
+   */
+  private async migrateSoulsToWorkspace(userDataAgentsDir: string): Promise<void> {
+    const agents = this.agentManager.list();
+    let migrated = 0;
+
+    for (const agent of agents) {
+      const cwd = agent.profile.cwd as string | undefined;
+      if (!cwd) continue;
+
+      const workspaceSoul = join(cwd, 'SOUL.md');
+      const userDataSoul = join(userDataAgentsDir, agent.profile.id, 'SOUL.md');
+
+      // Skip if workspace already has a SOUL.md or userData doesn't
+      if (existsSync(workspaceSoul) || !existsSync(userDataSoul)) continue;
+
+      try {
+        mkdirSync(cwd, { recursive: true });
+        const content = await readFile(userDataSoul, 'utf-8');
+        await writeFile(workspaceSoul, content, 'utf-8');
+        migrated++;
+        log.info(`Migrated SOUL.md → workspace for "${agent.profile.name}"`, undefined, agent.profile.id);
+      } catch (err) {
+        log.warn(`Failed to migrate SOUL.md for "${agent.profile.name}": ${String(err)}`);
+      }
+    }
+
+    if (migrated > 0) {
+      log.info(`Soul migration complete: ${migrated} agent(s) migrated to workspace CWDs`);
+    }
   }
 
   /**
@@ -1358,14 +1409,20 @@ export class Orchestrator {
       return;
     }
 
+    const existingAgents = this.agentManager.list();
     const knownCwds = new Set(
-      this.agentManager.list().map((a) => a.profile.cwd).filter(Boolean),
+      existingAgents.map((a) => a.profile.cwd).filter(Boolean),
+    );
+    const knownNames = new Set(
+      existingAgents.map((a) => a.profile.name.toLowerCase()),
     );
 
     for (const entry of entries) {
       if (entry.startsWith('.')) continue;
       const cwd = join(agentsDir, entry);
       if (knownCwds.has(cwd)) continue;
+      // Skip folders that match an existing agent name (e.g. "jam" when system agent "JAM" exists)
+      if (knownNames.has(entry.toLowerCase())) continue;
       if (!existsSync(join(cwd, 'SOUL.md'))) continue;
 
       const name = entry.charAt(0).toUpperCase() + entry.slice(1);

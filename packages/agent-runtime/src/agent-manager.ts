@@ -203,9 +203,8 @@ export class AgentManager {
   ensureSystemAgent(profile: AgentProfile): void {
     // Always compute canonical cwd — persisted profiles may have stale paths
     if (!profile.cwd) {
-      profile = profile.isSystem
-        ? { ...profile, cwd: join(homedir(), '.jam') }
-        : { ...profile, cwd: join(homedir(), '.jam', 'agents', profile.name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase()) };
+      const slug = profile.name.replace(/[^a-zA-Z0-9_-]/g, '-').toLowerCase();
+      profile = { ...profile, cwd: join(homedir(), '.jam', 'agents', slug) };
     }
     try {
       mkdirSync(profile.cwd!, { recursive: true });
@@ -213,16 +212,9 @@ export class AgentManager {
       log.warn(`Could not create system agent directory: ${String(err)}`, undefined, profile.id);
     }
 
-    // Initialize root .gitignore for system agent, per-agent .gitignore for others
-    if (profile.isSystem) {
-      this.contextBuilder.initializeRootGitignore(profile.cwd!).catch(err =>
-        log.warn(`Failed to initialize root .gitignore: ${String(err)}`, undefined, profile.id)
-      );
-    } else {
-      this.contextBuilder.initializeGitignore(profile.cwd!).catch(err =>
-        log.warn(`Failed to initialize .gitignore: ${String(err)}`, undefined, profile.id)
-      );
-    }
+    this.contextBuilder.initializeGitignore(profile.cwd!).catch(err =>
+      log.warn(`Failed to initialize .gitignore: ${String(err)}`, undefined, profile.id)
+    );
 
     const existing = this.agents.get(profile.id);
     if (existing) {
@@ -471,12 +463,13 @@ export class AgentManager {
       this.eventBus.emit('agent:executeOutput', { agentId, data: this.redact(data) });
     };
 
-    // Clear previous execute output and show command header
-    const cmdPreview = text.length > 60 ? text.slice(0, 60) + '...' : text;
+    // Clear previous execute output — start a new execution segment
+    const cmdPreview = text.length > 80 ? text.slice(0, 80) + '...' : text;
     this.eventBus.emit('agent:executeOutput', {
       agentId,
-      data: `\n---\n**${state.profile.name}:** "${cmdPreview}"\n\n`,
+      data: '',
       clear: true,
+      command: cmdPreview,
     });
 
     let result;
@@ -492,6 +485,7 @@ export class AgentManager {
     } catch (err) {
       this.taskTracker.completeTask(agentId, 'failed');
       this.abortControllers.delete(agentId);
+      this.eventBus.emit('agent:executeComplete', { agentId, status: 'error' });
       this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
       return { success: false, error: String(err) };
     }
@@ -505,6 +499,7 @@ export class AgentManager {
         agentId,
         data: `\n> **Error:** ${(result.error ?? 'Unknown error').slice(0, 200)}\n`,
       });
+      this.eventBus.emit('agent:executeComplete', { agentId, status: 'error' });
       this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
       return { success: false, error: result.error };
     }
@@ -542,11 +537,8 @@ export class AgentManager {
       }
     }
 
-    // Completion marker (output was already streamed via onOutput)
-    this.eventBus.emit('agent:executeOutput', {
-      agentId,
-      data: '\n\n---\n',
-    });
+    // Mark execution segment as done
+    this.eventBus.emit('agent:executeComplete', { agentId, status: 'done' });
 
     this.updateVisualState(agentId, state.status === 'running' ? 'idle' : 'offline');
 

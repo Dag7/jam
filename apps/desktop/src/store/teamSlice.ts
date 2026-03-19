@@ -38,6 +38,8 @@ export interface SoulEntry {
   learnings: string[];
   lastReflection: string;
   version: number;
+  extraFrontmatter?: Record<string, string>;
+  extraSections?: Array<{ heading: string; content: string }>;
 }
 
 export interface ChannelEntry {
