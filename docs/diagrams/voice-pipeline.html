@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 48px; width: 1000px; }
+  h1 { font-size: 22px; font-weight: 600; color: #f0f6fc; margin-bottom: 32px; text-align: center; }
+
+  .pipeline { display: flex; flex-direction: column; gap: 0; }
+
+  .stage { display: flex; align-items: stretch; gap: 0; }
+  .stage-left { width: 220px; display: flex; flex-direction: column; align-items: flex-end; justify-content: center; padding-right: 20px; }
+  .stage-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #484f58; }
+  .stage-state { font-size: 11px; font-family: 'SF Mono', monospace; margin-top: 4px; }
+
+  .stage-center { display: flex; flex-direction: column; align-items: center; width: 40px; }
+  .stage-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+  .stage-line { flex: 1; width: 2px; }
+
+  .stage-right { flex: 1; padding-left: 20px; display: flex; align-items: center; }
+  .stage-card { border-radius: 10px; padding: 16px 20px; width: 100%; }
+  .card-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .card-desc { font-size: 12px; color: #8b949e; line-height: 1.5; }
+  .card-providers { display: flex; gap: 8px; margin-top: 8px; }
+  .provider-chip { font-size: 10px; font-weight: 600; padding: 3px 10px; border-radius: 4px; }
+
+  .arrow-gap { height: 20px; }
+  .arrow-gap .stage-center { justify-content: center; }
+
+  /* Colors */
+  .c-blue .stage-dot { background: #1f6feb; }
+  .c-blue .stage-line { background: #1f6feb44; }
+  .c-blue .stage-state { color: #58a6ff; }
+  .c-blue .stage-card { background: #1a2332; border: 1px solid #1f6feb44; }
+  .c-blue .card-title { color: #58a6ff; }
+
+  .c-green .stage-dot { background: #238636; }
+  .c-green .stage-line { background: #23863644; }
+  .c-green .stage-state { color: #3fb950; }
+  .c-green .stage-card { background: #1a2e1a; border: 1px solid #3fb95044; }
+  .c-green .card-title { color: #3fb950; }
+
+  .c-purple .stage-dot { background: #8957e5; }
+  .c-purple .stage-line { background: #8957e544; }
+  .c-purple .stage-state { color: #bc8cff; }
+  .c-purple .stage-card { background: #261a33; border: 1px solid #a371f744; }
+  .c-purple .card-title { color: #bc8cff; }
+
+  .c-orange .stage-dot { background: #b56a15; }
+  .c-orange .stage-line { background: #b56a1544; }
+  .c-orange .stage-state { color: #d29544; }
+  .c-orange .stage-card { background: #2e2318; border: 1px solid #d2954444; }
+  .c-orange .card-title { color: #d29544; }
+
+  .c-teal .stage-dot { background: #1a8a7d; }
+  .c-teal .stage-line { background: #1a8a7d44; }
+  .c-teal .stage-state { color: #56d4cf; }
+  .c-teal .stage-card { background: #1a2e2e; border: 1px solid #3fb9b044; }
+  .c-teal .card-title { color: #56d4cf; }
+
+  .c-red .stage-dot { background: #da3633; }
+  .c-red .stage-line { background: #da363344; }
+  .c-red .stage-state { color: #ff7b72; }
+  .c-red .stage-card { background: #2e1a1a; border: 1px solid #f8514944; }
+  .c-red .card-title { color: #ff7b72; }
+
+  .chip-openai { background: #1f6feb33; color: #58a6ff; }
+  .chip-eleven { background: #8957e533; color: #bc8cff; }
+</style>
+</head>
+<body>
+<h1>Voice Pipeline — Speak to Agent and Back</h1>
+
+<div class="pipeline">
+  <div class="stage c-blue">
+    <div class="stage-left">
+      <span class="stage-label">Voice State</span>
+      <span class="stage-state">capturing</span>
+    </div>
+    <div class="stage-center"><div class="stage-dot"></div><div class="stage-line"></div></div>
+    <div class="stage-right">
+      <div class="stage-card">
+        <div class="card-title">Audio Capture</div>
+        <div class="card-desc">Browser MediaRecorder captures mic audio. Push-to-talk or voice activity detection. Audio chunks sent via IPC to main process.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage c-green">
+    <div class="stage-left">
+      <span class="stage-label">Voice State</span>
+      <span class="stage-state">processing</span>
+    </div>
+    <div class="stage-center"><div class="stage-dot"></div><div class="stage-line"></div></div>
+    <div class="stage-right">
+      <div class="stage-card">
+        <div class="card-title">Speech-to-Text</div>
+        <div class="card-desc">Audio buffer sent to STT provider API. Returns transcription with confidence score and language detection. Agent name used as Whisper hint for accuracy.</div>
+        <div class="card-providers">
+          <span class="provider-chip chip-openai">Whisper (OpenAI)</span>
+          <span class="provider-chip chip-eleven">ElevenLabs Scribe</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage c-purple">
+    <div class="stage-left">
+      <span class="stage-label">Routing</span>
+      <span class="stage-state">dispatch</span>
+    </div>
+    <div class="stage-center"><div class="stage-dot"></div><div class="stage-line"></div></div>
+    <div class="stage-right">
+      <div class="stage-card">
+        <div class="card-title">Command Parsing &amp; Routing</div>
+        <div class="card-desc">CommandParser extracts intent + target agent from transcription. CommandRouter resolves agent ID by name match. Special commands (status, interrupt) dispatched directly.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage c-orange">
+    <div class="stage-left">
+      <span class="stage-label">Agent</span>
+      <span class="stage-state">thinking</span>
+    </div>
+    <div class="stage-center"><div class="stage-dot"></div><div class="stage-line"></div></div>
+    <div class="stage-right">
+      <div class="stage-card">
+        <div class="card-title">Agent Execution</div>
+        <div class="card-desc">Context enriched with SOUL.md + history + skills. Runtime spawns CLI process, writes prompt to stdin. Progress phrases sent to TTS during execution for real-time feedback.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage c-red">
+    <div class="stage-left">
+      <span class="stage-label">Voice State</span>
+      <span class="stage-state">speaking</span>
+    </div>
+    <div class="stage-center"><div class="stage-dot"></div><div class="stage-line"></div></div>
+    <div class="stage-right">
+      <div class="stage-card">
+        <div class="card-title">Text-to-Speech</div>
+        <div class="card-desc">Agent response text sent to TTS provider. Audio cached by SHA256 hash. Queued playback via useTTSQueue hook — sequential, non-overlapping. Per-agent voice assignment.</div>
+        <div class="card-providers">
+          <span class="provider-chip chip-openai">OpenAI TTS (13 voices)</span>
+          <span class="provider-chip chip-eleven">ElevenLabs (48 voices)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage c-teal">
+    <div class="stage-left">
+      <span class="stage-label">Voice State</span>
+      <span class="stage-state">idle</span>
+    </div>
+    <div class="stage-center"><div class="stage-dot"></div></div>
+    <div class="stage-right">
+      <div class="stage-card">
+        <div class="card-title">Record &amp; Reset</div>
+        <div class="card-desc">Conversation recorded to daily JSONL. Session ID stored for resume. Voice state returns to idle, ready for next command.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

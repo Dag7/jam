@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 48px; width: 1000px; }
+  h1 { font-size: 22px; font-weight: 600; color: #f0f6fc; margin-bottom: 8px; text-align: center; }
+  .subtitle { font-size: 13px; color: #8b949e; text-align: center; margin-bottom: 32px; }
+  .base { border: 1.5px solid #30363d; border-radius: 12px; padding: 24px; background: #161b22; margin-bottom: 20px; }
+  .base-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  .base-badge { background: #1f6feb; color: #fff; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .base-name { font-size: 16px; font-weight: 600; color: #58a6ff; }
+  .method-list { display: flex; flex-direction: column; gap: 6px; }
+  .method { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #0d1117; border: 1px solid #21262d; border-radius: 8px; }
+  .method-tag { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.5px; min-width: 60px; text-align: center; }
+  .tag-final { background: #1f6feb33; color: #58a6ff; }
+  .tag-abstract { background: #8957e533; color: #bc8cff; }
+  .tag-virtual { background: #d2954433; color: #d29544; }
+  .method-name { font-size: 13px; font-family: 'SF Mono', monospace; font-weight: 500; color: #e6edf3; flex: 1; }
+  .method-desc { font-size: 11px; color: #7d8590; }
+
+  .runtimes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .runtime { border-radius: 10px; padding: 18px; position: relative; }
+  .runtime-name { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+  .runtime-cmd { font-size: 11px; font-family: 'SF Mono', monospace; color: #7d8590; margin-bottom: 10px; }
+  .runtime-props { display: flex; flex-direction: column; gap: 4px; }
+  .prop { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+  .prop-key { color: #8b949e; min-width: 80px; }
+  .prop-val { color: #e6edf3; font-family: 'SF Mono', monospace; font-size: 10px; }
+  .strategy-badge { display: inline-block; font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; margin-top: 8px; }
+
+  .rt-claude { background: #1a2332; border: 1px solid #1f6feb44; }
+  .rt-claude .runtime-name { color: #58a6ff; }
+  .rt-claude .strategy-badge { background: #1f6feb33; color: #58a6ff; }
+
+  .rt-cursor { background: #261a33; border: 1px solid #a371f744; }
+  .rt-cursor .runtime-name { color: #bc8cff; }
+  .rt-cursor .strategy-badge { background: #8957e533; color: #bc8cff; }
+
+  .rt-opencode { background: #1a2e1a; border: 1px solid #3fb95044; }
+  .rt-opencode .runtime-name { color: #3fb950; }
+  .rt-opencode .strategy-badge { background: #23863633; color: #3fb950; }
+
+  .rt-codex { background: #2e2318; border: 1px solid #d2954444; }
+  .rt-codex .runtime-name { color: #d29544; }
+  .rt-codex .strategy-badge { background: #d2954433; color: #d29544; }
+
+  .arrow-label { text-align: center; color: #484f58; font-size: 11px; margin: 6px 0 14px; }
+  .arrow-label span { display: inline-block; border: 1px dashed #30363d; padding: 2px 12px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Agent Runtime — Template Method Pattern</h1>
+<p class="subtitle">BaseAgentRuntime defines the lifecycle; runtimes override hooks</p>
+
+<div class="base">
+  <div class="base-header">
+    <span class="base-badge">Abstract</span>
+    <span class="base-name">BaseAgentRuntime</span>
+  </div>
+  <div class="method-list">
+    <div class="method">
+      <span class="method-tag tag-final">final</span>
+      <span class="method-name">execute(profile, text, options)</span>
+      <span class="method-desc">Orchestrates: build args → spawn → write stdin → capture output → parse result</span>
+    </div>
+    <div class="method">
+      <span class="method-tag tag-abstract">abstract</span>
+      <span class="method-name">getCommand()</span>
+      <span class="method-desc">CLI binary name (e.g. "claude", "opencode")</span>
+    </div>
+    <div class="method">
+      <span class="method-tag tag-abstract">abstract</span>
+      <span class="method-name">buildExecuteArgs(profile)</span>
+      <span class="method-desc">Runtime-specific CLI flags and arguments</span>
+    </div>
+    <div class="method">
+      <span class="method-tag tag-virtual">virtual</span>
+      <span class="method-name">writeInput(child, profile, text)</span>
+      <span class="method-desc">Write prompt to stdin (overridable — Codex uses CLI arg)</span>
+    </div>
+    <div class="method">
+      <span class="method-tag tag-virtual">virtual</span>
+      <span class="method-name">formatInput(text, context)</span>
+      <span class="method-desc">Format text for PTY write (shared context injection)</span>
+    </div>
+    <div class="method">
+      <span class="method-tag tag-virtual">virtual</span>
+      <span class="method-name">buildExecuteEnv(profile, env)</span>
+      <span class="method-desc">Runtime-specific environment variables</span>
+    </div>
+  </div>
+</div>
+
+<div class="arrow-label"><span>extends</span></div>
+
+<div class="runtimes">
+  <div class="runtime rt-claude">
+    <div class="runtime-name">ClaudeCodeRuntime</div>
+    <div class="runtime-cmd">$ claude -p --output-format stream-json</div>
+    <div class="runtime-props">
+      <div class="prop"><span class="prop-key">Auth</span><span class="prop-val">OAuth / ANTHROPIC_API_KEY</span></div>
+      <div class="prop"><span class="prop-key">Resume</span><span class="prop-val">--resume &lt;sessionId&gt;</span></div>
+      <div class="prop"><span class="prop-key">Models</span><span class="prop-val">Opus 4.6, Sonnet 4.6/4.5, Haiku 4.5</span></div>
+      <div class="prop"><span class="prop-key">Input</span><span class="prop-val">stdin write + close</span></div>
+    </div>
+    <span class="strategy-badge">JsonlOutputStrategy</span>
+  </div>
+
+  <div class="runtime rt-cursor">
+    <div class="runtime-name">CursorRuntime</div>
+    <div class="runtime-cmd">$ cursor-agent -p --output-format stream-json</div>
+    <div class="runtime-props">
+      <div class="prop"><span class="prop-key">Auth</span><span class="prop-val">OAuth / CURSOR_API_KEY</span></div>
+      <div class="prop"><span class="prop-key">Resume</span><span class="prop-val">—</span></div>
+      <div class="prop"><span class="prop-key">Models</span><span class="prop-val">Auto, Composer, Opus, GPT variants</span></div>
+      <div class="prop"><span class="prop-key">Input</span><span class="prop-val">stdin write + close</span></div>
+    </div>
+    <span class="strategy-badge">JsonlOutputStrategy</span>
+  </div>
+
+  <div class="runtime rt-opencode">
+    <div class="runtime-name">OpenCodeRuntime</div>
+    <div class="runtime-cmd">$ opencode run</div>
+    <div class="runtime-props">
+      <div class="prop"><span class="prop-key">Auth</span><span class="prop-val">Config file / ANTHROPIC_API_KEY</span></div>
+      <div class="prop"><span class="prop-key">Resume</span><span class="prop-val">—</span></div>
+      <div class="prop"><span class="prop-key">Models</span><span class="prop-val">Claude, GPT-4o, o3, Gemini</span></div>
+      <div class="prop"><span class="prop-key">Input</span><span class="prop-val">stdin write + close</span></div>
+    </div>
+    <span class="strategy-badge">ThrottledOutputStrategy</span>
+  </div>
+
+  <div class="runtime rt-codex">
+    <div class="runtime-name">CodexCLIRuntime</div>
+    <div class="runtime-cmd">$ codex --quiet "prompt text here"</div>
+    <div class="runtime-props">
+      <div class="prop"><span class="prop-key">Auth</span><span class="prop-val">OPENAI_API_KEY / config</span></div>
+      <div class="prop"><span class="prop-key">Resume</span><span class="prop-val">—</span></div>
+      <div class="prop"><span class="prop-key">Models</span><span class="prop-val">GPT-5.x Codex, o3, o4-mini</span></div>
+      <div class="prop"><span class="prop-key">Input</span><span class="prop-val">CLI argument (stdin no-op)</span></div>
+    </div>
+    <span class="strategy-badge">ThrottledOutputStrategy</span>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 48px; width: 1000px; }
+  h1 { font-size: 22px; font-weight: 600; color: #f0f6fc; margin-bottom: 8px; text-align: center; }
+  .subtitle { font-size: 13px; color: #8b949e; text-align: center; margin-bottom: 36px; }
+
+  .columns { display: flex; gap: 16px; margin-bottom: 24px; }
+  .column { flex: 1; }
+  .col-header { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #484f58; margin-bottom: 12px; padding-left: 4px; }
+
+  .card { border-radius: 10px; padding: 16px 18px; margin-bottom: 12px; }
+  .card-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .card-desc { font-size: 11px; color: #8b949e; line-height: 1.6; }
+  .card-code { font-size: 10px; font-family: 'SF Mono', monospace; background: #0d1117; border: 1px solid #21262d; border-radius: 5px; padding: 6px 10px; margin-top: 8px; color: #79c0ff; white-space: pre; }
+  .card-tag { display: inline-block; font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; margin-top: 6px; }
+
+  .blue { background: #1a2332; border: 1px solid #1f6feb44; }
+  .blue .card-title { color: #58a6ff; }
+  .blue .card-tag { background: #1f6feb33; color: #58a6ff; }
+
+  .green { background: #1a2e1a; border: 1px solid #3fb95044; }
+  .green .card-title { color: #3fb950; }
+  .green .card-tag { background: #23863633; color: #3fb950; }
+
+  .purple { background: #261a33; border: 1px solid #a371f744; }
+  .purple .card-title { color: #bc8cff; }
+  .purple .card-tag { background: #8957e533; color: #bc8cff; }
+
+  .orange { background: #2e2318; border: 1px solid #d2954444; }
+  .orange .card-title { color: #d29544; }
+  .orange .card-tag { background: #d2954433; color: #d29544; }
+
+  .teal { background: #1a2e2e; border: 1px solid #3fb9b044; }
+  .teal .card-title { color: #56d4cf; }
+  .teal .card-tag { background: #1a8a7d33; color: #56d4cf; }
+
+  .compose-box { border: 1.5px solid #30363d; border-radius: 12px; padding: 20px; background: #161b22; }
+  .compose-title { font-size: 14px; font-weight: 600; color: #f0f6fc; margin-bottom: 12px; }
+  .compose-items { display: flex; flex-direction: column; gap: 6px; }
+  .compose-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #0d1117; border: 1px solid #21262d; border-radius: 6px; }
+  .compose-num { font-size: 11px; font-weight: 700; color: #484f58; width: 20px; }
+  .compose-text { font-size: 12px; color: #e6edf3; flex: 1; }
+  .compose-chars { font-size: 10px; color: #484f58; font-family: 'SF Mono', monospace; }
+  .compose-note { font-size: 11px; color: #7d8590; margin-top: 12px; text-align: center; font-style: italic; }
+</style>
+</head>
+<body>
+<h1>Conversation Context — How Agents Remember</h1>
+<p class="subtitle">Three mechanisms work together to maintain continuity across messages</p>
+
+<div class="columns">
+  <div class="column">
+    <div class="col-header">Persistence Layer</div>
+
+    <div class="card blue">
+      <div class="card-title">Session ID Resume</div>
+      <div class="card-desc">In-memory map stores session IDs per agent. Claude Code uses <code>--resume</code> flag to continue server-side conversation. Lost on app restart.</div>
+      <div class="card-code">voiceSessions.set(agentId, result.sessionId)
+// Next call:
+args.push('--resume', sessionId)</div>
+      <div class="card-tag">Claude Code only</div>
+    </div>
+
+    <div class="card green">
+      <div class="card-title">Conversation JSONL</div>
+      <div class="card-desc">Every exchange recorded to daily files. Loaded on next command to rebuild context. Auto-pruned after 180 days.</div>
+      <div class="card-code">~/.jam/agents/sue/conversations/
+├── 2026-04-03.jsonl
+└── 2026-04-04.jsonl</div>
+      <div class="card-tag">All runtimes — persistent</div>
+    </div>
+
+    <div class="card purple">
+      <div class="card-title">SOUL.md</div>
+      <div class="card-desc">Living personality file that evolves over time. Contains persona, traits, goals, learnings. Included in every system prompt.</div>
+      <div class="card-code">~/.jam/agents/sue/SOUL.md</div>
+      <div class="card-tag">All runtimes — persistent</div>
+    </div>
+
+    <div class="card orange">
+      <div class="card-title">Matched Skills</div>
+      <div class="card-desc">Trigger-based .md files in skills/ directory. Auto-matched by keyword against command text. Injected when relevant.</div>
+      <div class="card-code">~/.jam/agents/sue/skills/
+└── react-patterns.md</div>
+      <div class="card-tag">All runtimes — persistent</div>
+    </div>
+  </div>
+
+  <div class="column">
+    <div class="col-header">Execution Paths</div>
+
+    <div class="card teal">
+      <div class="card-title">One-Shot Execute</div>
+      <div class="card-desc">Spawns a fresh process per command. Context must be explicitly injected via system prompt + session resume. Used for voice commands and chat.</div>
+      <div class="card-code">runtime.execute(enrichedProfile, text, {
+  sessionId,  // for --resume
+  cwd, env, onProgress, signal
+})</div>
+      <div class="card-tag">Voice &amp; Chat commands</div>
+    </div>
+
+    <div class="card teal">
+      <div class="card-title">Interactive PTY</div>
+      <div class="card-desc">Agent process stays alive in a persistent terminal. Maintains its own internal state — no explicit context passing needed. Input written directly to PTY.</div>
+      <div class="card-code">// Process is already running
+ptyManager.write(agentId, formatted + '\r')
+// Agent remembers everything internally</div>
+      <div class="card-tag">Terminal / Stage view</div>
+    </div>
+
+    <div class="card teal" style="background: #161b22; border-color: #30363d;">
+      <div class="card-title" style="color: #f0f6fc;">Message Queue</div>
+      <div class="card-desc">Per-agent sequential queue prevents race conditions. Each message fully processed before next starts. Context rebuilt fresh for every command.</div>
+      <div class="card-code">enqueueCommand(agentId, text, 'text')
+→ processQueue()  // sequential lock
+→ voiceCommand()  // rebuilds context</div>
+    </div>
+  </div>
+</div>
+
+<div class="compose-box">
+  <div class="compose-title">System Prompt Composition (every execute call)</div>
+  <div class="compose-items">
+    <div class="compose-item">
+      <span class="compose-num">1</span>
+      <span class="compose-text">Agent identity — name, workspace, execution environment</span>
+      <span class="compose-chars">~200 chars</span>
+    </div>
+    <div class="compose-item">
+      <span class="compose-num">2</span>
+      <span class="compose-text">SOUL.md — personality, traits, goals, learnings</span>
+      <span class="compose-chars">variable</span>
+    </div>
+    <div class="compose-item">
+      <span class="compose-num">3</span>
+      <span class="compose-text">Recent conversation history — last 20 entries (user + agent messages)</span>
+      <span class="compose-chars">~6000 chars</span>
+    </div>
+    <div class="compose-item">
+      <span class="compose-num">4</span>
+      <span class="compose-text">Matched skills — trigger-matched .md files from skills/ directory</span>
+      <span class="compose-chars">variable</span>
+    </div>
+    <div class="compose-item">
+      <span class="compose-num">5</span>
+      <span class="compose-text">Skill system instructions — how to create and use skills</span>
+      <span class="compose-chars">~800 chars</span>
+    </div>
+  </div>
+  <div class="compose-note">Max 12,000 characters — head (identity/soul) and tail (instructions) preserved on truncation</div>
+</div>
+
+</body>
+</html>

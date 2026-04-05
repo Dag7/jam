@@ -34,3 +34,6 @@ audio-cache/
 
 # Test coverage
 coverage/
+
+# Logs
+*.log

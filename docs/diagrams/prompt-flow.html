@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 48px; width: 900px; }
+  h1 { font-size: 22px; font-weight: 600; color: #f0f6fc; margin-bottom: 32px; text-align: center; }
+  .flow { display: flex; flex-direction: column; gap: 0; }
+  .step { display: flex; align-items: stretch; gap: 16px; }
+  .step-num { width: 36px; display: flex; flex-direction: column; align-items: center; }
+  .num-circle { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; }
+  .num-line { flex: 1; width: 2px; margin: 4px 0; }
+  .step-card { flex: 1; border-radius: 10px; padding: 16px 20px; margin-bottom: 8px; }
+  .step-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .step-file { font-size: 11px; font-family: 'SF Mono', monospace; margin-bottom: 6px; opacity: 0.6; }
+  .step-desc { font-size: 12px; color: #8b949e; line-height: 1.6; }
+  .step-code { font-size: 11px; font-family: 'SF Mono', monospace; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; margin-top: 8px; color: #79c0ff; overflow-x: auto; white-space: pre; }
+  .blue .num-circle { background: #1f6feb; color: #fff; }
+  .blue .num-line { background: #1f6feb44; }
+  .blue .step-card { background: #1a2332; border: 1px solid #1f6feb44; }
+  .blue .step-title { color: #58a6ff; }
+  .green .num-circle { background: #238636; color: #fff; }
+  .green .num-line { background: #23863644; }
+  .green .step-card { background: #1a2e1a; border: 1px solid #3fb95044; }
+  .green .step-title { color: #3fb950; }
+  .purple .num-circle { background: #8957e5; color: #fff; }
+  .purple .num-line { background: #8957e544; }
+  .purple .step-card { background: #261a33; border: 1px solid #a371f744; }
+  .purple .step-title { color: #bc8cff; }
+  .orange .num-circle { background: #b56a15; color: #fff; }
+  .orange .num-line { background: #b56a1544; }
+  .orange .step-card { background: #2e2318; border: 1px solid #d2954444; }
+  .orange .step-title { color: #d29544; }
+  .teal .num-circle { background: #1a8a7d; color: #fff; }
+  .teal .num-line { background: #1a8a7d44; }
+  .teal .step-card { background: #1a2e2e; border: 1px solid #3fb9b044; }
+  .teal .step-title { color: #56d4cf; }
+  .side-labels { display: flex; justify-content: space-between; margin: 0 52px 4px; }
+  .side-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #484f58; }
+</style>
+</head>
+<body>
+<h1>Prompt Flow — User to Agent</h1>
+
+<div class="side-labels">
+  <span class="side-label">Process</span>
+  <span class="side-label">Layer</span>
+</div>
+
+<div class="flow">
+  <div class="step blue">
+    <div class="step-num"><div class="num-circle">1</div><div class="num-line"></div></div>
+    <div class="step-card">
+      <div class="step-title">User Input</div>
+      <div class="step-file">containers/CommandBarContainer.tsx</div>
+      <div class="step-desc">User types in textarea and presses Enter. Text captured in React state, dispatched via <code>submitCommand()</code>.</div>
+      <div class="step-code">submitCommand() → sendTextCommand(textInput.trim(), attachments)</div>
+    </div>
+  </div>
+
+  <div class="step blue">
+    <div class="step-num"><div class="num-circle">2</div><div class="num-line"></div></div>
+    <div class="step-card">
+      <div class="step-title">Optimistic UI + IPC Invoke</div>
+      <div class="step-file">hooks/useOrchestrator.ts</div>
+      <div class="step-desc">Adds user message to Zustand store immediately (optimistic). Invokes IPC to main process.</div>
+      <div class="step-code">await window.jam.chat.sendCommand(text, files)</div>
+    </div>
+  </div>
+
+  <div class="step green">
+    <div class="step-num"><div class="num-circle">3</div><div class="num-line"></div></div>
+    <div class="step-card">
+      <div class="step-title">Command Parsing &amp; Routing</div>
+      <div class="step-file">electron/ipc/chat-handlers.ts</div>
+      <div class="step-desc">Main process handler parses intent via <code>CommandParser</code>, resolves target agent via <code>CommandRouter</code>, checks for special commands (status, interrupt).</div>
+      <div class="step-code">commandParser.parse(text) → router.resolveTarget() → router.dispatch()</div>
+    </div>
+  </div>
+
+  <div class="step green">
+    <div class="step-num"><div class="num-circle">4</div><div class="num-line"></div></div>
+    <div class="step-card">
+      <div class="step-title">Message Queue</div>
+      <div class="step-file">packages/agent-runtime/src/agent-manager.ts</div>
+      <div class="step-desc">Per-agent queue with sequential processing lock. Messages processed one at a time to prevent race conditions.</div>
+      <div class="step-code">agentManager.enqueueCommand(targetId, text, 'text')
+→ processQueue() → voiceCommand(agentId, text)</div>
+    </div>
+  </div>
+
+  <div class="step purple">
+    <div class="step-num"><div class="num-circle">5</div><div class="num-line"></div></div>
+    <div class="step-card">
+      <div class="step-title">Context Enrichment</div>
+      <div class="step-file">packages/agent-runtime/src/agent-context-builder.ts</div>
+      <div class="step-desc">Builds system prompt from SOUL.md + last 20 conversation entries + matched skills. Max 12K chars.</div>
+      <div class="step-code">contextBuilder.buildContext(profile, text)
+→ { soulContent, recentHistory, matchedSkills } → enrichedProfile</div>
+    </div>
+  </div>
+
+  <div class="step orange">
+    <div class="step-num"><div class="num-circle">6</div><div class="num-line"></div></div>
+    <div class="step-card">
+      <div class="step-title">Runtime Execute (Template Method)</div>
+      <div class="step-file">packages/agent-runtime/src/runtimes/base-runtime.ts</div>
+      <div class="step-desc">Spawns child process with built args &amp; env. Writes prompt to stdin. Captures output via JSONL or throttled strategy. Waits for exit.</div>
+      <div class="step-code">spawnProcess(command, args, { cwd, env })
+→ writeInput(child, profile, text)    // stdin write
+→ outputStrategy.process(stdout)      // parse response
+→ ExecutionResult { text, sessionId }</div>
+    </div>
+  </div>
+
+  <div class="step teal">
+    <div class="step-num"><div class="num-circle">7</div><div class="num-line"></div></div>
+    <div class="step-card">
+      <div class="step-title">Record &amp; Respond</div>
+      <div class="step-file">agent-manager.ts → agent-context-builder.ts</div>
+      <div class="step-desc">Saves user + agent messages to daily JSONL. Stores session ID for resume. Returns result to renderer for display.</div>
+      <div class="step-code">recordConversation(cwd, { role: 'user', content: text })
+recordConversation(cwd, { role: 'agent', content: result.text })
+voiceSessions.set(agentId, result.sessionId)</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

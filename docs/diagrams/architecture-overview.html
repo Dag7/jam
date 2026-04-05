@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; padding: 48px; width: 1100px; }
+  h1 { font-size: 22px; font-weight: 600; color: #f0f6fc; margin-bottom: 32px; text-align: center; letter-spacing: -0.3px; }
+  .layer { border: 1.5px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 16px; background: #161b22; position: relative; }
+  .layer-label { position: absolute; top: -10px; left: 20px; background: #0d1117; padding: 0 10px; font-size: 11px; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+  .boxes { display: flex; gap: 12px; flex-wrap: wrap; }
+  .box { border-radius: 8px; padding: 14px 16px; flex: 1; min-width: 140px; }
+  .box-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .box-sub { font-size: 11px; color: #8b949e; line-height: 1.5; }
+  .box-pkg { font-size: 10px; font-family: 'SF Mono', monospace; color: #7d8590; margin-top: 6px; }
+  .blue { background: #1a2332; border: 1px solid #1f6feb44; }
+  .blue .box-title { color: #58a6ff; }
+  .green { background: #1a2e1a; border: 1px solid #3fb95044; }
+  .green .box-title { color: #3fb950; }
+  .purple { background: #261a33; border: 1px solid #a371f744; }
+  .purple .box-title { color: #bc8cff; }
+  .orange { background: #2e2318; border: 1px solid #d2954444; }
+  .orange .box-title { color: #d29544; }
+  .red { background: #2e1a1a; border: 1px solid #f8514944; }
+  .red .box-title { color: #ff7b72; }
+  .teal { background: #1a2e2e; border: 1px solid #3fb9b044; }
+  .teal .box-title { color: #56d4cf; }
+  .arrow-row { text-align: center; color: #484f58; font-size: 20px; margin: 4px 0; letter-spacing: 4px; }
+  .connector { display: flex; justify-content: center; align-items: center; gap: 8px; margin: 6px 0; color: #484f58; font-size: 11px; }
+  .connector .line { flex: 1; height: 1px; background: #30363d; }
+  .connector .label { white-space: nowrap; }
+</style>
+</head>
+<body>
+<h1>Jam — System Architecture</h1>
+
+<div class="layer">
+  <span class="layer-label">Desktop App</span>
+  <div class="boxes">
+    <div class="box blue">
+      <div class="box-title">Electron Main</div>
+      <div class="box-sub">Window management<br>IPC handlers (14 modules)<br>Orchestrator</div>
+      <div class="box-pkg">@jam/desktop</div>
+    </div>
+    <div class="box blue">
+      <div class="box-title">React Renderer</div>
+      <div class="box-sub">Zustand store (9 slices)<br>Containers + Components<br>xterm.js terminals</div>
+      <div class="box-pkg">@jam/desktop</div>
+    </div>
+    <div class="box blue">
+      <div class="box-title">Preload Bridge</div>
+      <div class="box-sub">contextBridge API<br>Secure IPC channel<br>Event listeners</div>
+      <div class="box-pkg">@jam/desktop</div>
+    </div>
+  </div>
+</div>
+
+<div class="connector"><div class="line"></div><div class="label">IPC invoke / send / on</div><div class="line"></div></div>
+
+<div class="layer">
+  <span class="layer-label">Core Services</span>
+  <div class="boxes">
+    <div class="box green">
+      <div class="box-title">Agent Manager</div>
+      <div class="box-sub">Lifecycle, PTY spawn<br>Message queue<br>Context enrichment</div>
+      <div class="box-pkg">@jam/agent-runtime</div>
+    </div>
+    <div class="box green">
+      <div class="box-title">Voice Service</div>
+      <div class="box-sub">STT/TTS pipeline<br>Audio capture<br>Command parsing</div>
+      <div class="box-pkg">@jam/voice</div>
+    </div>
+    <div class="box green">
+      <div class="box-title">EventBus</div>
+      <div class="box-sub">Pub/sub (22 events)<br>Diagnostics mode<br>Error isolation</div>
+      <div class="box-pkg">@jam/eventbus</div>
+    </div>
+    <div class="box green">
+      <div class="box-title">Memory Store</div>
+      <div class="box-sub">File-based persistence<br>Session history<br>Auto-pruning</div>
+      <div class="box-pkg">@jam/memory</div>
+    </div>
+  </div>
+</div>
+
+<div class="connector"><div class="line"></div><div class="label">Template Method / Strategy pattern</div><div class="line"></div></div>
+
+<div class="layer">
+  <span class="layer-label">Agent Runtimes</span>
+  <div class="boxes">
+    <div class="box purple">
+      <div class="box-title">Claude Code</div>
+      <div class="box-sub">JSONL output<br>Session resume<br>OAuth + API key</div>
+    </div>
+    <div class="box purple">
+      <div class="box-title">Cursor</div>
+      <div class="box-sub">JSONL output<br>Stream JSON<br>OAuth + API key</div>
+    </div>
+    <div class="box purple">
+      <div class="box-title">OpenCode</div>
+      <div class="box-sub">Raw streaming<br>Multi-model<br>Config file auth</div>
+    </div>
+    <div class="box purple">
+      <div class="box-title">Codex CLI</div>
+      <div class="box-sub">Raw streaming<br>CLI arg input<br>OpenAI API key</div>
+    </div>
+  </div>
+</div>
+
+<div class="connector"><div class="line"></div><div class="label">Provider registry (factory maps)</div><div class="line"></div></div>
+
+<div class="layer">
+  <span class="layer-label">Voice Providers</span>
+  <div class="boxes">
+    <div class="box orange">
+      <div class="box-title">Whisper STT</div>
+      <div class="box-sub">whisper-1<br>gpt-4o-transcribe</div>
+    </div>
+    <div class="box orange">
+      <div class="box-title">ElevenLabs STT</div>
+      <div class="box-sub">scribe_v1<br>Multi-language</div>
+    </div>
+    <div class="box orange">
+      <div class="box-title">OpenAI TTS</div>
+      <div class="box-sub">13 voices<br>Speed control</div>
+    </div>
+    <div class="box orange">
+      <div class="box-title">ElevenLabs TTS</div>
+      <div class="box-sub">48 voices<br>Stability tuning</div>
+    </div>
+  </div>
+</div>
+
+<div class="connector"><div class="line"></div><div class="label">Sandbox isolation</div><div class="line"></div></div>
+
+<div style="display: flex; gap: 12px;">
+  <div class="layer" style="flex: 1;">
+    <span class="layer-label">Sandboxing</span>
+    <div class="boxes">
+      <div class="box red">
+        <div class="box-title">Docker</div>
+        <div class="box-sub">Seccomp, resource limits<br>Network policy, audit</div>
+        <div class="box-pkg">@jam/sandbox</div>
+      </div>
+      <div class="box red">
+        <div class="box-title">OS Sandbox</div>
+        <div class="box-sub">Seatbelt / Bubblewrap<br>Git worktrees</div>
+        <div class="box-pkg">@jam/os-sandbox</div>
+      </div>
+    </div>
+  </div>
+  <div class="layer" style="flex: 1;">
+    <span class="layer-label">Foundation</span>
+    <div class="boxes">
+      <div class="box teal">
+        <div class="box-title">Core</div>
+        <div class="box-sub">Domain models<br>Port interfaces<br>Event definitions</div>
+        <div class="box-pkg">@jam/core</div>
+      </div>
+      <div class="box teal">
+        <div class="box-title">Team</div>
+        <div class="box-sub">Task scheduling<br>Soul evolution<br>Communication</div>
+        <div class="box-pkg">@jam/team</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
